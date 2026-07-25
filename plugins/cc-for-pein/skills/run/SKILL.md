@@ -1,9 +1,9 @@
 ---
-name: rescue
-description: 'Launch a tracked Claude Code task from the current Codex thread through the checkout-owned local runtime. Supports safe and terminal-parity profiles, durable background execution, wait mode, explicit Claude session resume, environment files, write mode, and model or effort overrides. Use when Claude Code should investigate, implement, or continue work while Codex retains lifecycle control.'
+name: run
+description: 'Run a tracked Claude Code task from the current Codex thread through the checkout-owned local runtime. Supports safe and terminal-parity profiles, durable background execution, wait mode, explicit Claude session resume, environment files, write mode, and model or effort overrides. Use when Claude Code should investigate, implement, or continue work while Codex retains lifecycle control.'
 ---
 
-# Claude Code Rescue
+# Claude Code Run
 
 Run the local runtime directly from the user-facing Codex thread. Do not create a forwarding subagent.
 
@@ -27,4 +27,4 @@ Rules:
 - Present runtime stdout faithfully. Do not poll a background task in the launch turn unless the user asked to wait.
 - On readiness or authentication failure, run `node "<plugin-root>/bootstrap/cc-runtime.mjs" readiness` and report the concrete repair.
 
-Use `$cc:steer <job-id> <message>` for live course changes. Use `$cc:steer --follow-up <job-id> <message>` only after a completed or interrupted job.
+Use `$cc-for-pein:steer <job-id> <message>` for live course changes. Use `$cc-for-pein:steer --follow-up <job-id> <message>` only after a completed or interrupted job.

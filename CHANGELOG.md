@@ -2,6 +2,8 @@
 
 ## 0.1.0 - Unreleased
 
+- Rename the user-facing plugin identity and skill namespace to `cc-for-pein`
+  while preserving the validated `CC_*` environment and durable state contract.
 - Establish a checkout-owned `ClaudeRuntime` lifecycle API and headless CLI.
 - Add safe and terminal-parity execution profiles.
 - Add single-source env-file loading with project-local Claude, proxy, Conda,
@@ -10,7 +12,7 @@
   exact-session follow-up, bounded transport recovery, partial output, and
   redacted runtime receipts.
 - Replace review/setup/hook/installer/cache surfaces with six focused lifecycle
-  skills and an installable 15-file `plugin/` control-plane subtree whose
+  skills and an installable 15-file `plugins/cc-for-pein/` control-plane subtree whose
   bootstrap fails closed unless it delegates to the declared checkout.
 - Add atomic multi-process job locks, cross-workspace exact-session leases,
   worker/Claude PID separation, orphan reaping, session-drift rejection, and

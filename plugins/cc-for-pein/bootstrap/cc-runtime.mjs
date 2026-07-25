@@ -137,12 +137,18 @@ function resolveCheckout(env) {
     throw new Error(`CC_RUNTIME_CHECKOUT must not point into Codex's versioned cache: ${checkout}`);
   }
   const cli = path.join(checkout, "runtime", "cli.mjs");
-  const manifest = path.join(checkout, "plugin", ".codex-plugin", "plugin.json");
+  const manifest = path.join(
+    checkout,
+    "plugins",
+    "cc-for-pein",
+    ".codex-plugin",
+    "plugin.json"
+  );
   if (!existing(cli) || !existing(manifest)) {
     throw new Error(`CC_RUNTIME_CHECKOUT is not a valid CC runtime checkout: ${checkout}`);
   }
   const plugin = JSON.parse(fs.readFileSync(manifest, "utf8"));
-  if (plugin.name !== "cc") {
+  if (plugin.name !== "cc-for-pein") {
     throw new Error(`Unexpected plugin identity at ${checkout}: ${plugin.name ?? "missing"}`);
   }
   return { checkout, cli };

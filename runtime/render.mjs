@@ -16,7 +16,7 @@ function sessionIdOf(job) {
 export function renderLaunch(receipt) {
   return [
     `${receipt.title} started as ${receipt.jobId}.`,
-    `Check $cc:status ${receipt.jobId}; steer with $cc:steer ${receipt.jobId} <message>.`,
+    `Check $cc-for-pein:status ${receipt.jobId}; steer with $cc-for-pein:steer ${receipt.jobId} <message>.`,
     "",
   ].join("\n");
 }

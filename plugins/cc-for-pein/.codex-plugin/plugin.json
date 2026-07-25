@@ -1,9 +1,11 @@
 {
-  "name": "cc",
-  "version": "0.1.0",
+  "name": "cc-for-pein",
+  "version": "0.1.0+codex.20260725111403",
   "description": "Checkout-owned Claude Code runtime with durable jobs, steering, interruption, recovery, and exact-session follow-up.",
   "author": {
-    "name": "CoordExp"
+    "name": "Pein",
+    "email": "852128461@qq.com",
+    "url": "https://github.com/Pein2017"
   },
   "license": "Apache-2.0",
   "keywords": [
@@ -15,19 +17,19 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Local Claude Runtime",
+    "displayName": "CC for Pein",
     "shortDescription": "Durable local Claude Code jobs for Codex",
     "longDescription": "Run the host Claude Code CLI through a checkout-owned headless runtime with durable steering, transport recovery, exact-session continuation, and an optional terminal-parity execution profile.",
-    "developerName": "CoordExp",
+    "developerName": "Pein",
     "category": "Coding",
     "capabilities": [
       "Interactive",
       "Write"
     ],
     "defaultPrompt": [
-      "Use $cc:rescue to launch a tracked Claude Code task",
-      "Use $cc:steer to redirect a running Claude Code job",
-      "Use $cc:status to inspect local Claude Code work"
+      "Use $cc-for-pein:run to launch a tracked Claude Code task",
+      "Use $cc-for-pein:steer to redirect a running Claude Code job",
+      "Use $cc-for-pein:status to inspect local Claude Code work"
     ]
   }
 }

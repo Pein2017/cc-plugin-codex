@@ -13,5 +13,5 @@ The bootstrap must delegate to `CC_RUNTIME_CHECKOUT` from the selected
 
 - Require a job id and interrupt only a running task.
 - Treat interrupt as graceful and resumable. It never escalates to SIGKILL.
-- Report the runtime stdout exactly. An `interrupted` job can continue with `$cc:steer --follow-up <job-id> <message>`.
-- If the interrupt attempt fails, the job remains controllable; inspect `$cc:status` and use `$cc:cancel` only when destructive termination is intended.
+- Report the runtime stdout exactly. An `interrupted` job can continue with `$cc-for-pein:steer --follow-up <job-id> <message>`.
+- If the interrupt attempt fails, the job remains controllable; inspect `$cc-for-pein:status` and use `$cc-for-pein:cancel` only when destructive termination is intended.

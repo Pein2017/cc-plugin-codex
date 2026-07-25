@@ -8,7 +8,7 @@ import { afterEach, describe, it } from "node:test";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const cli = path.join(root, "runtime", "cli.mjs");
-const bootstrap = path.join(root, "plugin", "bootstrap", "cc-runtime.mjs");
+const bootstrap = path.join(root, "plugins", "cc-for-pein", "bootstrap", "cc-runtime.mjs");
 const cleanups = [];
 
 afterEach(() => {

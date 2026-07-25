@@ -1,18 +1,19 @@
 {
-  "name": "coordexp-cc-runtime",
-  "version": "0.1.0",
+  "name": "cc-for-pein-runtime",
+  "version": "0.1.0+codex.20260725111403",
   "description": "Checkout-owned Claude Code headless runtime for Codex",
   "private": true,
   "type": "module",
   "author": {
-    "name": "CoordExp"
+    "name": "Pein",
+    "email": "852128461@qq.com"
   },
   "bin": {
-    "cc-runtime": "plugin/bootstrap/cc-runtime.mjs"
+    "cc-for-pein-runtime": "plugins/cc-for-pein/bootstrap/cc-runtime.mjs"
   },
   "license": "Apache-2.0",
   "files": [
-    "plugin",
+    "plugins/cc-for-pein",
     "config",
     "LICENSE",
     "NOTICE",

@@ -209,7 +209,7 @@ class ClaudeRuntime {
       const base = createJobRecord({
       id: jobId,
       kind: "task",
-      kindLabel: "rescue",
+      kindLabel: "run",
       jobClass: "task",
       title,
       summary: summaryOf(prompt),

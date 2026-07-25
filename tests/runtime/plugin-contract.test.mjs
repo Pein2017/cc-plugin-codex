@@ -10,15 +10,16 @@ const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 
 describe("native plugin contract", () => {
   it("publishes only the six lifecycle skills and no Codex hook", () => {
-    const manifest = JSON.parse(fs.readFileSync(path.join(root, "plugin/.codex-plugin/plugin.json"), "utf8"));
-    assert.equal(manifest.name, "cc");
+    const pluginRoot = path.join(root, "plugins", "cc-for-pein");
+    const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
+    assert.equal(manifest.name, "cc-for-pein");
     assert.equal(manifest.hooks, undefined);
-    assert.equal(manifest.author.name, "CoordExp");
-    const skills = fs.readdirSync(path.join(root, "plugin", "skills"), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(root, "plugin", "skills", entry.name, "SKILL.md")))
+    assert.equal(manifest.author.name, "Pein");
+    const skills = fs.readdirSync(path.join(pluginRoot, "skills"), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(pluginRoot, "skills", entry.name, "SKILL.md")))
       .map((entry) => entry.name)
       .sort();
-    assert.deepEqual(skills, ["cancel", "interrupt", "rescue", "result", "status", "steer"]);
+    assert.deepEqual(skills, ["cancel", "interrupt", "result", "run", "status", "steer"]);
   });
 
   it("has no active import or metadata dependency on upstream installers or versioned cache", () => {
@@ -54,8 +55,8 @@ describe("native plugin contract", () => {
   });
 
   it("routes every active skill through the checkout bootstrap", () => {
-    for (const name of ["rescue", "steer", "interrupt", "cancel", "status", "result"]) {
-      const text = fs.readFileSync(path.join(root, "plugin", "skills", name, "SKILL.md"), "utf8");
+    for (const name of ["run", "steer", "interrupt", "cancel", "status", "result"]) {
+      const text = fs.readFileSync(path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"), "utf8");
       assert.match(text, /bootstrap\/cc-runtime\.mjs/);
       assert.doesNotMatch(text, /<plugin-root>\/runtime\/cli\.mjs/);
     }

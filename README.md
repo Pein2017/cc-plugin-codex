@@ -1,4 +1,4 @@
-# CC: local Claude Code runtime for Codex
+# CC for Pein: local Claude Code runtime for Codex
 
 This repository is a checkout-owned Codex Plugin. It uses the host `claude`
 CLI in headless stream-json mode and owns only the orchestration layer:
@@ -80,7 +80,7 @@ This flag is never implicit, cannot be combined with `safe` or
 
 Native Windows supports deterministic process identity and destructive
 process-tree cancellation. A detached Windows process cannot receive a
-portable graceful SIGINT, so `$cc:interrupt` fails honestly there and asks the
+portable graceful SIGINT, so `$cc-for-pein:interrupt` fails honestly there and asks the
 caller to choose explicit cancellation instead.
 
 ## Environment
@@ -116,13 +116,13 @@ claude
 ## Commands
 
 ```text
-$cc:rescue [--profile safe|terminal-parity] [--write] [--dangerously-skip-permissions] [--wait] <task>
-$cc:steer <job-id> <message>
-$cc:steer --follow-up <job-id> <message>
-$cc:interrupt <job-id>
-$cc:cancel <job-id>
-$cc:status [job-id] [--wait] [--all]
-$cc:result [job-id]
+$cc-for-pein:run [--profile safe|terminal-parity] [--write] [--dangerously-skip-permissions] [--wait] <task>
+$cc-for-pein:steer <job-id> <message>
+$cc-for-pein:steer --follow-up <job-id> <message>
+$cc-for-pein:interrupt <job-id>
+$cc-for-pein:cancel <job-id>
+$cc-for-pein:status [job-id] [--wait] [--all]
+$cc-for-pein:result [job-id]
 ```
 
 The corresponding checkout CLI is `node runtime/cli.mjs --help`.
@@ -138,11 +138,12 @@ node runtime/cli.mjs readiness --json
 ```
 
 The repo-local marketplace manifest is `.agents/plugins/marketplace.json` and
-points to the intentionally minimal `plugin/` subtree. An eventual Codex
+points to the intentionally minimal `plugins/cc-for-pein/` subtree. An eventual Codex
 snapshot therefore contains only the manifest, six skills, and bootstrap.
-Every skill calls `plugin/bootstrap/cc-runtime.mjs`, which validates
-`CC_RUNTIME_CHECKOUT` and delegates there. Installation into Codex is
-intentionally deferred until development and real smokes are complete.
+Every skill calls `plugins/cc-for-pein/bootstrap/cc-runtime.mjs`, which validates
+`CC_RUNTIME_CHECKOUT` and delegates there. Install the local marketplace entry
+only after development checks and real smokes pass, then restart Codex so the
+updated skill snapshot is loaded.
 
 ## Provenance
 

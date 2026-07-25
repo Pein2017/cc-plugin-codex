@@ -41,8 +41,8 @@ function filterJobsForCurrentSession(jobs, options = {}) {
 
 function getJobTypeLabel(job) {
   if (typeof job.kindLabel === "string" && job.kindLabel) return job.kindLabel;
-  if (job.jobClass === "task") return "rescue";
-  if (job.kind === "task") return "rescue";
+  if (job.jobClass === "task") return "run";
+  if (job.kind === "task") return "run";
   return "job";
 }
 
@@ -240,7 +240,7 @@ export function resolveCancelableJob(cwd, reference) {
     return { workspaceRoot, job: selected };
   }
   if (activeJobs.length === 1) return { workspaceRoot, job: activeJobs[0] };
-  if (activeJobs.length > 1) throw new Error("Multiple Claude Code jobs are active. Pass a job id to $cc:cancel.");
+  if (activeJobs.length > 1) throw new Error("Multiple Claude Code jobs are active. Pass a job id to $cc-for-pein:cancel.");
   throw new Error("No active Claude Code jobs to cancel.");
 }
 
@@ -254,7 +254,7 @@ export function resolveInterruptibleJob(cwd, reference) {
   }
   if (runningJobs.length === 1) return { workspaceRoot, job: runningJobs[0] };
   if (runningJobs.length > 1) {
-    throw new Error("Multiple Claude Code jobs are running. Pass a job id to $cc:interrupt.");
+    throw new Error("Multiple Claude Code jobs are running. Pass a job id to $cc-for-pein:interrupt.");
   }
   throw new Error("No running Claude Code jobs to interrupt.");
 }

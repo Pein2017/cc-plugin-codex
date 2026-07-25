@@ -1,4 +1,0 @@
-interface:
-  display_name: "Claude Code Rescue"
-  short_description: "Launch tracked Claude work directly"
-  default_prompt: "Use $cc:rescue to launch a substantial Claude Code task directly."

@@ -5,7 +5,7 @@ description: 'Destructively cancel an active local Claude Code job by job id. Us
 
 # Claude Code Cancel
 
-Use this skill when the user wants to terminate an active Claude Code job. Prefer `$cc:interrupt` when preserving a resumable Claude session matters.
+Use this skill when the user wants to terminate an active Claude Code job. Prefer `$cc-for-pein:interrupt` when preserving a resumable Claude session matters.
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md` file. Run:
 `node "<plugin-root>/bootstrap/cc-runtime.mjs" cancel $ARGUMENTS`

@@ -1,6 +1,6 @@
 interface:
   display_name: "Claude Code Status"
   short_description: "Inspect active and recent Claude Code jobs"
-  default_prompt: "Use $cc:status to inspect a tracked local Claude Code job."
+  default_prompt: "Use $cc-for-pein:status to inspect a tracked local Claude Code job."
 policy:
   allow_implicit_invocation: false

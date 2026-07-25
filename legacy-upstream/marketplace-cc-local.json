@@ -1,14 +1,14 @@
 {
-  "name": "pein-local",
+  "name": "cc-local",
   "interface": {
-    "displayName": "Pein Local"
+    "displayName": "CoordExp Local Plugins"
   },
   "plugins": [
     {
-      "name": "cc-for-pein",
+      "name": "cc",
       "source": {
         "source": "local",
-        "path": "./plugins/cc-for-pein"
+        "path": "./plugin"
       },
       "policy": {
         "installation": "AVAILABLE",
