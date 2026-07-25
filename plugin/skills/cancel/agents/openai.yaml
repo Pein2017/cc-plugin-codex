@@ -1,0 +1,6 @@
+interface:
+  display_name: "Claude Code Cancel"
+  short_description: "Cancel an active local Claude Code job"
+  default_prompt: "Use $cc:cancel to destructively stop an active Claude Code job."
+policy:
+  allow_implicit_invocation: false

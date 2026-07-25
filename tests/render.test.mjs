@@ -496,17 +496,37 @@ describe("renderJobStatusReport", () => {
     assert.ok(output.includes("| Resume | `claude --resume claude-sess` |"));
   });
 
-  it("shows cancel action for active jobs", () => {
+  it("shows steering, interrupt, recovery, and cancel receipts for active task jobs", () => {
     const job = {
       id: "j2",
       status: "running",
-      phase: "reviewing",
-      kindLabel: "review",
+      phase: "reconnecting",
+      kindLabel: "rescue",
       startedAt: "2026-04-02T19:00:00.000Z",
       elapsed: "5s",
+      recoveryAttempts: 2,
+      lastFailureClass: "transport_closed_resumable",
+      lastByteAt: "2026-04-02T19:00:04.000Z",
+      steering: {
+        latestAcknowledgedSequence: 1,
+        messages: [
+          { sequence: 1, dispatchedAt: "now", acknowledgedAt: "now" },
+          { sequence: 2, dispatchedAt: null, acknowledgedAt: null },
+        ],
+      },
+      runtimeReceipt: {
+        claudeBin: "/usr/bin/claude",
+        claudeConfigDir: "/project/.claude",
+      },
     };
     const output = renderJobStatusReport(job);
     assert.ok(output.includes("| Elapsed | 5s |"));
+    assert.ok(output.includes("| Recovery attempts | 2 |"));
+    assert.ok(output.includes("| Last failure class | transport_closed_resumable |"));
+    assert.ok(output.includes("| Pending steering | 1 |"));
+    assert.ok(output.includes("| Latest acknowledged steering | 1 |"));
+    assert.ok(output.includes("| Steer | `$cc:steer j2 <message>` |"));
+    assert.ok(output.includes("| Interrupt | `$cc:interrupt j2` |"));
     assert.ok(output.includes("| Cancel | `$cc:cancel j2` |"));
   });
 });

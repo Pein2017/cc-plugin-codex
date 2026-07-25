@@ -13,10 +13,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": [
-    "hooks/**/*.mjs",
-    "scripts/**/*.mjs"
-  ],
+  "include": ["runtime/**/*.mjs"],
   "exclude": [
     "node_modules",
     "tests",

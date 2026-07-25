@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 
 import {
   StreamParser,
+  classifyClaudeFailure,
+  encodeStreamUserMessage,
   validateTurnCompletion,
   resolveModel,
   resolveEffort,
@@ -233,6 +235,63 @@ describe("StreamParser", () => {
     assert.equal(events[0].subtype, "api_retry");
   });
 
+  it("captures runtime and hook receipts from native stream-json events", () => {
+    const parser = new StreamParser();
+    parser.feed(JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-runtime",
+      claude_code_version: "2.1.220",
+      model: "claude-haiku-4-5",
+      permissionMode: "dontAsk",
+      mcp_servers: [{ name: "serena", status: "connected" }],
+      plugins: ["fixture-plugin"],
+    }) + "\n");
+    parser.feed(JSON.stringify({
+      type: "system",
+      subtype: "hook_response",
+      session_id: "sess-runtime",
+      hook_name: "PreToolUse:Bash",
+      hook_event: "PreToolUse",
+      outcome: "success",
+      exit_code: 0,
+    }) + "\n");
+
+    assert.deepEqual(parser.state.runtimeReceipt, {
+      claudeCodeVersion: "2.1.220",
+      model: "claude-haiku-4-5",
+      permissionMode: "dontAsk",
+      mcpServers: [{ name: "serena", status: "connected" }],
+      plugins: ["fixture-plugin"],
+    });
+    assert.deepEqual(parser.state.hookReceipts, [{
+      hookName: "PreToolUse:Bash",
+      hookEvent: "PreToolUse",
+      outcome: "success",
+      exitCode: 0,
+    }]);
+  });
+
+  it("replays native stream-json user text as an acknowledgement event", () => {
+    const parser = new StreamParser();
+    const events = parser.feed(JSON.stringify({
+      type: "user",
+      session_id: "sess-user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "steer me" }],
+      },
+    }) + "\n");
+
+    assert.deepEqual(events, [{
+      kind: "user_replay",
+      text: "steer me",
+      message: "Steering message acknowledged",
+      phase: "running",
+      threadId: "sess-user",
+    }]);
+  });
+
   it("returns null for unknown event types and tracks them", () => {
     const parser = new StreamParser();
     const evt = JSON.stringify({ type: "unknown_event", data: "x" });
@@ -420,6 +479,79 @@ describe("validateTurnCompletion", () => {
     const state = { receivedTerminalEvent: true, unresolvedParseErrors: 0, unknownEvents: [{ type: "new_type", ts: 1 }] };
     const result = validateTurnCompletion(state, 0);
     assert.equal(result.status, "completed");
+  });
+
+  it("does not report an error terminal event as completed when Claude exits zero", () => {
+    const state = {
+      receivedTerminalEvent: true,
+      terminalEvents: [{ type: "result", subtype: "error_during_execution", is_error: true }],
+      unresolvedParseErrors: 0,
+      unknownEvents: [],
+    };
+    const result = validateTurnCompletion(state, 0);
+    assert.equal(result.status, "failed");
+  });
+});
+
+describe("classifyClaudeFailure", () => {
+  it("classifies the observed mid-response closure as resumable with a session id", () => {
+    const result = classifyClaudeFailure({
+      status: "failed",
+      exitCode: 1,
+      sessionId: "session-transport",
+      finalMessage: "API Error: Connection closed mid-response. The response above may be incomplete.",
+      stderr: "",
+      terminalEvents: [],
+    });
+
+    assert.equal(result.kind, "transport_closed_resumable");
+    assert.equal(result.resumable, true);
+  });
+
+  it("does not retry auth or context failures as transport errors", () => {
+    assert.equal(classifyClaudeFailure({ stderr: "authentication failed" }).kind, "auth_or_permission");
+    assert.equal(classifyClaudeFailure({ stderr: "prompt is too long for the context window" }).kind, "context_or_request_invalid");
+  });
+
+  it("classifies native signal terminal receipts as interrupted", () => {
+    const result = classifyClaudeFailure({
+      status: "failed",
+      exitCode: 0,
+      terminalEvents: [{ subtype: "error_during_execution", is_error: true }],
+    });
+    assert.equal(result.kind, "cancelled_or_interrupted");
+    assert.equal(result.resumable, false);
+  });
+
+  it("classifies an OS interrupt signal even when a fixture emits no terminal event", () => {
+    assert.deepEqual(
+      classifyClaudeFailure({
+        status: "failed",
+        signal: "SIGINT",
+        exitCode: null,
+        terminalEvents: [],
+      }),
+      {
+        kind: "cancelled_or_interrupted",
+        resumable: false,
+        reason: "SIGINT",
+      }
+    );
+  });
+});
+
+describe("encodeStreamUserMessage", () => {
+  it("uses the native Claude stream-json user schema", () => {
+    assert.equal(
+      encodeStreamUserMessage("hello"),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      }) + "\n",
+    );
   });
 });
 
@@ -716,6 +848,20 @@ describe("buildArgs", () => {
     assert.ok(args.includes("--include-partial-messages"));
     const idx = args.indexOf("--output-format");
     assert.equal(args[idx + 1], "stream-json");
+  });
+
+  it("native streaming input enables user replay and hook receipts", () => {
+    const args = buildArgs("ignored", {
+      outputFormat: "stream-json",
+      inputFormat: "stream-json",
+      includeHookEvents: true,
+    });
+    assert.deepEqual(
+      args.slice(args.indexOf("--input-format"), args.indexOf("--input-format") + 2),
+      ["--input-format", "stream-json"],
+    );
+    assert.ok(args.includes("--replay-user-messages"));
+    assert.ok(args.includes("--include-hook-events"));
   });
 
   it("includes --no-session-persistence when set", () => {

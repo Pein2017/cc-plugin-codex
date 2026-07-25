@@ -76,6 +76,37 @@ async function readStdin() {
   return body;
 }
 
+async function readPrompt() {
+  if (getValue("--input-format") !== "stream-json") {
+    return readStdin();
+  }
+  return new Promise((resolve, reject) => {
+    let buffered = "";
+    process.stdin.setEncoding("utf8");
+    const onData = (chunk) => {
+      buffered += chunk;
+      const newline = buffered.indexOf("\\n");
+      if (newline < 0) return;
+      process.stdin.off("data", onData);
+      try {
+        const event = JSON.parse(buffered.slice(0, newline));
+        const content = Array.isArray(event?.message?.content)
+          ? event.message.content
+          : [];
+        resolve(
+          content
+            .filter((item) => item?.type === "text")
+            .map((item) => item.text ?? "")
+            .join("")
+        );
+      } catch (error) {
+        reject(error);
+      }
+    };
+    process.stdin.on("data", onData);
+  });
+}
+
 async function main() {
   if (args[0] === "--version") {
     process.stdout.write("2.1.90 (Claude Code)\\n");
@@ -94,7 +125,7 @@ async function main() {
   }
 
   const promptIndex = args.lastIndexOf("--");
-  const prompt = promptIndex >= 0 ? args.slice(promptIndex + 1).join(" ") : await readStdin();
+  const prompt = promptIndex >= 0 ? args.slice(promptIndex + 1).join(" ") : await readPrompt();
   const delayMatch = prompt.match(/\\bdelay=(\\d+)\\b/);
   const delay = delayMatch ? Number(delayMatch[1]) : 25;
   const sessionId =
@@ -172,6 +203,12 @@ function createEnvironment() {
       CODEX_HOME: codexHome,
       HOME: homeDir,
       USERPROFILE: homeDir,
+      NO_PROXY: [process.env.NO_PROXY, "127.0.0.1", "localhost"]
+        .filter(Boolean)
+        .join(","),
+      no_proxy: [process.env.no_proxy, "127.0.0.1", "localhost"]
+        .filter(Boolean)
+        .join(","),
       FAKE_CLAUDE_LOG: claudeLogFile,
       PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}`,
     },
@@ -625,6 +662,13 @@ function extractOutputText(body, callId) {
   return extractText(item.output);
 }
 
+function extractShellStdout(output) {
+  const text = String(output ?? "");
+  const marker = "\nOutput:\n";
+  const markerIndex = text.indexOf(marker);
+  return markerIndex >= 0 ? text.slice(markerIndex + marker.length) : text;
+}
+
 function extractAgentIdFromSpawnOutput(body, callId) {
   const outputText = extractOutputText(body, callId);
   if (!outputText) {
@@ -754,9 +798,10 @@ function startDirectSkillProvider({
             typeof output === "string" && output.trim(),
             "provider should receive shell output before the final assistant reply"
           );
+          const stdout = extractShellStdout(output).trimEnd();
           events = [
             eventCreated("resp-direct-final"),
-            eventAssistantMessage("msg-direct-final", output.trimEnd()),
+            eventAssistantMessage("msg-direct-final", stdout),
             eventCompleted("resp-direct-final"),
           ];
         } else {
@@ -909,11 +954,13 @@ function startMockProvider({
               "legacy built-in rescue alias should preserve the routing flag in the parent turn"
             );
           }
-          const defaultRoleBlock = extractRoleBlock(agentTypeDescription, "default");
-          assert.ok(
-            typeof defaultRoleBlock === "string" && defaultRoleBlock.includes("Default agent."),
-            `parent turn should advertise the built-in default role in the spawn_agent schema, saw: ${defaultRoleBlock}`
-          );
+          if (agentTypeDescription) {
+            const defaultRoleBlock = extractRoleBlock(agentTypeDescription, "default");
+            assert.ok(
+              typeof defaultRoleBlock === "string" && defaultRoleBlock.includes("Default agent."),
+              `legacy spawn_agent schema should advertise the default role, saw: ${defaultRoleBlock}`
+            );
+          }
           assert.ok(
             bodyText.includes("retry once with") && bodyText.includes("gpt-5.4"),
             "parent turn should include the narrow gpt-5.4 fallback guidance for mini-unavailable errors"
@@ -923,10 +970,9 @@ function startMockProvider({
             "parent turn should forbid broad fallback on generic spawn failures"
           );
 
+          const spawnProperties =
+            findTool(body, "spawn_agent")?.tool?.parameters?.properties ?? {};
           const spawnArgs = {
-            agent_type: "default",
-            model: "gpt-5.4-mini",
-            reasoning_effort: "medium",
             message:
               spawnMessage ??
               "You are a transient forwarding worker for Claude Code rescue.\n" +
@@ -946,6 +992,11 @@ function startMockProvider({
               "Example exact output: completed:/simplify make the output compact\n\n" +
               taskCommand,
           };
+          if (spawnProperties.agent_type) spawnArgs.agent_type = "default";
+          if (spawnProperties.fork_context) spawnArgs.fork_context = false;
+          if (spawnProperties.reasoning_effort) {
+            spawnArgs.reasoning_effort = "medium";
+          }
           events = [
             eventCreated("resp-parent-1"),
             eventFunctionCall(
@@ -1234,7 +1285,101 @@ function readClaudeInvocations(logFile) {
     .map((line) => JSON.parse(line));
 }
 
-describe("Codex rescue-skill E2E", () => {
+describe("Codex direct rescue-skill E2E", () => {
+  it("runs a foreground rescue directly from the user-facing Codex turn", async (t) => {
+    if (!codexAvailable()) {
+      t.skip("codex CLI is not available in this environment");
+      return;
+    }
+
+    const testEnv = createEnvironment();
+    const taskPrompt = "codex-direct-rescue foreground delay=10";
+    const userRequest = "$cc:rescue --wait say hello from direct Codex e2e";
+    const provider = startDirectSkillProvider({
+      userRequest,
+      expectedNeedles: ["Claude Code Rescue", "Do not create a forwarding subagent"],
+      shellCommands: [
+        `node ${JSON.stringify(COMPANION_SCRIPT)} task --fresh --write --quiet-progress ${JSON.stringify(taskPrompt)}`,
+      ],
+    });
+    testEnv.providerPort = await provider.listen();
+    writeConfigToml(testEnv, testEnv.providerPort);
+
+    try {
+      const execResult = await runCodexExec(testEnv, buildRescuePrompt(userRequest));
+      assert.equal(execResult.status, 0, execResult.stderr || execResult.stdout);
+      assert.deepEqual(provider.errors, []);
+      assert.equal(provider.requests.filter((entry) => entry.method === "POST").length, 2);
+
+      const finalMessage = fs.readFileSync(testEnv.outputFile, "utf8").trim();
+      assert.equal(finalMessage, `completed:${taskPrompt}`);
+      assert.ok(
+        readClaudeInvocations(testEnv.claudeLogFile).some(
+          (entry) => entry.prompt === taskPrompt
+        )
+      );
+    } finally {
+      await provider.close();
+      cleanupEnvironment(testEnv);
+    }
+  });
+
+  it("returns a stable background job handle before the Claude task completes", async (t) => {
+    if (!codexAvailable()) {
+      t.skip("codex CLI is not available in this environment");
+      return;
+    }
+
+    const testEnv = createEnvironment();
+    const taskPrompt = "codex-direct-rescue background delay=250";
+    const userRequest = "$cc:rescue --background inspect the direct runtime";
+    const provider = startDirectSkillProvider({
+      userRequest,
+      expectedNeedles: ["Claude Code Rescue", "--background"],
+      shellCommands: [
+        `node ${JSON.stringify(COMPANION_SCRIPT)} task --background --fresh --write --view-state defer --json ${JSON.stringify(taskPrompt)}`,
+      ],
+    });
+    testEnv.providerPort = await provider.listen();
+    writeConfigToml(testEnv, testEnv.providerPort);
+
+    try {
+      const execResult = await runCodexExec(testEnv, buildRescuePrompt(userRequest));
+      assert.equal(execResult.status, 0, execResult.stderr || execResult.stdout);
+      assert.deepEqual(provider.errors, []);
+
+      const launch = JSON.parse(fs.readFileSync(testEnv.outputFile, "utf8"));
+      assert.match(launch.jobId, /^task-/);
+      assert.equal(launch.status, "queued");
+      assert.doesNotMatch(JSON.stringify(launch), /completed:codex-direct-rescue/);
+
+      const status = spawnSync(
+        process.execPath,
+        [
+          COMPANION_SCRIPT,
+          "status",
+          launch.jobId,
+          "--cwd",
+          PROJECT_ROOT,
+          "--wait",
+          "--timeout-ms",
+          "15000",
+          "--poll-interval-ms",
+          "50",
+          "--json",
+        ],
+        { cwd: PROJECT_ROOT, env: testEnv.env, encoding: "utf8", timeout: 20000 }
+      );
+      assert.equal(status.status, 0, status.stderr || status.stdout);
+      assert.equal(JSON.parse(status.stdout).job.status, "completed");
+    } finally {
+      await provider.close();
+      cleanupEnvironment(testEnv);
+    }
+  });
+});
+
+describe.skip("Legacy forwarding rescue-skill E2E (superseded by direct launch)", () => {
   it("routes $cc:rescue through the built-in rescue subagent, the companion task runtime, and the fake Claude CLI", async (t) => {
     if (!codexAvailable()) {
       t.skip("codex CLI is not available in this environment");

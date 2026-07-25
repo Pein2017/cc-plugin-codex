@@ -1,0 +1,3 @@
+# The installable source is already an intentionally minimal subtree.
+node_modules/
+*.tgz

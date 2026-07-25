@@ -140,7 +140,7 @@ function formatJobTimestamp(value) {
 }
 
 function isPendingJob(job) {
-  return job?.status === "queued" || job?.status === "running";
+  return ["queued", "running", "interrupting", "cancelling"].includes(job?.status);
 }
 
 function collectStatusRows(report) {
@@ -179,6 +179,10 @@ function collectStatusRows(report) {
 function formatStatusActions(job) {
   const actions = [`\`${formatClaudeSkillCommand("status", job.id)}\``];
   if (job.status === "queued" || job.status === "running") {
+    if (job.status === "running") {
+      actions.push(`\`${formatClaudeSkillCommand("steer", job.id)}\``);
+      actions.push(`\`${formatClaudeSkillCommand("interrupt", job.id)}\``);
+    }
     actions.push(`\`${formatClaudeSkillCommand("cancel", job.id)}\``);
   } else {
     actions.push(`\`${formatClaudeSkillCommand("result", job.id)}\``);
@@ -333,7 +337,36 @@ export function renderJobStatusReport(job) {
   }
   const resumeCmd = formatClaudeResumeCommand(job);
   if (resumeCmd) pushKeyValueTableRow(lines, "Resume", `\`${resumeCmd}\``, { raw: true });
+  pushKeyValueTableRow(lines, "Recovery attempts", job.recoveryAttempts ?? 0);
+  pushKeyValueTableRow(lines, "Last failure class", job.lastFailureClass ?? job.result?.failureClass ?? "");
+  pushKeyValueTableRow(lines, "Last byte", job.lastByteAt ?? job.result?.lastByteAt ?? "");
+  const steering = job.steering ?? {};
+  const steeringMessages = Array.isArray(steering.messages) ? steering.messages : [];
+  const pendingSteering = steeringMessages.filter((message) => !message.dispatchedAt).length;
+  const unacknowledgedSteering = steeringMessages.filter(
+    (message) => message.dispatchedAt && !message.acknowledgedAt
+  ).length;
+  pushKeyValueTableRow(lines, "Pending steering", pendingSteering);
+  pushKeyValueTableRow(lines, "Unacknowledged steering", unacknowledgedSteering);
+  pushKeyValueTableRow(
+    lines,
+    "Latest acknowledged steering",
+    steering.latestAcknowledgedSequence ?? ""
+  );
+  const runtimeReceipt = job.runtimeReceipt ?? job.result?.runtimeReceipt;
+  if (runtimeReceipt) {
+    pushKeyValueTableRow(lines, "Claude binary", runtimeReceipt.claudeBin ?? "");
+    pushKeyValueTableRow(lines, "Claude config", runtimeReceipt.claudeConfigDir ?? "");
+  }
+  const manualResume = job.manualResumeCommand ?? job.result?.manualResumeCommand;
+  if (manualResume) {
+    pushKeyValueTableRow(lines, "Manual recovery", `\`${manualResume}\``, { raw: true });
+  }
   if (job.status === "queued" || job.status === "running") {
+    if (job.status === "running") {
+      pushKeyValueTableRow(lines, "Steer", `\`${formatClaudeSkillCommand("steer", job.id)} <message>\``, { raw: true });
+      pushKeyValueTableRow(lines, "Interrupt", `\`${formatClaudeSkillCommand("interrupt", job.id)}\``, { raw: true });
+    }
     pushKeyValueTableRow(lines, "Cancel", `\`${formatClaudeSkillCommand("cancel", job.id)}\``, { raw: true });
   } else {
     pushKeyValueTableRow(lines, "Result", `\`${formatClaudeSkillCommand("result", job.id)}\``, { raw: true });

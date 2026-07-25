@@ -89,6 +89,7 @@ function runHook(testEnv, payload) {
       ...process.env,
       HOME: testEnv.homeDir,
       USERPROFILE: testEnv.homeDir,
+      CODEX_HOME: path.join(testEnv.homeDir, ".codex"),
     },
     input: JSON.stringify(payload),
     encoding: "utf8",

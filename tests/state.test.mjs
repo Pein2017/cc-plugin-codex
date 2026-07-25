@@ -31,6 +31,12 @@ import {
   listJobs,
   upsertJob,
   patchJob,
+  enqueueSteeringMessage,
+  listPendingSteeringMessages,
+  markSteeringMessageDispatched,
+  acknowledgeSteeringMessage,
+  getSteeringSnapshot,
+  tryCloseSteeringWindow,
   transitionJob,
   casJobStatus,
   setCurrentSession,
@@ -130,6 +136,87 @@ describe("nowIso", () => {
     const parsed = new Date(ts);
     assert.ok(!isNaN(parsed.getTime()));
     assert.ok(ts.endsWith("Z"));
+  });
+});
+
+describe("durable steering mailbox", () => {
+  const ids = [];
+
+  afterEach(() => {
+    for (const id of ids.splice(0)) {
+      try { fs.unlinkSync(path.join(resolveJobsDir(PROJECT_CWD), `${id}.json`)); } catch {}
+    }
+  });
+
+  function createSteerableJob(suffix) {
+    const id = `test-steering-${suffix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    ids.push(id);
+    writeJobFile(PROJECT_CWD, id, {
+      id,
+      status: "running",
+      phase: "running",
+      acceptingSteering: true,
+      createdAt: nowIso(),
+    });
+    return id;
+  }
+
+  it("persists ordered monotonic messages before acknowledging enqueue", () => {
+    const id = createSteerableJob("order");
+    const first = enqueueSteeringMessage(PROJECT_CWD, id, "first");
+    const second = enqueueSteeringMessage(PROJECT_CWD, id, "second");
+
+    assert.equal(first.sequence, 1);
+    assert.equal(second.sequence, 2);
+    assert.deepEqual(
+      readJobFile(PROJECT_CWD, id).steering.messages.map((message) => message.text),
+      ["first", "second"],
+    );
+    assert.deepEqual(
+      listPendingSteeringMessages(PROJECT_CWD, id).map((message) => message.sequence),
+      [1, 2],
+    );
+  });
+
+  it("records dispatch and replay acknowledgement receipts", () => {
+    const id = createSteerableJob("receipts");
+    const message = enqueueSteeringMessage(PROJECT_CWD, id, "steer");
+    markSteeringMessageDispatched(PROJECT_CWD, id, message.sequence, {
+      deliveryMode: "live_stdin",
+      attempt: 2,
+    });
+    acknowledgeSteeringMessage(PROJECT_CWD, id, message.sequence);
+
+    const stored = readJobFile(PROJECT_CWD, id).steering.messages[0];
+    assert.ok(stored.queuedAt);
+    assert.ok(stored.dispatchedAt);
+    assert.ok(stored.deliveredAt);
+    assert.ok(stored.acknowledgedAt);
+    assert.equal(stored.deliveryMode, "live_stdin");
+    assert.equal(stored.attempt, 2);
+    assert.deepEqual(getSteeringSnapshot(PROJECT_CWD, id), {
+      pendingCount: 0,
+      unacknowledgedCount: 0,
+      latestAcknowledgedSequence: 1,
+      lastSequence: 1,
+    });
+  });
+
+  it("atomically refuses a finalizing window while pending steering exists", () => {
+    const id = createSteerableJob("finalize");
+    enqueueSteeringMessage(PROJECT_CWD, id, "pending");
+    assert.equal(tryCloseSteeringWindow(PROJECT_CWD, id).closed, false);
+
+    markSteeringMessageDispatched(PROJECT_CWD, id, 1, {
+      deliveryMode: "live_stdin",
+      attempt: 1,
+    });
+    assert.equal(tryCloseSteeringWindow(PROJECT_CWD, id).closed, true);
+    assert.equal(readJobFile(PROJECT_CWD, id).acceptingSteering, false);
+    assert.throws(
+      () => enqueueSteeringMessage(PROJECT_CWD, id, "too late"),
+      /not accepting steering/i,
+    );
   });
 });
 

@@ -44,6 +44,30 @@ async function readStdin() {
   return body;
 }
 
+async function readFirstStdinLine() {
+  process.stdin.setEncoding("utf8");
+  return await new Promise((resolve, reject) => {
+    let body = "";
+    const onData = (chunk) => {
+      body += chunk;
+      const newline = body.indexOf("\\n");
+      if (newline < 0) return;
+      cleanup();
+      resolve(body.slice(0, newline));
+    };
+    const onEnd = () => { cleanup(); resolve(body); };
+    const onError = (error) => { cleanup(); reject(error); };
+    const cleanup = () => {
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+    };
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+    process.stdin.on("error", onError);
+  });
+}
+
 function sanitize(value) {
   return String(value || "session")
     .toLowerCase()
@@ -70,10 +94,30 @@ async function main() {
   }
 
   const promptIndex = args.lastIndexOf("--");
-  const prompt =
-    promptIndex >= 0
-      ? args.slice(promptIndex + 1).join(" ")
+  const streamingInput = getValue("--input-format") === "stream-json";
+  const rawInput = promptIndex >= 0
+    ? args.slice(promptIndex + 1).join(" ")
+    : streamingInput
+      ? await readFirstStdinLine()
       : await readStdin();
+  let prompt = rawInput;
+  if (streamingInput) {
+    const inputEvent = JSON.parse(rawInput);
+    prompt = inputEvent.message.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\\n");
+    let steeringBuffer = "";
+    process.stdin.on("data", (chunk) => {
+      steeringBuffer += chunk;
+      while (steeringBuffer.includes("\\n")) {
+        const newline = steeringBuffer.indexOf("\\n");
+        const line = steeringBuffer.slice(0, newline).trim();
+        steeringBuffer = steeringBuffer.slice(newline + 1);
+        if (line) process.stdout.write(line + "\\n");
+      }
+    });
+  }
   const delay = Number((prompt.match(/\\bdelay=(\\d+)\\b/) || [])[1] || 80);
   if (process.env.CLAUDE_ARGS_FILE) {
     require("node:fs").writeFileSync(
@@ -99,6 +143,16 @@ async function main() {
       }
     : null;
 
+  if (streamingInput) {
+    process.stdout.write(JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: sessionId,
+      claude_code_version: "2.1.90",
+      model: getValue("--model"),
+    }) + "\\n");
+  }
+
   process.stdout.write(
     JSON.stringify({
       type: "stream_event",
@@ -123,6 +177,7 @@ async function main() {
   await sleep(delay);
 
   if (emitUnknownNoTerminal) {
+    process.stdin.destroy();
     return;
   }
 
@@ -945,8 +1000,12 @@ describe("claude-companion integration", () => {
       assert.equal(args[args.indexOf("--model") + 1], "claude-haiku-4-5");
       assert.ok(args.includes("--effort"));
       assert.equal(args[args.indexOf("--effort") + 1], "high");
-      assert.ok(args.includes("--permission-mode"));
-      assert.equal(args[args.indexOf("--permission-mode") + 1], "bypassPermissions");
+      if (typeof process.getuid === "function" && process.getuid() === 0) {
+        assert.ok(!args.includes("--permission-mode"));
+      } else {
+        assert.ok(args.includes("--permission-mode"));
+        assert.equal(args[args.indexOf("--permission-mode") + 1], "bypassPermissions");
+      }
       assert.ok(!args.includes("--allowedTools"));
       assert.ok(!args.includes("--prompt-file"));
     } finally {
@@ -2440,6 +2499,85 @@ describe("claude-companion integration", () => {
       }
     } finally {
       await Promise.allSettled([waitSnapshotsPromise]);
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
+  it("steers an active stream durably and resumes a completed job as an exact-session follow-up", async () => {
+    const testEnv = createTestEnvironment();
+    try {
+      const launch = await runCompanionAsyncJson(
+        ["task", "--cwd", testEnv.workspaceDir, "--background", "--json", "steer-target delay=900"],
+        { env: testEnv.env }
+      );
+      await waitForJobState(
+        testEnv,
+        launch.jobId,
+        testEnv.env,
+        (payload) => payload.job.status === "running" && Boolean(payload.job.threadId),
+        "running task with exact Claude session"
+      );
+
+      const steer = runCompanionJson(
+        ["steer", "--cwd", testEnv.workspaceDir, "--json", launch.jobId, "prefer", "the", "smaller", "fixture"],
+        { env: testEnv.env }
+      );
+      assert.equal(steer.mode, "live_stdin");
+      assert.equal(steer.sequence, 1);
+
+      const completed = await waitForTerminalResult(testEnv, launch.jobId, testEnv.env);
+      assert.equal(completed.job.status, "completed");
+      const originalSession = completed.storedJob.threadId;
+      assert.ok(originalSession);
+      assert.equal(completed.storedJob.steering.messages[0].text, "prefer the smaller fixture");
+      assert.ok(completed.storedJob.steering.messages[0].dispatchedAt);
+      assert.ok(completed.storedJob.steering.messages[0].acknowledgedAt);
+
+      const followUp = runCompanionJson(
+        ["steer", "--cwd", testEnv.workspaceDir, "--json", "--follow-up", launch.jobId, "follow-up", "delay=20"],
+        { env: testEnv.env }
+      );
+      assert.equal(followUp.mode, "exact_session_follow_up");
+      assert.equal(followUp.parentJobId, launch.jobId);
+      assert.equal(followUp.sessionId, originalSession);
+      const followUpResult = await waitForTerminalResult(
+        testEnv,
+        followUp.jobId,
+        testEnv.env
+      );
+      assert.equal(followUpResult.job.status, "completed");
+      assert.equal(followUpResult.storedJob.threadId, originalSession);
+      assert.match(followUpResult.storedJob.result.rawOutput, /completed:follow-up delay=20/);
+    } finally {
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
+  it("interrupts one running task into a resumable interrupted state", async () => {
+    const testEnv = createTestEnvironment();
+    try {
+      const launch = await runCompanionAsyncJson(
+        ["task", "--cwd", testEnv.workspaceDir, "--background", "--json", "interrupt-target delay=5000"],
+        { env: testEnv.env }
+      );
+      await waitForJobState(
+        testEnv,
+        launch.jobId,
+        testEnv.env,
+        (payload) => payload.job.status === "running" && Boolean(payload.job.threadId),
+        "running interrupt target"
+      );
+      const interrupted = await runCompanionAsyncJson(
+        ["interrupt", "--cwd", testEnv.workspaceDir, "--json", launch.jobId],
+        { env: testEnv.env, timeoutMs: 15_000 }
+      );
+      assert.equal(interrupted.status, "interrupted");
+      assert.ok(interrupted.sessionId);
+      const result = await waitForTerminalResult(testEnv, launch.jobId, testEnv.env);
+      assert.equal(result.job.status, "interrupted");
+      assert.equal(result.storedJob.result.failureClass, "cancelled_or_interrupted");
+      assert.match(result.storedJob.result.partialOutput, /completed:interrupt-target/);
+    } finally {
       cleanupTestEnvironment(testEnv);
     }
   });

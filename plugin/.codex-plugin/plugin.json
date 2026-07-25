@@ -1,0 +1,33 @@
+{
+  "name": "cc",
+  "version": "0.1.0",
+  "description": "Checkout-owned Claude Code runtime with durable jobs, steering, interruption, recovery, and exact-session follow-up.",
+  "author": {
+    "name": "CoordExp"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "headless-runtime",
+    "durable-jobs",
+    "steering"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Local Claude Runtime",
+    "shortDescription": "Durable local Claude Code jobs for Codex",
+    "longDescription": "Run the host Claude Code CLI through a checkout-owned headless runtime with durable steering, transport recovery, exact-session continuation, and an optional terminal-parity execution profile.",
+    "developerName": "CoordExp",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $cc:rescue to launch a tracked Claude Code task",
+      "Use $cc:steer to redirect a running Claude Code job",
+      "Use $cc:status to inspect local Claude Code work"
+    ]
+  }
+}

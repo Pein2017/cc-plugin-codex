@@ -19,7 +19,7 @@
  *
  * Subcommands:
  *   setup, review, adversarial-review, task, task-worker,
- *   status, result, cancel, task-resume-candidate
+ *   status, result, steer, interrupt, cancel, task-resume-candidate
  */
 
 import { spawn } from "node:child_process";
@@ -38,10 +38,10 @@ import {
 import {
   getClaudeAvailability,
   getClaudeAuthStatus,
-  runClaudeTurn,
   runClaudeReview,
   runClaudeAdversarialReview,
   cancelClaudeProcess,
+  interruptClaudeProcess,
   MODEL_ALIASES,
   resolveEffort,
   resolveDefaultModel,
@@ -90,12 +90,16 @@ import {
   transitionJob,
   writeJobFile,
   cleanupOldJobs,
+  enqueueSteeringMessage,
+  getSteeringSnapshot,
 } from "./lib/state.mjs";
+import { runClaudeTaskSession } from "./lib/claude-supervisor.mjs";
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
   readStoredJob,
   resolveCancelableJob,
+  resolveInterruptibleJob,
   resolveResultJob,
   sortJobsNewestFirst
 } from "./lib/job-control.mjs";
@@ -142,6 +146,8 @@ function printUsage() {
       "  node scripts/claude-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|opus|sonnet|haiku>] [--effort <low|medium|high|xhigh|max>] [prompt]",
       "  node scripts/claude-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/claude-companion.mjs result [job-id] [--json]",
+      "  node scripts/claude-companion.mjs steer <job-id> [--follow-up] <message> [--json]",
+      "  node scripts/claude-companion.mjs interrupt [job-id] [--json]",
       "  node scripts/claude-companion.mjs cancel [job-id] [--json]",
       "  node scripts/claude-companion.mjs session-routing-context [--cwd <path>] [--json]",
       "  node scripts/claude-companion.mjs background-routing-context --kind <review|task> [--cwd <path>] [--json]",
@@ -973,13 +979,22 @@ async function executeTaskRun(request) {
   //   --write  → workspace-write: all tools, OS sandbox limits writes to cwd+/tmp, no network
   //   default  → read-only:       read+web tools only, OS sandbox limits writes to /tmp, no network
   // Permission modes: dontAsk enforces allowedTools; bypassPermissions ignores them.
+  // Claude Code refuses bypassPermissions under root even when its OS sandbox is
+  // enabled. In that environment, omit the permission override and let
+  // autoAllowBashIfSandboxed authorize commands inside the workspace sandbox.
   const sandboxMode = request.write ? "workspace-write" : "read-only";
   const sandboxSettingsFile = createSandboxSettings(sandboxMode);
+  const runningAsRoot =
+    typeof process.getuid === "function" && process.getuid() === 0;
 
   const claudeOptions = {
     model: request.model ?? undefined,
     effort: request.effort ?? undefined,
-    permissionMode: request.write ? "bypassPermissions" : "dontAsk",
+    permissionMode: request.write
+      ? runningAsRoot
+        ? undefined
+        : "bypassPermissions"
+      : "dontAsk",
     settingsFile: sandboxSettingsFile,
   };
 
@@ -1001,8 +1016,13 @@ async function executeTaskRun(request) {
   const prompt = request.prompt || "Continue where you left off.";
   let result;
   try {
-    result = await runClaudeTurn(workspaceRoot, prompt, {
-      ...claudeOptions,
+    result = await runClaudeTaskSession({
+      workspaceRoot,
+      jobId: request.jobId,
+      cwd: workspaceRoot,
+      prompt,
+      write: Boolean(request.write),
+      claudeOptions,
       onProgress: request.onProgress,
       onSpawn: request.onSpawn,
     });
@@ -1023,9 +1043,19 @@ async function executeTaskRun(request) {
     warning: result.warning ?? null,
     sessionId: result.sessionId,
     rawOutput,
+    partialOutput: rawOutput,
+    failureClass: result.failureClass ?? null,
+    failureReason: result.failureReason ?? null,
+    recoveryAttempts: result.recoveryAttempts ?? 0,
+    attempts: result.attempts ?? [],
+    steering: result.steering ?? getSteeringSnapshot(workspaceRoot, request.jobId),
+    runtimeReceipt: result.runtimeReceipt ?? null,
+    lastByteAt: result.lastByteAt ?? null,
+    manualResumeCommand: result.manualResumeCommand ?? null,
+    requiresAttention: Boolean(result.requiresAttention),
     touchedFiles: Array.isArray(result.touchedFiles)
       ? result.touchedFiles
-      : result.toolUses
+      : (result.toolUses ?? [])
           .filter((t) => t.tool === "Write" || t.tool === "Edit")
           .map((t) => t.input?.file_path ?? t.input?.path)
           .filter(Boolean)
@@ -1171,7 +1201,9 @@ function spawnDetachedWorker(cwd, command, jobId, logFile) {
         cwd,
         env: process.env,
         detached: true,
-        stdio: workerLog.stdio,
+        stdio: /** @type {import("node:child_process").StdioOptions} */ (
+          workerLog.stdio
+        ),
         windowsHide: true
       }
     );
@@ -1319,6 +1351,7 @@ function statusPayloadSurfacesStoredResult(job) {
     Boolean(job) &&
     (job.status === "completed" ||
       job.status === "failed" ||
+      job.status === "interrupted" ||
       job.status === "cancelled" ||
       job.status === "cancel_failed" ||
       job.status === "unknown") &&
@@ -1382,6 +1415,7 @@ function enqueueBackgroundTask(cwd, job, request) {
     ...job,
     status: "queued",
     phase: "queued",
+    acceptingSteering: true,
     pid: null,
     logFile,
     request
@@ -1900,6 +1934,182 @@ function handleResult(argv) {
   );
 }
 
+function handleSteer(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["cwd"],
+    booleanOptions: ["json", "follow-up"],
+  });
+  const cwd = resolveCommandCwd(options);
+  const reference = positionals[0] ?? "";
+  const message = positionals.slice(1).join(" ").trim();
+  if (!reference || !message) {
+    throw new Error("Usage: $cc:steer <job-id> [--follow-up] <message>");
+  }
+
+  const snapshot = buildSingleJobSnapshot(cwd, reference);
+  const { workspaceRoot, job } = snapshot;
+  if (job.jobClass !== "task") {
+    throw new Error(`Job ${job.id} is not a Claude task and cannot be steered.`);
+  }
+
+  if (["queued", "running"].includes(job.status)) {
+    if (options["follow-up"]) {
+      throw new Error(`Job ${job.id} is still active; send live steering without --follow-up.`);
+    }
+    const queued = enqueueSteeringMessage(workspaceRoot, job.id, message);
+    const steering = getSteeringSnapshot(workspaceRoot, job.id);
+    const payload = {
+      jobId: job.id,
+      status: job.status,
+      mode: "live_stdin",
+      sequence: queued.sequence,
+      steering,
+    };
+    outputCommandResult(
+      payload,
+      `Steering ${queued.sequence} queued durably for ${job.id}; it will be delivered on the active stream or the next recovery attempt.\n`,
+      options.json
+    );
+    return;
+  }
+
+  if (!options["follow-up"]) {
+    throw new Error(
+      `Job ${job.id} is ${job.status}; pass --follow-up to resume its exact Claude session.`
+    );
+  }
+  if (!["completed", "interrupted"].includes(job.status)) {
+    throw new Error(`Job ${job.id} is ${job.status}; only completed or interrupted jobs accept follow-up.`);
+  }
+  const sessionId = job.threadId ?? job.result?.sessionId ?? null;
+  if (!sessionId) {
+    throw new Error(`Job ${job.id} has no exact Claude session id to resume.`);
+  }
+
+  ensureClaudeReady(cwd);
+  const metadata = buildTaskRunMetadata({ prompt: message, resumeLast: true });
+  const followUpJob = {
+    ...buildTaskJob(
+      workspaceRoot,
+      metadata,
+      Boolean(job.write),
+      job.sessionId ?? null
+    ),
+    parentJobId: job.id,
+  };
+  const originalRequest = readStoredJob(workspaceRoot, job.id)?.request ?? {};
+  const request = buildTaskRequest({
+    cwd: workspaceRoot,
+    model: originalRequest.model ?? null,
+    effort: originalRequest.effort ?? null,
+    prompt: message,
+    write: Boolean(job.write),
+    resumeLast: true,
+    resumeSessionId: sessionId,
+    jobId: followUpJob.id,
+    markViewedOnSuccess: false,
+  });
+  const { payload } = enqueueBackgroundTask(workspaceRoot, followUpJob, request);
+  outputCommandResult(
+    { ...payload, parentJobId: job.id, sessionId, mode: "exact_session_follow_up" },
+    `Follow-up ${payload.jobId} started from ${job.id} on exact Claude session ${sessionId}.\n`,
+    options.json
+  );
+}
+
+async function handleInterrupt(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["cwd"],
+    booleanOptions: ["json"],
+  });
+  const cwd = resolveCommandCwd(options);
+  const reference = positionals[0] ?? "";
+  const { workspaceRoot, job } = resolveInterruptibleJob(cwd, reference);
+  const existing = readStoredJob(workspaceRoot, job.id) ?? job;
+  const transition = transitionJob(
+    workspaceRoot,
+    job.id,
+    ["running"],
+    "interrupting",
+    { acceptingSteering: false, phase: "interrupting" }
+  );
+  if (!transition.transitioned) {
+    throw new Error(`Job ${job.id} is no longer running.`);
+  }
+
+  /** @type {{ interrupted: boolean, note?: string }} */
+  let interruptResult = { interrupted: true, note: "Recovery loop interrupted before respawn." };
+  if (existing.phase !== "reconnecting") {
+    const pid = existing.pid;
+    const pidIdentity = existing.pidIdentity ?? null;
+    if (!pid || !pidIdentity) {
+      interruptResult = {
+        interrupted: false,
+        note: "Refusing to signal a process without a PID identity.",
+      };
+    } else {
+      interruptResult = await interruptClaudeProcess(pid, pidIdentity);
+    }
+  }
+
+  const jobLogFile = resolveJobLogFile(workspaceRoot, job.id);
+  appendLogLine(
+    jobLogFile,
+    interruptResult.interrupted
+      ? `SIGINT requested.${interruptResult.note ? ` ${interruptResult.note}` : ""}`
+      : `Interrupt failed.${interruptResult.note ? ` ${interruptResult.note}` : ""}`
+  );
+
+  if (!interruptResult.interrupted) {
+    transitionJob(workspaceRoot, job.id, ["interrupting"], "running", {
+      phase: "interrupt_failed",
+      acceptingSteering: true,
+      lastInterruptStatus: "interrupt_failed",
+      lastInterruptError: interruptResult.note ?? null,
+    });
+  } else {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = readStoredJob(workspaceRoot, job.id);
+      if (!current || current.status !== "interrupting") break;
+      await sleep(100);
+    }
+    const stillInterrupting = readStoredJob(workspaceRoot, job.id);
+    if (stillInterrupting?.status === "interrupting") {
+      const sessionId = stillInterrupting.threadId ?? null;
+      const partialOutput = stillInterrupting.partialOutput ?? "";
+      transitionJob(workspaceRoot, job.id, ["interrupting"], "interrupted", {
+        phase: "interrupted",
+        completedAt: nowIso(),
+        pid: null,
+        pidIdentity: null,
+        errorMessage: "Interrupted by user; worker terminal receipt did not arrive before the control timeout.",
+        result: {
+          ...(stillInterrupting.result ?? {}),
+          status: "failed",
+          sessionId,
+          rawOutput: partialOutput,
+          partialOutput,
+          failureClass: "cancelled_or_interrupted",
+          failureReason: "SIGINT confirmed; worker terminal receipt timed out",
+        },
+      });
+    }
+  }
+
+  const current = readStoredJob(workspaceRoot, job.id) ?? job;
+  const payload = {
+    jobId: job.id,
+    status: current.status,
+    phase: current.phase,
+    sessionId: current.threadId ?? current.result?.sessionId ?? null,
+    note: interruptResult.note ?? null,
+  };
+  const rendered = interruptResult.interrupted
+    ? `Interrupt requested for ${job.id}. Current status: ${current.status}. The exact Claude session remains resumable.\n`
+    : `Interrupt failed for ${job.id}: ${interruptResult.note} The job remains available for cancel.\n`;
+  outputCommandResult(payload, rendered, options.json);
+}
+
 function handleTaskResumeCandidate(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
@@ -1918,8 +2128,7 @@ function handleTaskResumeCandidate(argv) {
           (job) =>
             job.jobClass === "task" &&
             (job.threadId || job.sessionId) &&
-            job.status !== "queued" &&
-            job.status !== "running" &&
+            !ACTIVE_JOB_STATUSES.has(job.status) &&
             job.sessionId === sessionId
         ) ?? null;
 
@@ -2012,11 +2221,12 @@ async function handleCancel(argv) {
   const { workspaceRoot, job } = resolveCancelableJob(cwd, reference);
   const existing = readStoredJob(workspaceRoot, job.id) ?? {};
 
-  // CAS: running/queued → cancelling
+  // CAS: running/queued/interrupting → cancelling. A stalled graceful
+  // interrupt must remain force-cancellable.
   const transition = transitionJob(
     workspaceRoot,
     job.id,
-    ["running", "queued"],
+    ["running", "queued", "interrupting"],
     "cancelling"
   );
   if (!transition.transitioned) {
@@ -2124,6 +2334,12 @@ async function main() {
       break;
     case "result":
       handleResult(argv);
+      break;
+    case "steer":
+      handleSteer(argv);
+      break;
+    case "interrupt":
+      await handleInterrupt(argv);
       break;
     case "session-routing-context":
       handleSessionRoutingContext(argv);

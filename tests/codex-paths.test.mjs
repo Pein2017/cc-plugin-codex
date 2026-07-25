@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   resolveExpectedPluginDataRoot,
@@ -21,6 +22,7 @@ const originalPluginData = process.env.PLUGIN_DATA;
 const originalClaudePluginData = process.env.CLAUDE_PLUGIN_DATA;
 const originalCodexHome = process.env.CODEX_HOME;
 const tempRoots = [];
+const PROJECT_ROOT = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const PROJECT_VERSION = JSON.parse(
   fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
 ).version;
@@ -47,6 +49,26 @@ afterEach(() => {
 });
 
 describe("plugin data paths", () => {
+  it("keeps local development rooted in the checkout rather than a versioned cache", () => {
+    const marketplace = JSON.parse(
+      fs.readFileSync(
+        path.join(PROJECT_ROOT, ".agents", "plugins", "marketplace.json"),
+        "utf8"
+      )
+    );
+    const codexHome = path.join(PROJECT_ROOT, ".test-codex-home");
+
+    assert.equal(marketplace.name, "cc-local");
+    assert.deepEqual(marketplace.plugins[0].source, {
+      source: "local",
+      path: ".",
+    });
+    assert.equal(resolvePluginCacheInstallInfo(PROJECT_ROOT, codexHome), null);
+    assert.ok(
+      fs.existsSync(path.join(PROJECT_ROOT, "scripts", "claude-companion.mjs"))
+    );
+  });
+
   it("accepts Codex's injected plugin data root when it matches the install identity", () => {
     const expectedRoot = resolveExpectedPluginDataRoot();
     process.env.PLUGIN_DATA = expectedRoot;

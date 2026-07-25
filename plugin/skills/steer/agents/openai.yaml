@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Code Steer"
+  short_description: "Steer a live Claude Code job durably"
+  default_prompt: "Use $cc:steer to redirect an active Claude Code job."
