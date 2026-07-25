@@ -1,6 +1,0 @@
-interface:
-  display_name: "Claude Code Result"
-  short_description: "Read a finished Claude Code job result"
-  default_prompt: "Use $cc-for-pein:result to show the stored output of a finished Claude Code job."
-policy:
-  allow_implicit_invocation: false

@@ -6,26 +6,29 @@ import process from "node:process";
 
 import { parseArgs, splitRawArgumentString } from "./args.mjs";
 import { readStdinIfPiped } from "./input.mjs";
+import { createClaudeRuntime } from "./index.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
-import {
-  renderCancel,
-  renderInterrupt,
-  renderJobStatus,
-  renderLaunch,
-  renderStatus,
-  renderStoredResult,
-} from "./render.mjs";
+
+const PUBLIC_COMMANDS = new Set([
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "interrupt_agent",
+  "list_agents",
+]);
 
 function usage() {
   return [
     "Usage:",
-    "  node runtime/cli.mjs start [--profile safe|terminal-parity] [--write] [--permission-mode <mode> | --dangerously-skip-permissions] [--allowed-tools <csv>] [--resume-session <uuid>] [--wait] <task>",
-    "  node runtime/cli.mjs steer <job-id> <message>",
-    "  node runtime/cli.mjs follow-up <job-id> <message>",
-    "  node runtime/cli.mjs interrupt <job-id>",
-    "  node runtime/cli.mjs cancel <job-id>",
-    "  node runtime/cli.mjs status [job-id] [--wait] [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
-    "  node runtime/cli.mjs result [job-id]",
+    "  node runtime/cli.mjs spawn_agent --task-name <name> --fork-turns none [options] <message>",
+    "  node runtime/cli.mjs send_message <exact-target> <message>",
+    "  node runtime/cli.mjs followup_task <exact-target> <message>",
+    "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
+    "  node runtime/cli.mjs interrupt_agent <exact-target>",
+    "  node runtime/cli.mjs list_agents [--path-prefix </root/prefix>]",
+    "",
+    "Internal diagnostics:",
     "  node runtime/cli.mjs readiness",
   ].join("\n");
 }
@@ -45,143 +48,173 @@ function parse(argv, config = {}) {
   });
 }
 
-function runtimeFor(options) {
-  return createInternalClaudeRuntime({
+function runtimeOptions(options) {
+  return {
     cwd: options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd(),
     envFile: options["env-file"] ?? null,
     env: process.env,
-  });
+  };
 }
 
-function output(payload, rendered, json) {
-  if (json) {
-    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  } else {
-    process.stdout.write(rendered);
+function output(payload, json = false) {
+  const text = JSON.stringify(payload, null, 2);
+  process.stdout.write(json ? `${text}\n` : `${text}\n`);
+}
+
+function rejectForbiddenPublicArgs(argv) {
+  const forbidden = argv.find((value) =>
+    /^(?:--all|--owner(?:-root|-session)?-id|--resume-session|--session-id|--agent-type|--service-tier)(?:=|$)/.test(value)
+  );
+  if (forbidden) {
+    throw new Error(
+      `Unsupported model-facing option ${forbidden}. Cross-root listing and foreign-session adoption are not public lifecycle operations.`
+    );
   }
 }
 
-async function start(argv) {
+function messageFrom(options, positionals, startIndex = 0) {
+  if (options.message != null) return String(options.message);
+  const positional = positionals.slice(startIndex).join(" ");
+  return positional || readStdinIfPiped();
+}
+
+async function spawnAgent(argv) {
+  rejectForbiddenPublicArgs(argv);
   const { options, positionals } = parse(argv, {
-    valueOptions: ["profile", "model", "effort", "permission-mode", "allowed-tools", "resume-session", "prompt-file", "timeout-ms"],
-    booleanOptions: ["write", "wait", "background", "dangerously-skip-permissions"],
-  });
-  const runtime = runtimeFor(options);
-  const prompt = options["prompt-file"]
-    ? fs.readFileSync(path.resolve(runtime.cwd, options["prompt-file"]), "utf8")
-    : positionals.join(" ") || readStdinIfPiped();
-  const receipt = await runtime.start(prompt, {
-    profile: options.profile,
-    write: Boolean(options.write),
-    model: options.model,
-    effort: options.effort,
-    permissionMode: options["permission-mode"],
-    dangerouslySkipPermissions: options["dangerously-skip-permissions"],
-    allowedTools: options["allowed-tools"],
-    resumeSessionId: options["resume-session"],
-  });
-  if (!options.wait) {
-    output(receipt, renderLaunch(receipt), options.json);
-    return;
-  }
-  const waited = await runtime.wait(receipt.jobId, { timeoutMs: options["timeout-ms"] });
-  const result = runtime.result(receipt.jobId);
-  output({ receipt, waited, ...result }, renderStoredResult(result.job), options.json);
-  if (result.job.status !== "completed") process.exitCode = 1;
-}
-
-async function status(argv) {
-  if (argv.some((value) => value === "--all" || value.startsWith("--all="))) {
-    throw new Error("Unknown option --all. Cross-root listing is available only through runtime/operator-cli.mjs.");
-  }
-  const { options, positionals } = parse(argv, {
-    valueOptions: ["timeout-ms", "acknowledge-tokens"],
-    booleanOptions: ["wait"],
-  });
-  const runtime = runtimeFor(options);
-  const id = positionals[0] ?? null;
-  if (options.wait) {
-    const receipt = await runtime.wait(id, {
-      timeoutMs: options["timeout-ms"],
-      acknowledgeTokens: String(options["acknowledge-tokens"] ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    });
-    output(receipt, receipt.job ? renderJobStatus(receipt.job) : `${JSON.stringify(receipt, null, 2)}\n`, options.json);
-    return;
-  }
-  const receipt = runtime.status(id);
-  output(receipt, id ? renderJobStatus(receipt) : renderStatus(receipt), options.json);
-}
-
-function result(argv) {
-  const { options, positionals } = parse(argv);
-  const receipt = runtimeFor(options).result(positionals[0] ?? null);
-  output(receipt, receipt.state === "active" ? renderJobStatus(receipt.job) : renderStoredResult(receipt.job), options.json);
-}
-
-function steer(argv) {
-  const { options, positionals } = parse(argv);
-  const [jobId, ...words] = positionals;
-  const receipt = runtimeFor(options).steer(jobId, words.join(" "));
-  output(receipt, `Steering ${receipt.sequence} queued durably for ${receipt.jobId}.\n`, options.json);
-}
-
-async function followUp(argv) {
-  const { options, positionals } = parse(argv, {
-    valueOptions: ["profile", "model", "effort", "permission-mode", "allowed-tools"],
+    valueOptions: [
+      "task-name",
+      "message",
+      "fork-turns",
+      "description",
+      "model",
+      "reasoning-effort",
+      "execution-profile",
+      "permission-mode",
+      "allowed-tools",
+      "prompt-file",
+    ],
     booleanOptions: ["write", "dangerously-skip-permissions"],
   });
-  const [jobId, ...words] = positionals;
-  const receipt = await runtimeFor(options).followUp(jobId, words.join(" "), {
-    profile: options.profile,
+  const cwd = runtimeOptions(options).cwd;
+  const message = options["prompt-file"]
+    ? fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8")
+    : messageFrom(options, positionals);
+  const receipt = await createClaudeRuntime(runtimeOptions(options)).spawn_agent({
+    task_name: options["task-name"],
+    message,
+    fork_turns: options["fork-turns"],
+    description: options.description,
     model: options.model,
-    effort: options.effort,
-    permissionMode: options["permission-mode"],
-    dangerouslySkipPermissions: options["dangerously-skip-permissions"],
-    allowedTools: options["allowed-tools"],
-    ...(options.write ? { write: true } : {}),
+    reasoning_effort: options["reasoning-effort"],
+    execution_profile: options["execution-profile"],
+    write: Boolean(options.write),
+    permission_mode: options["permission-mode"],
+    dangerously_skip_permissions: Boolean(options["dangerously-skip-permissions"]),
+    allowed_tools: options["allowed-tools"],
   });
-  output(receipt, renderLaunch(receipt), options.json);
+  output(receipt, options.json);
 }
 
-async function interrupt(argv) {
-  const { options, positionals } = parse(argv);
-  const receipt = await runtimeFor(options).interrupt(positionals[0]);
-  output(receipt, renderInterrupt(receipt), options.json);
+function targetAndMessage(options, positionals) {
+  const target = options.target ?? positionals[0];
+  const message = messageFrom(options, positionals, options.target ? 0 : 1);
+  return { target, message };
 }
 
-async function cancel(argv) {
-  const { options, positionals } = parse(argv);
-  const receipt = await runtimeFor(options).cancel(positionals[0]);
-  output(receipt, renderCancel(receipt), options.json);
+function sendMessage(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options, positionals } = parse(argv, { valueOptions: ["target", "message"] });
+  const receipt = createClaudeRuntime(runtimeOptions(options)).send_message(
+    targetAndMessage(options, positionals)
+  );
+  output(receipt, options.json);
+}
+
+async function followupTask(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options, positionals } = parse(argv, {
+    valueOptions: [
+      "target",
+      "message",
+      "model",
+      "reasoning-effort",
+      "execution-profile",
+      "permission-mode",
+      "allowed-tools",
+    ],
+    booleanOptions: ["write", "dangerously-skip-permissions"],
+  });
+  const receipt = await createClaudeRuntime(runtimeOptions(options)).followup_task({
+    ...targetAndMessage(options, positionals),
+    model: options.model,
+    reasoning_effort: options["reasoning-effort"],
+    execution_profile: options["execution-profile"],
+    write: options.write ? true : undefined,
+    permission_mode: options["permission-mode"],
+    dangerously_skip_permissions: options["dangerously-skip-permissions"] ? true : undefined,
+    allowed_tools: options["allowed-tools"],
+  });
+  output(receipt, options.json);
+}
+
+async function waitAgent(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options, positionals } = parse(argv, {
+    valueOptions: ["timeout-ms", "acknowledge-tokens"],
+  });
+  if (positionals.length > 0) {
+    throw new Error("wait_agent is root-scoped and does not accept an Agent target.");
+  }
+  const receipt = await createClaudeRuntime(runtimeOptions(options)).wait_agent({
+    timeout_ms: options["timeout-ms"],
+    acknowledge_tokens: String(options["acknowledge-tokens"] ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  });
+  output(receipt, options.json);
+}
+
+async function interruptAgent(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options, positionals } = parse(argv, { valueOptions: ["target"] });
+  const target = options.target ?? positionals[0];
+  if (positionals.length > (options.target ? 0 : 1)) {
+    throw new Error("interrupt_agent accepts exactly one target.");
+  }
+  const receipt = await createClaudeRuntime(runtimeOptions(options)).interrupt_agent({ target });
+  output(receipt, options.json);
+}
+
+function listAgents(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options, positionals } = parse(argv, { valueOptions: ["path-prefix"] });
+  if (positionals.length > 0) throw new Error("list_agents accepts only --path-prefix.");
+  const receipt = createClaudeRuntime(runtimeOptions(options)).list_agents({
+    path_prefix: options["path-prefix"],
+  });
+  output(receipt, options.json);
 }
 
 async function worker(argv) {
   const { options } = parse(argv, { valueOptions: ["job-id"] });
   if (!options["job-id"]) throw new Error("worker requires --job-id.");
-  await runtimeFor(options).runWorker(options["job-id"]);
+  await createInternalClaudeRuntime(runtimeOptions(options)).runWorker(options["job-id"]);
 }
 
 async function main() {
   const [command, ...argv] = process.argv.slice(2);
   switch (command) {
-    case "start":
-    case "task":
-      await start(argv);
-      break;
-    case "status": await status(argv); break;
-    case "result": result(argv); break;
-    case "steer": steer(argv); break;
-    case "follow-up": await followUp(argv); break;
-    case "interrupt": await interrupt(argv); break;
-    case "cancel": await cancel(argv); break;
+    case "spawn_agent": await spawnAgent(argv); break;
+    case "send_message": sendMessage(argv); break;
+    case "followup_task": await followupTask(argv); break;
+    case "wait_agent": await waitAgent(argv); break;
+    case "interrupt_agent": await interruptAgent(argv); break;
+    case "list_agents": listAgents(argv); break;
     case "worker": await worker(argv); break;
     case "readiness": {
       const { options } = parse(argv);
-      const receipt = runtimeFor(options).readiness();
-      output(receipt, `${receipt.ready ? "ready" : "not ready"}: ${receipt.auth.detail}\n`, options.json);
+      output(createInternalClaudeRuntime(runtimeOptions(options)).readiness(), options.json);
       break;
     }
     case undefined:
@@ -190,7 +223,9 @@ async function main() {
       process.stdout.write(`${usage()}\n`);
       break;
     default:
-      throw new Error(`Unknown command ${command}.\n${usage()}`);
+      if (!PUBLIC_COMMANDS.has(command)) {
+        throw new Error(`Unknown or removed command ${command}.\n${usage()}`);
+      }
   }
 }
 

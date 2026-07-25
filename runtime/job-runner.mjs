@@ -154,10 +154,15 @@ export function createJobRecord(base, options = {}) {
   const ownerRootId = String(
     options.ownerRootId ?? env[OWNER_ROOT_ID_ENV] ?? ""
   ).trim();
+  const agentId = String(options.agentId ?? base.agentId ?? "").trim();
+  if (agentId.includes("\0")) {
+    throw new Error("Agent ID must not contain a null byte.");
+  }
   return {
     ...base,
     createdAt: nowIso(),
-    ...(ownerRootId ? { ownerRootId } : {})
+    ...(ownerRootId ? { ownerRootId } : {}),
+    ...(agentId ? { agentId } : {})
   };
 }
 

@@ -1,0 +1,243 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, it } from "node:test";
+
+import { createAgentStore } from "../../runtime/agent-store.mjs";
+
+const roots = [];
+const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
+
+afterEach(() => {
+  if (originalRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
+  else process.env.CC_RUNTIME_HOME = originalRuntimeHome;
+  while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
+});
+
+function setup(ownerRootId = "codex-root-agent-test") {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-store-"));
+  const workspace = path.join(root, "workspace");
+  const claudeConfigDir = path.join(root, "claude");
+  fs.mkdirSync(workspace);
+  fs.mkdirSync(claudeConfigDir);
+  process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+  roots.push(root);
+  return {
+    root,
+    workspace,
+    claudeConfigDir,
+    ownerRootId,
+    store: createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir }),
+  };
+}
+
+function terminalJob(agent, id, overrides = {}) {
+  return {
+    id,
+    agentId: agent.agentId,
+    ownerRootId: agent.rootThreadId,
+    status: "completed",
+    recoverability: {
+      resumable: true,
+      mode: "exact_session",
+      exactSessionId: "claude-agent-session-1",
+      reason: "completed_exact_session",
+    },
+    ...overrides,
+  };
+}
+
+const storeUrl = new URL("../../runtime/agent-store.mjs", import.meta.url).href;
+
+function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, target, start, count) {
+  const source = [
+    `import { createAgentStore } from ${JSON.stringify(storeUrl)};`,
+    "const [workspace, config, root, target, start, count] = process.argv.slice(1);",
+    "const store = createAgentStore({ cwd: workspace, ownerRootId: root, claudeConfigDir: config });",
+    "for (let index = 0; index < Number(count); index += 1) store.enqueueMessage(target, `message-${Number(start) + index}`);",
+  ].join("\n");
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", source, workspace, claudeConfigDir, ownerRootId, target, String(start), String(count)], {
+      env: { ...process.env, CC_RUNTIME_HOME: runtimeHome },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(stderr || `writer exited ${code}`)));
+  });
+}
+
+describe("Agent durable store", () => {
+  it("atomically reserves normalized names within a logical root while isolating roots", () => {
+    const { workspace, claudeConfigDir, store } = setup();
+    const created = store.createAgent({ task_name: "Researcher", description: "bounded task" });
+    assert.equal(created.path, "/root/Researcher");
+    assert.equal(created.status, "pending_init");
+    assert.equal(created.continuation.mode, "safe_fresh");
+    assert.throws(() => store.createAgent({ task_name: " researcher " }), /already belongs/);
+
+    const otherRoot = createAgentStore({
+      cwd: workspace,
+      ownerRootId: "codex-root-other",
+      claudeConfigDir,
+    });
+    const other = otherRoot.createAgent({ task_name: "researcher" });
+    assert.notEqual(other.agentId, created.agentId);
+    assert.equal(other.path, "/root/researcher");
+    assert.deepEqual(store.listAgents().map((agent) => agent.agentId), [created.agentId]);
+    assert.equal(store.listAllAgents().length, 2);
+    assert.ok(store.listAllAgents().every((agent) => agent.rootHash && agent.claudeSessionId === undefined));
+  });
+
+  it("uses exact ID, path, or normalized-name targeting and reserves one active turn", () => {
+    const { store } = setup();
+    const alpha = store.createAgent({ task_name: "alpha" });
+    const alpine = store.createAgent({ task_name: "alpine" });
+    assert.equal(store.resolveTarget(alpha.agentId).agentId, alpha.agentId);
+    assert.equal(store.resolveTarget(alpha.path).agentId, alpha.agentId);
+    assert.equal(store.resolveTarget(" ALPHA ").agentId, alpha.agentId);
+    assert.throws(() => store.resolveTarget("/root/al"), /No Agent with that exact/);
+    assert.deepEqual(store.listAgents({ pathPrefix: "/root/al" }).map((agent) => agent.path), ["/root/alpha", "/root/alpine"]);
+
+    const first = store.reserveActivation(alpha.path, "job-alpha-1", { initial: true });
+    assert.equal(first.reserved, true);
+    const second = store.reserveActivation(alpha.path, "job-alpha-2", { initial: true });
+    assert.equal(second.reserved, false);
+    assert.equal(second.reason, "already_active");
+  });
+
+  it("keeps Agent mailbox state durable through active delivery, idle queueing, and restart", () => {
+    const { workspace, ownerRootId, claudeConfigDir, store } = setup();
+    const agent = store.createAgent({ task_name: "mailbox" });
+    store.reserveActivation(agent.path, "job-mailbox-1", { initial: true });
+    const live = store.enqueueMessage(agent.path, "first message");
+    assert.equal(live.delivery, "assigned_active");
+    assert.equal(live.message.state, "assigned");
+    const dispatched = store.markMessageDispatched(agent.path, live.message.messageId, { jobId: "job-mailbox-1" });
+    assert.equal(dispatched.message.state, "dispatched");
+    const acknowledged = store.acknowledgeMessage(agent.path, live.message.messageId, { jobId: "job-mailbox-1" });
+    assert.equal(acknowledged.message.state, "acknowledged");
+
+    const final = store.finalizeFromJob(terminalJob(agent, "job-mailbox-1"));
+    assert.equal(final.agent.activeJobId, null);
+    assert.equal(final.agent.status, "completed");
+    const queued = store.enqueueMessage(agent.path, "later message");
+    assert.equal(queued.delivery, "queued_no_turn");
+
+    const afterRestart = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    assert.equal(afterRestart.listMessages(agent.path, { state: "queued" }).length, 1);
+    const activation = afterRestart.reserveActivation(agent.path, "job-mailbox-2");
+    assert.equal(activation.reserved, true);
+    assert.equal(activation.assignedMessages.length, 1);
+    assert.equal(afterRestart.listMessages(agent.path, { state: "assigned" })[0].assignedJobId, "job-mailbox-2");
+  });
+
+  it("serializes concurrent mailbox enqueue without missing or duplicate messages", async () => {
+    const { workspace, claudeConfigDir, ownerRootId, store } = setup();
+    const agent = store.createAgent({ task_name: "concurrent" });
+    const writers = 4;
+    const perWriter = 8;
+    await Promise.all(Array.from({ length: writers }, (_, index) => concurrentWriter(
+      workspace,
+      process.env.CC_RUNTIME_HOME,
+      claudeConfigDir,
+      ownerRootId,
+      agent.path,
+      index * perWriter,
+      perWriter
+    )));
+    const messages = store.listMessages(agent.path);
+    assert.equal(messages.length, writers * perWriter);
+    assert.deepEqual(messages.map((message) => message.sequence), Array.from({ length: writers * perWriter }, (_, index) => index + 1));
+    assert.equal(new Set(messages.map((message) => message.messageId)).size, writers * perWriter);
+    assert.ok(messages.every((message) => message.state === "queued"));
+  });
+
+  it("binds plugin-created Claude sessions once and rejects a different root", () => {
+    const { root, workspace, claudeConfigDir, store } = setup();
+    const agent = store.createAgent({ task_name: "session-owner" });
+    store.reserveActivation(agent.path, "job-session-1", { initial: true });
+    const bound = store.bindSession(agent.path, "claude-shared-session", { jobId: "job-session-1" });
+    assert.equal(bound.agent.claudeSessionId, "claude-shared-session");
+    assert.equal(store.readSessionBinding(claudeConfigDir, "claude-shared-session").agentId, agent.agentId);
+
+    const otherWorkspace = path.join(root, "other-workspace");
+    fs.mkdirSync(otherWorkspace);
+    const other = createAgentStore({ cwd: otherWorkspace, ownerRootId: "codex-root-session-other", claudeConfigDir });
+    const foreignAgent = other.createAgent({ task_name: "foreign" });
+    other.reserveActivation(foreignAgent.path, "job-session-foreign", { initial: true });
+    assert.throws(
+      () => other.bindSession(foreignAgent.path, "claude-shared-session", { jobId: "job-session-foreign" }),
+      /already bound to a different logical root or Agent/
+    );
+    const conflicted = other.finalizeFromJob(terminalJob(foreignAgent, "job-session-foreign", {
+      recoverability: {
+        resumable: true,
+        mode: "exact_session",
+        exactSessionId: "claude-shared-session",
+        reason: "completed_exact_session",
+      },
+    }));
+    assert.equal(conflicted.agent.status, "errored");
+    assert.equal(conflicted.agent.continuation.mode, "blocked");
+    assert.equal(conflicted.agent.continuation.evidence.reason, "session_binding_conflict");
+  });
+
+  it("maps terminal job evidence, preserves the prior session on drift, and reconciles restart state", () => {
+    const { workspace, ownerRootId, claudeConfigDir, store } = setup();
+    const agent = store.createAgent({ task_name: "lifecycle" });
+    store.reserveActivation(agent.path, "job-life-1", { initial: true });
+    store.bindSession(agent.path, "claude-agent-session-1", { jobId: "job-life-1" });
+    const done = store.finalizeFromJob(terminalJob(agent, "job-life-1"));
+    assert.equal(done.reconciled, true);
+    assert.equal(done.agent.status, "completed");
+    assert.equal(done.agent.continuation.mode, "exact_session");
+    assert.equal(done.agent.activeJobId, null);
+    assert.equal(done.agent.latestJobId, "job-life-1");
+
+    store.reserveActivation(agent.path, "job-life-2");
+    const drift = store.finalizeFromJob(terminalJob(agent, "job-life-2", {
+      recoverability: {
+        resumable: true,
+        mode: "exact_session",
+        exactSessionId: "claude-unexpected-session",
+        reason: "completed_exact_session",
+      },
+    }));
+    assert.equal(drift.agent.status, "errored");
+    assert.equal(drift.agent.continuation.mode, "blocked");
+    assert.equal(drift.agent.claudeSessionId, "claude-agent-session-1");
+
+    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    const reconciled = restarted.reconcileFromJobs([terminalJob(agent, "job-life-2", {
+      recoverability: { resumable: false, mode: "blocked", reason: "fatal" },
+      status: "failed",
+    })]);
+    assert.equal(reconciled[0].reason, "already_finalized");
+    assert.equal(restarted.readAgent(agent.path).latestJobId, "job-life-2");
+  });
+
+  it("projects each terminal job once without allowing an older receipt to regress the Agent", () => {
+    const { store } = setup();
+    const agent = store.createAgent({ task_name: "monotonic" });
+    const firstJob = terminalJob(agent, "job-monotonic-1");
+    store.reserveActivation(agent.path, firstJob.id, { initial: true });
+    store.finalizeFromJob(firstJob);
+
+    const secondJob = terminalJob(agent, "job-monotonic-2");
+    store.reserveActivation(agent.path, secondJob.id);
+    const second = store.finalizeFromJob(secondJob);
+    assert.equal(second.agent.latestJobId, secondJob.id);
+    assert.equal(second.agent.latestCompletionSequence, 2);
+
+    const replay = store.reconcileFromJobs([firstJob, secondJob]);
+    assert.deepEqual(replay.map((receipt) => receipt.reason), ["already_finalized", "already_finalized"]);
+    const afterReplay = store.readAgent(agent.path);
+    assert.equal(afterReplay.latestJobId, secondJob.id);
+    assert.equal(afterReplay.latestCompletionSequence, 2);
+  });
+});

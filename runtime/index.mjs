@@ -1,34 +1,30 @@
 /**
  * SPDX-License-Identifier: Apache-2.0
  *
- * Stable public lifecycle seam. Worker execution, readiness probes, waits,
- * persistence, subprocess details, and recovery remain internal to the CLI.
+ * Sole public lifecycle seam. Jobs, Claude processes, persistence, completion
+ * delivery, session binding, and mailbox details remain internal.
  */
-import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
+import { createAgentRuntime } from "./agent-runtime.mjs";
 
 /**
- * @typedef {object} ClaudeRuntimeLifecycle
- * @property {(task: string, options?: object) => Promise<object>} start
- * @property {(jobId: string, message: string) => object} steer
- * @property {(jobId: string) => Promise<object>} interrupt
- * @property {(jobId: string) => Promise<object>} cancel
- * @property {(jobId?: string|null, options?: object) => object} status
- * @property {(jobId?: string|null) => object} result
- * @property {(jobId: string, message: string, options?: object) => Promise<object>} followUp
- * @property {(jobId?: string|null, options?: object) => Promise<object>} wait
+ * @typedef {object} AgentRuntimeLifecycle
+ * @property {(input: object) => Promise<object>} spawn_agent
+ * @property {(input: object) => object} send_message
+ * @property {(input: object) => Promise<object>} followup_task
+ * @property {(input?: object) => Promise<object>} wait_agent
+ * @property {(input: object) => Promise<object>} interrupt_agent
+ * @property {(input?: object) => object} list_agents
  */
 
-/** @returns {ClaudeRuntimeLifecycle} */
+/** @returns {AgentRuntimeLifecycle} */
 export function createClaudeRuntime(options = {}) {
-  const runtime = createInternalClaudeRuntime(options);
+  const runtime = createAgentRuntime(options);
   return Object.freeze({
-    start: runtime.start.bind(runtime),
-    steer: runtime.steer.bind(runtime),
-    interrupt: runtime.interrupt.bind(runtime),
-    cancel: runtime.cancel.bind(runtime),
-    status: runtime.status.bind(runtime),
-    result: runtime.result.bind(runtime),
-    followUp: runtime.followUp.bind(runtime),
-    wait: runtime.wait.bind(runtime),
+    spawn_agent: runtime.spawnAgent.bind(runtime),
+    send_message: runtime.sendMessage.bind(runtime),
+    followup_task: runtime.followupTask.bind(runtime),
+    wait_agent: runtime.waitAgent.bind(runtime),
+    interrupt_agent: runtime.interruptAgent.bind(runtime),
+    list_agents: runtime.listAgents.bind(runtime),
   });
 }

@@ -13,6 +13,7 @@ import path from "node:path";
 import { resolvePluginDataRoot, resolvePluginStateRoot } from "./paths.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 import { validateProcessIdentity, getProcessIdentity } from "./process-control.mjs";
+import { createAgentStore } from "./agent-store.mjs";
 import {
   markCompletionDetailedResultUnavailable,
   reconcileTerminalJobCompletion,
@@ -78,6 +79,20 @@ export function classifyJobRecoverability(job, status = job?.status) {
   if (status === "failed") {
     const explicitlyResumable = job?.result?.resumable === true;
     const drifted = job?.result?.failureClass === "protocol_session_drift";
+    const safeFreshRetry = !exactSessionId && (
+      job?.safeFreshRetry === true ||
+      job?.result?.safeFreshRetry === true ||
+      job?.failureClass === "worker_launch_failed" ||
+      job?.result?.failureClass === "worker_launch_failed"
+    );
+    if (safeFreshRetry) {
+      return {
+        resumable: true,
+        mode: "safe_fresh",
+        exactSessionId: null,
+        reason: "failure_proven_safe_fresh_retry",
+      };
+    }
     return explicitlyResumable && exactSessionId && !drifted
       ? {
           resumable: true,
@@ -461,10 +476,39 @@ export function listStoredJobs(cwd) {
   return readAllJobs(cwd);
 }
 
-export function listJobs(cwd) {
+function readReconciledJobs(cwd) {
   const jobs = reapStaleJobs(cwd, readAllJobs(cwd));
   reconcileCompletionEvents(cwd, jobs);
-  return partitionJobsForRetention(jobs).retained;
+  return jobs;
+}
+
+export function listJobs(cwd) {
+  return partitionJobsForRetention(readReconciledJobs(cwd)).retained;
+}
+
+/**
+ * Read-only reconciliation view for Agent projections.
+ *
+ * Public diagnostics intentionally retain only a bounded terminal-job window,
+ * but cleanup must keep any Agent-linked terminal fact whose registry
+ * projection has not yet been recorded.  The Agent runtime therefore needs a
+ * narrow, durable view of precisely those facts; otherwise an old retained
+ * file can become permanently invisible before it is projected.
+ */
+export function listJobsForAgentReconciliation(cwd) {
+  const jobs = readReconciledJobs(cwd);
+  const retained = partitionJobsForRetention(jobs).retained;
+  const byId = new Map(retained.map((job) => [job.id, job]));
+  for (const job of jobs) {
+    if (
+      Boolean(job?.agentId) &&
+      TERMINAL_JOB_STATUSES.has(job.status) &&
+      !job.agentProjectionReconciledAt
+    ) {
+      byId.set(job.id, job);
+    }
+  }
+  return [...byId.values()];
 }
 
 function ownerRootIdOf(job) {
@@ -475,19 +519,136 @@ function ownerRootIdOf(job) {
       : null;
 }
 
+function isUnboundPreClaudePreparedJob(job) {
+  return job?.activationPrepared === true &&
+    job.activationAttached !== true &&
+    job.preClaudeLaunch === true &&
+    !job.agentId;
+}
+
+/**
+ * Bind an Agent-owned Claude session before its terminal receipt becomes
+ * externally observable.  The session-binding lock is the serialization
+ * point across workspaces, while the job receipt remains the source of the
+ * terminal lifecycle fact.  A deterministic identity violation is therefore
+ * recorded as a failed, blocked job before completion publication.
+ *
+ * This helper also repairs terminal receipts written by an older runtime that
+ * crashed between terminal-state persistence and binding.  Operational errors
+ * (for example a transient registry lock timeout) are deliberately left for a
+ * later reconciliation pass rather than misclassified as a session conflict.
+ */
+function prepareTerminalAgentSessionBinding(cwd, job) {
+  if (!job?.agentId || !TERMINAL_JOB_STATUSES.has(job.status)) return job;
+  const ownerRootId = ownerRootIdOf(job);
+  const sessionId = exactSessionIdOf(job);
+  if (!ownerRootId || !sessionId) return job;
+
+  let store;
+  let agent;
+  try {
+    store = createAgentStore({
+      cwd,
+      ownerRootId,
+      claudeConfigDir: job.claudeConfigDir,
+    });
+    agent = store.readAgent(job.agentId);
+  } catch {
+    // A missing or temporarily unreadable projection must not rewrite a
+    // terminal execution receipt. Startup reconciliation can retry later.
+    return job;
+  }
+  // Retained raw job receipts can predate (or outlive) an Agent registry.
+  // They remain valid diagnostic facts and must not make cleanup/recovery
+  // fail merely because no current Agent projection exists.
+  if (!agent) return job;
+
+  if (agent.claudeSessionId === sessionId) return job;
+  const isCurrent = agent.activeJobId === job.id || (
+    agent.activeJobId == null && (agent.latestJobId == null || agent.latestJobId === job.id)
+  );
+  if (!isCurrent) return job;
+
+  try {
+    store.bindSession(agent.agentId, sessionId, {
+      jobId: job.id,
+      // Early releases did not duplicate the Agent config directory into
+      // every job receipt. The Agent's validated directory is the only safe
+      // fallback; never silently substitute a process-global config path.
+      claudeConfigDir: job.claudeConfigDir ?? agent.claudeConfigDir,
+      allowTerminal: agent.activeJobId == null,
+    });
+    return job;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const reason = /already bound to a different logical root or Agent/.test(detail)
+      ? "session_binding_conflict"
+      : /Claude session drift/.test(detail)
+        ? "session_drift"
+        : null;
+    if (!reason) return job;
+
+    return mutateJob(cwd, job.id, (current) => {
+      if (
+        current.status === "failed" &&
+        current.failureClass === reason &&
+        current.recoverability?.mode === "blocked"
+      ) {
+        return current;
+      }
+      // If the job changed while binding, leave the newer fact intact. A
+      // subsequent reconciliation pass will inspect that receipt directly.
+      if (!TERMINAL_JOB_STATUSES.has(current.status) || current.agentId !== job.agentId) {
+        return current;
+      }
+      const errorMessage = reason === "session_binding_conflict"
+        ? "Claude session is already bound to a different logical root or Agent."
+        : "Observed Claude session differs from this Agent's validated session.";
+      return {
+        ...current,
+        status: "failed",
+        phase: reason,
+        failureClass: reason,
+        errorMessage,
+        completionSummary: errorMessage,
+        recoverability: {
+          resumable: false,
+          mode: "blocked",
+          exactSessionId: null,
+          reason,
+        },
+        sessionBindingFailure: {
+          reason,
+          observedSessionId: sessionId,
+          recordedAt: nowIso(),
+        },
+      };
+    });
+  }
+}
+
 export function reconcileCompletionEvents(cwd, jobs = readAllJobs(cwd)) {
+  /** @type {any[]} */
   const receipts = [];
-  for (const job of jobs) {
+  for (let index = 0; index < jobs.length; index += 1) {
+    const job = jobs[index];
     if (!TERMINAL_JOB_STATUSES.has(job.status)) continue;
-    const ownerRootId = ownerRootIdOf(job);
+    // A pre-Claude activation fact belongs to the launcher, not yet to an
+    // Agent turn. Its terminal outcome is useful diagnostics only; emitting a
+    // root completion here would claim a task result for work that never
+    // attached to (or invoked) Claude.
+    if (isUnboundPreClaudePreparedJob(job)) continue;
+    const prepared = prepareTerminalAgentSessionBinding(cwd, job);
+    jobs[index] = prepared;
+    const ownerRootId = ownerRootIdOf(prepared);
     if (!ownerRootId) continue;
     try {
-      receipts.push(reconcileTerminalJobCompletion(cwd, ownerRootId, job));
+      receipts.push(reconcileTerminalJobCompletion(cwd, ownerRootId, prepared));
     } catch (error) {
       receipts.push({
         reconciled: false,
         reason: "reconciliation_failed",
-        jobId: job.id,
+        jobId: prepared.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -656,9 +817,24 @@ function normalizeSteeringState(job) {
   };
 }
 
+/**
+ * Append one manual steering message, or get the existing entry for an Agent
+ * mailbox message ID while holding the job's durable mutation lock.
+ *
+ * @param {{ kind?: string, messageId?: string }} [options]
+ */
 export function enqueueSteeringMessage(cwd, jobId, text, options = {}) {
   const normalizedText = String(text ?? "").trim();
   if (!normalizedText) throw new Error("Steering message must not be empty.");
+  const requestMessageId = Reflect.get(options, "messageId");
+  const agentMessageId = requestMessageId == null
+    ? null
+    : String(requestMessageId).trim();
+  if (requestMessageId != null && !agentMessageId) {
+    throw new Error("Steering message idempotency key must not be empty.");
+  }
+  const kind = Reflect.get(options, "kind") ?? "steer";
+  /** @type {any} */
   let queuedMessage = null;
   mutateJob(cwd, jobId, (job) => {
     if (!["queued", "running"].includes(job.status)) {
@@ -668,9 +844,27 @@ export function enqueueSteeringMessage(cwd, jobId, text, options = {}) {
       throw new Error(`Job ${jobId} is not accepting steering while finalizing.`);
     }
     const steering = normalizeSteeringState(job);
+    // Agent mailbox delivery is a two-record transaction: the job receives a
+    // stream-json steering entry first, then the Agent record is marked
+    // dispatched.  A crash in that gap retries this mutation.  Persisting and
+    // looking up the Agent message ID while holding the job lock makes the
+    // steering sequence a durable get-or-create result instead of appending a
+    // duplicate user message on every recovery pass.  Legacy steering entries
+    // intentionally have no agentMessageId and retain their append-only
+    // behavior.
+    const existing = agentMessageId
+      ? steering.messages.find((message) => message?.agentMessageId === agentMessageId)
+      : null;
+    if (existing) {
+      if (existing.text !== normalizedText || (existing.kind ?? "steer") !== kind) {
+        throw new Error(`Steering idempotency key ${agentMessageId} conflicts with an existing message.`);
+      }
+      queuedMessage = existing;
+      return job;
+    }
     queuedMessage = {
       sequence: steering.nextSequence,
-      kind: options.kind ?? "steer",
+      kind,
       text: normalizedText,
       queuedAt: nowIso(),
       dispatchedAt: null,
@@ -678,6 +872,7 @@ export function enqueueSteeringMessage(cwd, jobId, text, options = {}) {
       acknowledgedAt: null,
       deliveryMode: null,
       attempt: null,
+      ...(agentMessageId ? { agentMessageId } : {}),
     };
     return {
       ...job,
@@ -688,7 +883,7 @@ export function enqueueSteeringMessage(cwd, jobId, text, options = {}) {
       },
     };
   });
-  return queuedMessage;
+  return /** @type {any} */ (queuedMessage);
 }
 
 export function listPendingSteeringMessages(cwd, jobId) {
@@ -928,6 +1123,7 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
     : [expectedStatuses];
   const fd = acquireJobLock(lockFile);
 
+  /** @type {any} */
   let outcome;
   try {
     const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
@@ -962,6 +1158,11 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
     releaseJobLock(lockFile, fd);
   }
   if (outcome.transitioned && TERMINAL_JOB_STATUSES.has(next)) {
+    // Persist the execution outcome first, then bind (or correct) its
+    // Agent-owned session before publishing the completion. If this process
+    // crashes in-between, list/recovery reconciliation runs the same helper
+    // before it can publish an Agent completion event.
+    outcome.job = prepareTerminalAgentSessionBinding(cwd, outcome.job);
     const sessionLeaseReleased = releaseJobSessionLease(outcome.job);
     const residencyReceipt = {
       childProcessExited: outcome.job.pid == null,
@@ -979,7 +1180,7 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
       residencyReceipt,
     };
     const ownerRootId = ownerRootIdOf(outcome.job);
-    if (ownerRootId) {
+    if (ownerRootId && !isUnboundPreClaudePreparedJob(outcome.job)) {
       try {
         const completion = reconcileTerminalJobCompletion(cwd, ownerRootId, outcome.job);
         outcome.completion = completion;
@@ -1020,10 +1221,30 @@ function writeAtomic(filePath, data) {
 
 export function cleanupOldJobs(cwd) {
   const jobs = reapStaleJobs(cwd, readAllJobs(cwd));
-  reconcileCompletionEvents(cwd, jobs);
+  // Reconcile while the terminal receipt still exists.  A completion inbox is
+  // a rebuildable projection, but it must be materialized before bounded job
+  // retention can remove the detailed receipt it is derived from.
+  const completionReceipts = reconcileCompletionEvents(cwd, jobs);
+  const completionByJobId = new Map(
+    completionReceipts
+      .filter((receipt) => receipt?.jobId || receipt?.event?.jobId)
+      .map((receipt) => [receipt.jobId ?? receipt.event.jobId, receipt])
+  );
   const { pruned: toRemove } = partitionJobsForRetention(jobs);
   for (const job of toRemove) {
     const ownerRootId = ownerRootIdOf(job);
+    const completion = completionByJobId.get(job.id);
+    // Keep an Agent-linked terminal fact until its event has been durably
+    // reconciled.  Legacy unowned job diagnostics keep their historical
+    // cleanup behavior; a modern Agent job can never be safely detached from
+    // its root-owned completion projection.
+    const completionReady = ownerRootId
+      ? Boolean(completion?.event)
+      : !job.agentId;
+    const agentProjectionReady = !job.agentId || Boolean(job.agentProjectionReconciledAt);
+    if (!completionReady || !agentProjectionReady) {
+      continue;
+    }
     if (ownerRootId) {
       try { markCompletionDetailedResultUnavailable(cwd, ownerRootId, job.id); } catch {}
     }

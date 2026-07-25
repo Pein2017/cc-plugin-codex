@@ -1,9 +1,9 @@
 /**
  * SPDX-License-Identifier: Apache-2.0
  *
- * ClaudeRuntime is the only public lifecycle interface. Codex skills and tests
- * call this module; subprocess, persistence, retries, and stream-json details
- * stay internal.
+ * Internal one-turn Claude job runtime. The public Agent lifecycle is composed
+ * above this module; subprocess, persistence, retries, and stream-json details
+ * stay here.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -33,6 +33,7 @@ import {
   readJobFile,
   releaseSessionLease,
   reserveSessionLease,
+  resolveJobFile,
   resolveJobLogFile,
   transitionJob,
   writeJobFile,
@@ -155,7 +156,7 @@ class ClaudeRuntime {
   assertOwnerRoot() {
     if (!this.ownerRootId) {
       throw new Error(
-        "A trusted Codex root identity is required. Invoke this lifecycle through the plugin bootstrap so CODEX_THREAD_ID can be captured."
+        "A Codex root identity is required. Invoke this lifecycle through the plugin bootstrap so CODEX_THREAD_ID can be captured."
       );
     }
     return this.ownerRootId;
@@ -199,6 +200,21 @@ class ClaudeRuntime {
     return receipt;
   }
 
+  assertPreparedReadiness(receipt) {
+    if (receipt == null) return this.assertReady();
+    if (
+      receipt?.ready !== true ||
+      receipt?.availability?.available !== true ||
+      receipt?.auth?.loggedIn !== true ||
+      receipt?.cwd !== this.cwd ||
+      receipt?.claudeConfigDir !== (this.env.CLAUDE_CONFIG_DIR ?? null) ||
+      receipt?.sourceRoot !== this.sourceRoot
+    ) {
+      throw new Error("Internal start received an invalid readiness receipt.");
+    }
+    return receipt;
+  }
+
   list() {
     const ownerRootId = this.assertOwnerRoot();
     const jobs = sortJobsNewestFirst(listJobs(this.cwd));
@@ -236,7 +252,7 @@ class ClaudeRuntime {
     }
   }
 
-  async start(task, options = {}) {
+  prepareStart(task, options = {}) {
     const ownerRootId = this.assertOwnerRoot();
     const prompt = String(task ?? "").trim();
     const resumeSessionId = String(options.resumeSessionId ?? "").trim() || null;
@@ -244,47 +260,45 @@ class ClaudeRuntime {
       throw new Error("start requires a task or an explicit Claude session to resume.");
     }
     const profile = normalizeProfileName(options.profile);
-    const readiness = this.assertReady();
-    const jobId = generateJobId("cc");
+    // Agent orchestration validates this potentially slow CLI/auth check
+    // before it publishes an active Agent reservation. Reuse that exact,
+    // scope-bound receipt here so the small reservation-to-job window contains
+    // only local durable writes and worker launch.
+    const readiness = this.assertPreparedReadiness(options.readinessReceipt);
+    const jobId = String(options.jobId ?? "").trim() || generateJobId("cc");
+    if (!/^[\w.-]+$/.test(jobId)) throw new Error(`Invalid internal Claude job id: ${jobId}.`);
     const title = options.title ?? "Claude Code Task";
-    const sessionLease = resumeSessionId
-      ? reserveSessionLease(
-          this.cwd,
-          this.env.CLAUDE_CONFIG_DIR,
-          resumeSessionId,
-          jobId
-        )
-      : null;
+    const candidateAgentId = String(options.agentId ?? "").trim() || null;
+    let launcherIdentity = null;
+    try { launcherIdentity = getProcessIdentity(process.pid); } catch {}
     try {
       const base = createJobRecord({
-      id: jobId,
-      kind: "task",
-      kindLabel: "run",
-      jobClass: "task",
-      title,
-      summary: summaryOf(prompt),
-      workspaceRoot: this.cwd,
-      write: Boolean(options.write),
-      profile,
-      readiness,
-      ...(sessionLease ? {
-        sessionLease: {
-          configIdentity: sessionLease.configIdentity,
-          sessionId: sessionLease.sessionId,
-        },
-      } : {}),
-      parentJobId: options.parentJobId ?? null,
-    }, {
-      cwd: this.cwd,
-      env: this.env,
-      ownerRootId,
-    });
+        id: jobId,
+        kind: "task",
+        kindLabel: "run",
+        jobClass: "task",
+        title,
+        summary: summaryOf(prompt),
+        workspaceRoot: this.cwd,
+        write: Boolean(options.write),
+        profile,
+        // A prepared fact intentionally has no persisted agentId. Losing a
+        // concurrent Agent reservation must leave a disposable diagnostic
+        // record, never a terminal fact that can project onto an Agent.
+        claudeConfigDir: this.env.CLAUDE_CONFIG_DIR,
+        readiness,
+        parentJobId: options.parentJobId ?? null,
+      }, {
+        cwd: this.cwd,
+        env: this.env,
+        ownerRootId,
+      });
       const logFile = createJobLogFile(this.cwd, jobId, title);
       const request = {
-      prompt: prompt || "Continue where you left off.",
-      write: Boolean(options.write),
-      profile,
-      model: options.model ?? null,
+        prompt: prompt || "Continue where you left off.",
+        write: Boolean(options.write),
+        profile,
+        model: options.model ?? null,
         effort: options.effort ?? null,
         permissionMode: options.permissionMode ?? null,
         dangerouslySkipPermissions: Boolean(options.dangerouslySkipPermissions),
@@ -294,18 +308,110 @@ class ClaudeRuntime {
       writeJobFile(this.cwd, jobId, {
         ...base,
         status: "queued",
-        phase: "queued",
+        phase: "activation_prepared",
+        activationPrepared: true,
+        activationAttached: false,
+        preClaudeLaunch: true,
+        safeFreshRetry: true,
         acceptingSteering: true,
-        workerPid: null,
-        workerPidIdentity: null,
+        // The caller owning this prepared fact is an identity-verified launch
+        // boundary. Reaping consults this PID, so a slow local lease/write
+        // cannot be mistaken for a dead reservation while the caller lives.
+        workerPid: process.pid,
+        workerPidIdentity: launcherIdentity,
         pid: null,
         pidIdentity: null,
         logFile,
         request,
       });
-      appendLogLine(logFile, "Queued for background execution.");
+      appendLogLine(logFile, "Prepared for Agent activation.");
+      return {
+        jobId,
+        agentId: candidateAgentId,
+        status: "prepared",
+        title,
+        summary: base.summary,
+        profile,
+        workspaceRoot: this.cwd,
+      };
+    } catch (error) {
+      try { fs.unlinkSync(resolveJobFile(this.cwd, jobId)); } catch {}
+      try { fs.unlinkSync(resolveJobLogFile(this.cwd, jobId)); } catch {}
+      throw error;
+    }
+  }
 
-      const workerLog = createWorkerLogStdio(logFile);
+  attachPreparedStart(prepared, agentId) {
+    const jobId = assertJobId(prepared?.jobId);
+    const id = String(agentId ?? "").trim();
+    if (!id) throw new Error("Prepared Agent start requires an Agent ID.");
+    const job = readJobFile(this.cwd, jobId);
+    if (!job || job.status !== "queued" || job.phase !== "activation_prepared" || job.agentId) {
+      throw new Error(`Prepared job ${jobId} is no longer attachable to an Agent.`);
+    }
+    patchJob(this.cwd, jobId, {
+      agentId: id,
+      activationAttached: true,
+      activationAttachedAt: nowIso(),
+    });
+    return { ...prepared, agentId: id };
+  }
+
+  abortPreparedStart(prepared) {
+    const jobId = assertJobId(prepared?.jobId);
+    const job = readJobFile(this.cwd, jobId);
+    // Only remove a fact that is still owned by this launcher and has not
+    // published a detached worker. Once the worker PID changes, ordinary job
+    // lifecycle recovery is authoritative.
+    if (!job || job.status !== "queued" || job.workerPid !== process.pid || job.pid != null) {
+      return false;
+    }
+    try { fs.unlinkSync(resolveJobFile(this.cwd, jobId)); } catch { return false; }
+    try { fs.unlinkSync(resolveJobLogFile(this.cwd, jobId)); } catch {}
+    return true;
+  }
+
+  async launchPreparedStart(prepared, task) {
+    const jobId = assertJobId(prepared?.jobId);
+    const current = readJobFile(this.cwd, jobId);
+    if (!current || current.status !== "queued" || current.workerPid !== process.pid) {
+      throw new Error(`Prepared job ${jobId} is no longer owned by this launcher.`);
+    }
+    if (prepared.agentId && current.agentId !== prepared.agentId) {
+      throw new Error(`Prepared job ${jobId} is not attached to the expected Agent.`);
+    }
+    const prompt = String(task ?? "").trim();
+    const resumeSessionId = String(current.request?.resumeSessionId ?? "").trim() || null;
+    if (!prompt && !resumeSessionId) {
+      throw new Error("Prepared start requires a task or an explicit Claude session to resume.");
+    }
+    const sessionLease = resumeSessionId
+      ? reserveSessionLease(this.cwd, this.env.CLAUDE_CONFIG_DIR, resumeSessionId, jobId)
+      : null;
+    try {
+      const launched = patchJob(this.cwd, jobId, {
+        summary: summaryOf(prompt),
+        phase: "queued",
+        activationPrepared: false,
+        preClaudeLaunch: false,
+        safeFreshRetry: false,
+        ...(sessionLease ? {
+          sessionLease: {
+            configIdentity: sessionLease.configIdentity,
+            sessionId: sessionLease.sessionId,
+          },
+        } : {}),
+        request: {
+          ...current.request,
+          prompt: prompt || "Continue where you left off.",
+        },
+      });
+      if (!launched || launched.status !== "queued") {
+        throw new Error(`Prepared job ${jobId} could not enter the queued launch state.`);
+      }
+      appendLogLine(launched.logFile, "Queued for background execution.");
+
+      const workerLog = createWorkerLogStdio(launched.logFile);
       try {
         const child = spawn(process.execPath, [CLI_PATH, "worker", "--cwd", this.cwd, "--job-id", jobId], {
           cwd: this.cwd,
@@ -319,6 +425,8 @@ class ClaudeRuntime {
             phase: "failed",
             completedAt: nowIso(),
             errorMessage: `Worker launch failed: ${error.message}`,
+            failureClass: "worker_launch_failed",
+            safeFreshRetry: true,
             workerPid: null,
             workerPidIdentity: null,
             pid: null,
@@ -338,10 +446,11 @@ class ClaudeRuntime {
 
       return {
         jobId,
+        agentId: launched.agentId ?? null,
         status: "queued",
-        title,
-        summary: base.summary,
-        profile,
+        title: launched.title,
+        summary: launched.summary,
+        profile: launched.profile,
         workspaceRoot: this.cwd,
       };
     } catch (error) {
@@ -356,13 +465,26 @@ class ClaudeRuntime {
     }
   }
 
+  async start(task, options = {}) {
+    const prepared = this.prepareStart(task, options);
+    try {
+      const attached = prepared.agentId
+        ? this.attachPreparedStart(prepared, prepared.agentId)
+        : prepared;
+      return await this.launchPreparedStart(attached, task);
+    } catch (error) {
+      this.abortPreparedStart(prepared);
+      throw error;
+    }
+  }
+
   async runWorker(jobId) {
     const ownerRootId = this.assertOwnerRoot();
     const id = assertJobId(jobId);
     const stored = readJobFile(this.cwd, id);
     if (!stored) throw new Error(`No stored Claude job found for ${id}.`);
     if (jobOwnerRootId(stored) !== ownerRootId) {
-      throw new Error(`Stored Claude job ${id} does not belong to the trusted Codex root.`);
+      throw new Error(`Stored Claude job ${id} does not belong to the current Codex root scope.`);
     }
     if (stored.status !== "queued") {
       throw new Error(`Claude job ${id} is ${stored.status}; worker requires queued.`);
@@ -496,23 +618,62 @@ class ClaudeRuntime {
     });
     if (!transition.transitioned) throw new Error(`Claude job ${job.id} is no longer running.`);
 
-    /** @type {{ interrupted: boolean, note?: string }} */
+    /** @type {{ interrupted: boolean, note?: string, controlFailure?: string, forced?: boolean }} */
     let receipt = {
       interrupted: true,
       note: "Supervisor will stop before spawning another Claude attempt.",
     };
     if (stored.pid) {
       if (!stored.pidIdentity) {
-        receipt = { interrupted: false, note: "Refusing to signal a process without a PID identity." };
+        receipt = {
+          interrupted: false,
+          note: "Refusing to signal a process without a PID identity.",
+          controlFailure: "missing_identity",
+        };
       } else {
         receipt = await interruptClaudeProcess(stored.pid, stored.pidIdentity);
       }
     }
     if (!receipt.interrupted) {
-      transitionJob(this.cwd, job.id, ["interrupting"], "running", {
-        phase: "interrupt_failed",
-        acceptingSteering: true,
-      });
+      const forced = !receipt.controlFailure && stored.pid && stored.pidIdentity
+        ? await cancelClaudeProcess(stored.pid, stored.pidIdentity)
+        : { cancelled: false, note: receipt.note };
+      if (forced.cancelled) {
+        const current = readJobFile(this.cwd, job.id) ?? stored;
+        transitionJob(this.cwd, job.id, ["interrupting"], "failed", {
+          phase: "forced_interruption_unflushed",
+          completedAt: nowIso(),
+          acceptingSteering: false,
+          pid: null,
+          pidIdentity: null,
+          workerPid: null,
+          workerPidIdentity: null,
+          result: {
+            ...(current.result ?? {}),
+            status: "failed",
+            sessionId: resultSessionId(current),
+            rawOutput: current.partialOutput ?? "",
+            partialOutput: current.partialOutput ?? "",
+            resumable: false,
+            failureClass: "forced_interruption_unflushed",
+            failureReason: "Claude process tree required forced termination without transcript flush evidence.",
+          },
+        });
+        receipt = {
+          interrupted: false,
+          forced: true,
+          note: "Turn was force-terminated and is not considered safely resumable.",
+        };
+      } else {
+        transitionJob(this.cwd, job.id, ["interrupting"], "running", {
+          phase: "interrupt_failed",
+          acceptingSteering: true,
+        });
+        receipt = {
+          ...receipt,
+          note: forced.note ?? receipt.note,
+        };
+      }
     } else {
       for (let attempt = 0; attempt < 50; attempt += 1) {
         if (readJobFile(this.cwd, job.id)?.status !== "interrupting") break;
@@ -545,53 +706,12 @@ class ClaudeRuntime {
       interrupted: receipt.interrupted,
       status: current.status,
       sessionId: resultSessionId(current),
+      forced: receipt.forced === true,
       note: receipt.note ?? null,
     };
   }
 
-  async cancel(jobId) {
-    const job = this.status(jobId);
-    if (!new Set(["queued", "running", "interrupting"]).has(job.status)) {
-      throw new Error(`Claude job ${job.id} is ${job.status}; only active jobs can be cancelled.`);
-    }
-    const stored = readJobFile(this.cwd, job.id) ?? job;
-    const transition = transitionJob(this.cwd, job.id, ["queued", "running", "interrupting"], "cancelling", {
-      acceptingSteering: false,
-      phase: "cancelling",
-    });
-    if (!transition.transitioned) throw new Error(`Claude job ${job.id} left active state.`);
-    /** @type {{ cancelled: boolean, note?: string }} */
-    let receipt = { cancelled: true, note: "No Claude process to cancel; supervisor stop requested." };
-    const controlPid = stored.pid ?? (stored.status === "queued" ? stored.workerPid : null);
-    const controlIdentity = stored.pid
-      ? stored.pidIdentity
-      : stored.workerPidIdentity;
-    if (controlPid) {
-      receipt = controlIdentity
-        ? await cancelClaudeProcess(controlPid, controlIdentity)
-        : { cancelled: false, note: "Refusing to cancel a process without a PID identity." };
-    }
-    const status = receipt.cancelled ? "cancelled" : "running";
-    transitionJob(this.cwd, job.id, ["cancelling"], status, {
-      ...(receipt.cancelled ? { completedAt: nowIso() } : {}),
-      phase: receipt.cancelled ? "cancelled" : "cancel_failed",
-      acceptingSteering: false,
-      errorMessage: receipt.cancelled ? "Cancelled by user." : `Cancel failed; retry is allowed: ${receipt.note}`,
-      ...(receipt.cancelled ? {
-        pid: null,
-        pidIdentity: null,
-        workerPid: null,
-        workerPidIdentity: null,
-      } : {}),
-    });
-    cleanupOldJobs(this.cwd);
-    return {
-      jobId: job.id,
-      status,
-      cancelFailed: !receipt.cancelled,
-      note: receipt.note ?? null,
-    };
-  }
+
 
   result(jobId = null) {
     const jobs = this.list();
@@ -608,7 +728,11 @@ class ClaudeRuntime {
 
   async wait(jobId, options = {}) {
     const ownerRootId = this.assertOwnerRoot();
-    const timeoutMs = Math.max(0, Number(options.timeoutMs) || 240_000);
+    const requestedTimeout = options.timeoutMs == null ? 240_000 : Number(options.timeoutMs);
+    if (!Number.isFinite(requestedTimeout) || requestedTimeout < 0) {
+      throw new Error("wait timeoutMs must be a non-negative finite number.");
+    }
+    const timeoutMs = requestedTimeout;
     const pollIntervalMs = Math.max(50, Number(options.pollIntervalMs) || 500);
     const acknowledgeTokens = Array.isArray(options.acknowledgeTokens)
       ? options.acknowledgeTokens

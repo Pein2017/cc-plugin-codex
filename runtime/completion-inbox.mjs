@@ -43,6 +43,24 @@ function assertPositiveInteger(value, label) {
   return number;
 }
 
+function optionalAgentId(value) {
+  if (value == null) return null;
+  return assertText(value, "agent ID");
+}
+
+/**
+ * Agent lifecycle is a projection of the terminal job receipt.  Keep this
+ * mapping here with the completion fact so a registry can rebuild its state
+ * without trusting a stale in-memory lifecycle value.
+ */
+export function agentStatusForTerminalJob(status) {
+  if (status === "completed") return "completed";
+  if (status === "interrupted") return "interrupted";
+  // Legacy cancelled receipts remain diagnosable, but an Agent never gets a
+  // public cancelled lifecycle.  Failed/unknown terminal evidence is errored.
+  return "errored";
+}
+
 function boundedUtf8(value, maxBytes = MAX_COMPLETION_MESSAGE_BYTES) {
   const text = String(value ?? "");
   if (Buffer.byteLength(text, "utf8") <= maxBytes) {
@@ -188,6 +206,14 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   const expectedId = deterministicCompletionEventId(ownerRootId, jobId);
   if (event.eventId !== expectedId) {
     throw new Error("Completion event identity does not match its owner and job.");
+  }
+  const agentId = optionalAgentId(event.agentId);
+  if (agentId) {
+    if (event.agentStatus !== agentStatusForTerminalJob(event.terminalStatus)) {
+      throw new Error("Agent completion status does not match its terminal job receipt.");
+    }
+  } else if (event.agentStatus != null) {
+    throw new Error("Unlinked completion event must not claim an Agent status.");
   }
   if (!TERMINAL_STATUSES.has(event.terminalStatus)) {
     throw new Error(`Invalid terminal completion status: ${event.terminalStatus}.`);
@@ -417,11 +443,14 @@ function normalizeCompletionInput(ownerRootId, completion) {
   }
   const resultPointer = completion.resultPointer == null ? null : String(completion.resultPointer);
   const final = boundedUtf8(completion.finalMessage ?? completion.summary);
+  const agentId = optionalAgentId(completion.agentId);
   return {
     version: COMPLETION_INBOX_VERSION,
     eventId: deterministicCompletionEventId(ownerRootId, jobId),
     ownerRootId: assertText(ownerRootId, "owner root ID"),
     jobId,
+    agentId,
+    agentStatus: agentId ? agentStatusForTerminalJob(terminalStatus) : null,
     terminalStatus,
     completedAt: completion.completedAt == null ? nowIso() : assertText(completion.completedAt, "completion timestamp"),
     summary: assertText(completion.summary, "completion summary"),
@@ -442,6 +471,8 @@ function publicEvent(event) {
     sequence: event.sequence,
     eventId: event.eventId,
     jobId: event.jobId,
+    agentId: event.agentId ?? null,
+    agentStatus: event.agentStatus ?? null,
     terminalStatus: event.terminalStatus,
     completedAt: event.completedAt,
     summary: event.summary,
@@ -455,16 +486,69 @@ function publicEvent(event) {
   };
 }
 
-export function appendCompletionEvent(cwd, ownerRootId, completion) {
+function sameCompletionFact(existing, normalized) {
+  return [
+    "version",
+    "eventId",
+    "ownerRootId",
+    "jobId",
+    "agentId",
+    "agentStatus",
+    "terminalStatus",
+    "completedAt",
+    "summary",
+    "detailedResultAvailable",
+    "resultPointer",
+    "finalMessage",
+    "truncated",
+    "claudeSessionIdAvailable",
+  ].every((field) => existing[field] === normalized[field]) &&
+    JSON.stringify(existing.resumability) === JSON.stringify(normalized.resumability);
+}
+
+export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}) {
   const owner = assertText(ownerRootId, "owner root ID");
   const normalized = normalizeCompletionInput(owner, completion);
   return withInboxLock(cwd, owner, (inbox, filePath) => {
     const existing = inbox.events.find((event) => event.eventId === normalized.eventId);
     if (existing) {
-      if (existing.jobId !== normalized.jobId || existing.ownerRootId !== owner) {
+      if (
+        existing.jobId !== normalized.jobId ||
+        existing.ownerRootId !== owner ||
+        (existing.agentId ?? null) !== normalized.agentId
+      ) {
         throw new Error("Completion event identity collision.");
       }
-      return { appended: false, event: publicEvent(existing), sequence: existing.sequence };
+      if (options.reconcileExisting === true && !sameCompletionFact(existing, normalized)) {
+        // Completion facts already acknowledged by Codex are immutable. A
+        // durable job correction remains diagnosable, but must not rewrite a
+        // receipt the caller may already have acted upon.
+        if (existing.sequence <= inbox.acknowledgedThrough) {
+          return {
+            appended: false,
+            corrected: false,
+            reason: "acknowledged_event_immutable",
+            event: publicEvent(existing),
+            sequence: existing.sequence,
+          };
+        }
+        const corrected = {
+          ...normalized,
+          sequence: existing.sequence,
+          deliveryToken: existing.deliveryToken,
+        };
+        const events = [...inbox.events];
+        events[inbox.events.indexOf(existing)] = corrected;
+        writeInboxAtomic(filePath, { ...inbox, events, updatedAt: nowIso() });
+        return {
+          appended: false,
+          corrected: true,
+          reason: "corrected_unacknowledged_event",
+          event: publicEvent(corrected),
+          sequence: corrected.sequence,
+        };
+      }
+      return { appended: false, corrected: false, event: publicEvent(existing), sequence: existing.sequence };
     }
     const event = {
       ...normalized,
@@ -618,6 +702,9 @@ function completionFromTerminalJob(job, options) {
   );
   return {
     jobId: job.id,
+    // The internal terminal job receipt is the source of this linkage.  Do
+    // not accept an Agent identity from a caller that disagrees with it.
+    agentId: job.agentId ?? null,
     terminalStatus: job.status,
     completedAt: job.completedAt ?? job.updatedAt ?? nowIso(),
     summary,
@@ -660,8 +747,12 @@ export function markCompletionDetailedResultUnavailable(cwd, ownerRootId, jobId)
 export function reconcileTerminalJobCompletion(cwd, ownerRootId, job, options = {}) {
   const completion = completionFromTerminalJob(job, options);
   if (!completion) return { reconciled: false, reason: "not-terminal", event: null };
-  const result = appendCompletionEvent(cwd, ownerRootId, completion);
-  return { reconciled: result.appended, reason: result.appended ? "appended" : "already-present", event: result.event };
+  const result = appendCompletionEvent(cwd, ownerRootId, completion, { reconcileExisting: true });
+  return {
+    reconciled: result.appended || result.corrected === true,
+    reason: result.appended ? "appended" : result.reason ?? "already-present",
+    event: result.event,
+  };
 }
 
 export function reconcileTerminalJobCompletions(cwd, ownerRootId, jobs, options = {}) {

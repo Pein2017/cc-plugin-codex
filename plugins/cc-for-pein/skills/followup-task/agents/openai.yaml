@@ -1,0 +1,4 @@
+interface:
+  display_name: "CC Follow-up Task"
+  short_description: "Send work to a Claude Agent and guarantee activation"
+  default_prompt: "Use $cc-for-pein:followup-task to continue a named Claude Agent."

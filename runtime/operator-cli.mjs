@@ -3,30 +3,17 @@
 import path from "node:path";
 import process from "node:process";
 
+import { createAgentStore } from "./agent-store.mjs";
 import { parseArgs } from "./args.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
 
 function usage() {
   return [
     "Usage:",
-    "  node runtime/operator-cli.mjs list-jobs --all [--cwd <path>] [--env-file <path>] [--json]",
+    "  node runtime/operator-cli.mjs list-agents --all [--cwd <path>] [--env-file <path>] [--json]",
     "",
-    "This CLI is an explicit read-only operator diagnostic. It is not used by plugin skills.",
+    "This is an explicit read-only operator diagnostic. Plugin skills never invoke it.",
   ].join("\n");
-}
-
-function redactedJob(job) {
-  return {
-    id: job.id,
-    ownerRootId: job.ownerRootId ?? job.sessionId ?? null,
-    status: job.status,
-    summary: job.summary ?? null,
-    workspaceRoot: job.workspaceRoot ?? null,
-    createdAt: job.createdAt ?? null,
-    updatedAt: job.updatedAt ?? null,
-    hasClaudeSession: Boolean(job.threadId ?? job.result?.sessionId),
-    requiresAttention: Boolean(job.requiresAttention ?? job.result?.requiresAttention),
-  };
 }
 
 function main() {
@@ -35,19 +22,32 @@ function main() {
     process.stdout.write(`${usage()}\n`);
     return;
   }
-  if (command !== "list-jobs") throw new Error(`Unknown operator command ${command}.\n${usage()}`);
-  const { options } = parseArgs(argv, {
+  if (command !== "list-agents") throw new Error(`Unknown operator command ${command}.\n${usage()}`);
+  const { options, positionals } = parseArgs(argv, {
     valueOptions: ["cwd", "env-file"],
     booleanOptions: ["all", "json"],
   });
-  if (!options.all) throw new Error("Operator list-jobs requires explicit --all.");
+  if (!options.all || positionals.length > 0) {
+    throw new Error("Operator list-agents requires explicit --all and accepts no target.");
+  }
   const runtime = createInternalClaudeRuntime({
     cwd: options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd(),
     envFile: options["env-file"] ?? null,
     env: process.env,
     operatorMode: true,
+    ownerRootId: "operator-diagnostic",
   });
-  const payload = { workspaceRoot: runtime.cwd, jobs: runtime.operatorListAllJobs().map(redactedJob) };
+  const store = createAgentStore({
+    cwd: runtime.cwd,
+    ownerRootId: "operator-diagnostic",
+    claudeConfigDir: runtime.env.CLAUDE_CONFIG_DIR,
+  });
+  const payload = {
+    workspaceRoot: runtime.cwd,
+    operatorMode: true,
+    readOnly: true,
+    agents: store.listAllAgents(),
+  };
   process.stdout.write(`${JSON.stringify(payload, null, options.json ? 2 : 0)}\n`);
 }
 

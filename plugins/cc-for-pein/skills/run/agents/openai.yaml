@@ -1,4 +1,0 @@
-interface:
-  display_name: "Claude Code Run"
-  short_description: "Run tracked Claude work directly"
-  default_prompt: "Use $cc-for-pein:run to launch a substantial Claude Code task directly."

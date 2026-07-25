@@ -1,26 +1,34 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 0.2.0 - 2026-07-25
 
-- Rename the user-facing plugin identity and skill namespace to `cc-for-pein`
-  while preserving the validated `CC_*` environment and durable state contract.
-- Establish a checkout-owned `ClaudeRuntime` lifecycle API and headless CLI.
-- Add safe and terminal-parity execution profiles.
-- Add single-source env-file loading with project-local Claude, proxy, Conda,
-  checkout root, exact Claude binary, and PATH propagation.
-- Add durable steering, SIGINT interruption, destructive cancellation,
-  exact-session follow-up, bounded transport recovery, partial output, and
-  redacted runtime receipts.
-- Replace review/setup/hook/installer/cache surfaces with six focused lifecycle
-  skills and an installable 15-file `plugins/cc-for-pein/` control-plane subtree whose
-  bootstrap fails closed unless it delegates to the declared checkout.
-- Add atomic multi-process job locks, cross-workspace exact-session leases,
-  worker/Claude PID separation, orphan reaping, session-drift rejection, and
-  receipt aggregation across reconnect attempts.
-- Add explicit non-interactive permission overrides while leaving
-  terminal-parity permission behavior untouched by default.
-- Add an explicit, receipt-visible unrestricted native mode equivalent to
-  `IS_SANDBOX=1 claude --dangerously-skip-permissions` without weakening the
-  safe profile.
-- Add unit and subprocess integration coverage for protocol, profiles,
-  environment, state, recovery, steering, interruption, and session ownership.
+- Replace the public job lifecycle with six canonical Agent operations:
+  `spawn_agent`, `send_message`, `followup_task`, `wait_agent`,
+  `interrupt_agent`, and `list_agents`.
+- Replace the six job-oriented plugin skills with exactly
+  `$cc-for-pein:spawn-agent`, `$cc-for-pein:send-message`,
+  `$cc-for-pein:followup-task`, `$cc-for-pein:wait-agent`,
+  `$cc-for-pein:interrupt-agent`, and `$cc-for-pein:list-agents`.
+- Make each Agent a durable current-root identity with a flat
+  `/root/<task_name>` path, exact targeting, logical-root default isolation,
+  nonresident terminal history, and a proven native Claude continuation path.
+- Add canonical message-versus-follow-up semantics and crash-safe two-phase
+  completion acknowledgement through `wait_agent` tokens.
+- Remove all job-oriented public methods, CLI commands, skills, aliases, and
+  docs. There is no public `cancel`, `cancel_job`, archive, close, or Agent
+  deletion operation; `interrupt_agent` is the sole public stop action.
+- Document Codex Multi-Agent V2 alignment and deliberate deviations: plugin
+  skill names remain namespaced, `fork_turns` supports only `none`, topology is
+  flat, all logical terminal history remains listed, and direct Terminal
+  session adoption is deferred to a future OpenSpec change.
+- Scope supported execution and CI to Linux with Node.js 20.19+; non-Linux
+  defensive branches are best-effort and do not define release gates.
+
+## 0.1.0 - 2026-07-25
+
+- Establish a checkout-owned Claude Code headless runtime with durable jobs,
+  safe and terminal-parity execution profiles, one env-file contract, durable
+  steering, interruption, exact-session follow-up, bounded transport recovery,
+  and redacted receipts.
+- Replace upstream review/setup/hook/installer/cache surfaces with a local
+  bootstrap that delegates only to the declared checkout.

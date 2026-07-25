@@ -2,7 +2,8 @@ schema: spec-driven
 
 context: |
   Project: CC for Pein, a checkout-owned Codex Plugin for durable Claude Code orchestration.
-  Runtime: Node.js 20.19+ ESM, portable across macOS, Linux, and native Windows.
+  Runtime: Node.js 20.19+ ESM on Linux. Non-Linux branches are best-effort only
+  and do not define supported behavior or release gates.
   Public lifecycle owner: runtime/index.mjs. Keep Claude stream-json, process,
   persistence, recovery, mailbox, and environment details behind that boundary.
   Source/runtime policy: the local checkout is the sole source and runtime dependency.

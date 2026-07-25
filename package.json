@@ -1,7 +1,7 @@
 {
   "name": "cc-for-pein-runtime",
-  "version": "0.1.0+codex.20260725111403",
-  "description": "Checkout-owned Claude Code headless runtime for Codex",
+  "version": "0.2.0",
+  "description": "Checkout-owned durable Claude Agent runtime for Codex",
   "private": true,
   "type": "module",
   "author": {
@@ -25,6 +25,7 @@
     "node": ">=20.19"
   },
   "scripts": {
+    "install:local": "node scripts/local-plugin-install.mjs",
     "lint": "eslint runtime tests/runtime",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test tests/runtime/*.test.mjs",

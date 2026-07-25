@@ -1,0 +1,6 @@
+interface:
+  display_name: "CC Wait Agent"
+  short_description: "Wait durably for current-root Claude Agent activity"
+  default_prompt: "Use $cc-for-pein:wait-agent to wait for durable Claude Agent completion activity."
+policy:
+  allow_implicit_invocation: false

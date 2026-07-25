@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the checkout-owned runtime, host Claude dependency, environment selection, and portability boundary.
-
 ## Requirements
-
 ### Requirement: Checkout-owned executable runtime
 The installed CC for Pein plugin SHALL load executable runtime source from the configured local checkout and SHALL NOT load runtime source from an upstream repository or versioned plugin Cache path.
 
@@ -42,9 +40,16 @@ The selected environment SHALL carry `CLAUDE_CONFIG_DIR`, uppercase and lowercas
 - **WHEN** readiness or execution emits an environment receipt
 - **THEN** it identifies the Claude config directory and redacted proxy endpoints without recording proxy credentials or unrelated environment values
 
-### Requirement: Runtime remains platform portable
-The checkout-owned runtime SHALL support Node.js 20.19 or newer on macOS, Linux, and native Windows, while reporting platform limitations honestly.
+### Requirement: Runtime support scope is Linux
+The checkout-owned runtime SHALL support Node.js 20.19 or newer on Linux. macOS
+and native Windows behavior is best-effort and SHALL NOT be treated as a release
+or compatibility guarantee without a separate OpenSpec change and real-platform
+acceptance evidence.
 
-#### Scenario: Platform cannot provide graceful SIGINT
-- **WHEN** a detached Claude process runs on a platform without a portable graceful interrupt mechanism
-- **THEN** the runtime reports interruption as unsupported rather than claiming success
+#### Scenario: Supported Linux runtime starts
+- **WHEN** the checkout runs on Linux with a compatible Node.js and host Claude CLI
+- **THEN** the full runtime, installation, process-control, and state-protection contracts apply
+
+#### Scenario: Non-Linux runtime is attempted
+- **WHEN** the checkout is invoked on macOS or native Windows
+- **THEN** any surviving defensive behavior is explicitly unsupported and its limitations do not block the Linux release

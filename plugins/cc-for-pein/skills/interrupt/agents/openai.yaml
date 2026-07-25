@@ -1,4 +1,0 @@
-interface:
-  display_name: "Claude Code Interrupt"
-  short_description: "Gracefully interrupt a Claude Code job"
-  default_prompt: "Use $cc-for-pein:interrupt to stop a Claude Code job while preserving its session."

@@ -1150,7 +1150,7 @@ export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
   if (platform === "win32") {
     return {
       interrupted: false,
-      note: "Graceful SIGINT is unavailable for a detached native Windows process; use cancel for explicit process-tree termination.",
+      note: "Graceful SIGINT is unavailable for a detached native Windows process; internal bounded process-tree cleanup is required.",
     };
   }
 

@@ -1,6 +1,6 @@
 # Repository guidance
 
-- This is a checkout-owned Node.js 20.19+ ESM Codex Plugin. Keep behavior portable across macOS, Linux, and native Windows.
+- This is a checkout-owned Node.js 20.19+ ESM Codex Plugin supported on Linux. Non-Linux branches are best-effort only and do not define release gates.
 - `runtime/index.mjs` is the sole public lifecycle interface. Keep stream-json, process, persistence, recovery, and mailbox details behind it.
 - `runtime/execution-profile.mjs` is the sole owner of Claude CLI overrides. `terminal-parity` must not acquire implicit model, effort, settings, permission, tool, MCP, or prompt overrides.
 - Resolve one env file through `runtime/environment.mjs`; never evaluate it as shell code or leak arbitrary values in receipts.

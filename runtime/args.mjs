@@ -41,12 +41,7 @@ export function parseArgs(argv, config = {}) {
         if (
           nextValue === undefined ||
           (inlineValue === undefined &&
-            isRecognizedOptionToken(
-              nextValue,
-              valueOptions,
-              booleanOptions,
-              aliasMap
-            ))
+            isDashPrefixedOptionToken(nextValue))
         ) {
           throw new Error(`Missing value for --${rawKey}`);
         }
@@ -57,8 +52,7 @@ export function parseArgs(argv, config = {}) {
         continue;
       }
 
-      positionals.push(token);
-      continue;
+      throw new Error(`Unknown option --${rawKey}. Use -- before a positional value that starts with a dash.`);
     }
 
     const shortKey = token.slice(1);
@@ -73,12 +67,7 @@ export function parseArgs(argv, config = {}) {
       const nextValue = argv[index + 1];
       if (
         nextValue === undefined ||
-        isRecognizedOptionToken(
-          nextValue,
-          valueOptions,
-          booleanOptions,
-          aliasMap
-        )
+        isDashPrefixedOptionToken(nextValue)
       ) {
         throw new Error(`Missing value for -${shortKey}`);
       }
@@ -87,26 +76,14 @@ export function parseArgs(argv, config = {}) {
       continue;
     }
 
-    positionals.push(token);
+    throw new Error(`Unknown option -${shortKey}. Use -- before a positional value that starts with a dash.`);
   }
 
   return { options, positionals };
 }
 
-function isRecognizedOptionToken(token, valueOptions, booleanOptions, aliasMap) {
-  if (!token || token === "-" || token === "--" || !token.startsWith("-")) {
-    return token === "--";
-  }
-
-  if (token.startsWith("--")) {
-    const [rawKey] = token.slice(2).split("=", 2);
-    const key = aliasMap[rawKey] ?? rawKey;
-    return valueOptions.has(key) || booleanOptions.has(key);
-  }
-
-  const shortKey = token.slice(1);
-  const key = aliasMap[shortKey] ?? shortKey;
-  return valueOptions.has(key) || booleanOptions.has(key);
+function isDashPrefixedOptionToken(token) {
+  return typeof token === "string" && token !== "-" && token.startsWith("-");
 }
 
 export function splitRawArgumentString(raw) {
