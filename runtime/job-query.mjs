@@ -7,13 +7,12 @@
 import fs from "node:fs";
 
 import {
-  getCurrentSession,
   listJobs,
   readJobFile,
   resolveJobFile,
   resolveJobLogFile,
 } from "./job-store.mjs";
-import { SESSION_ID_ENV } from "./job-runner.mjs";
+import { OWNER_ROOT_ID_ENV } from "./job-runner.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
 export const DEFAULT_MAX_STATUS_JOBS = 15;
@@ -25,18 +24,19 @@ export function sortJobsNewestFirst(jobs) {
   );
 }
 
-function getCurrentSessionId(options = {}) {
+function getCurrentOwnerRootId(options = {}) {
   return (
-    options.env?.[SESSION_ID_ENV] ??
-    process.env[SESSION_ID_ENV] ??
-    (options.cwd ? getCurrentSession(options.cwd) : null)
+    options.env?.[OWNER_ROOT_ID_ENV] ??
+    process.env[OWNER_ROOT_ID_ENV] ??
+    process.env.CODEX_THREAD_ID ??
+    null
   );
 }
 
 function filterJobsForCurrentSession(jobs, options = {}) {
-  const sessionId = getCurrentSessionId(options);
-  if (!sessionId) return jobs;
-  return jobs.filter((job) => job.sessionId === sessionId);
+  const ownerRootId = getCurrentOwnerRootId(options);
+  if (!ownerRootId) return [];
+  return jobs.filter((job) => (job.ownerRootId ?? job.sessionId) === ownerRootId);
 }
 
 function getJobTypeLabel(job) {

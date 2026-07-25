@@ -8,11 +8,11 @@ import fs from "node:fs";
 import process from "node:process";
 
 import { getProcessIdentity, terminateProcessTree } from "./process-control.mjs";
-import { nowIso, ensureStateDir, getCurrentSession, patchJob, readJobFile, resolveJobLogFile, writeJobFile, cleanupOldJobs, transitionJob } from "./job-store.mjs";
+import { nowIso, ensureStateDir, patchJob, readJobFile, resolveJobLogFile, writeJobFile, cleanupOldJobs, transitionJob } from "./job-store.mjs";
 
 export { nowIso };
 
-export const SESSION_ID_ENV = "CC_OWNER_SESSION_ID";
+export const OWNER_ROOT_ID_ENV = "CC_TRUSTED_OWNER_ROOT_ID";
 export const MAX_JOB_LOG_BYTES = 1024 * 1024;
 const LOG_TRUNCATION_MARKER = "[... earlier log output truncated ...]\n";
 
@@ -151,14 +151,13 @@ export function createWorkerLogStdio(logFile) {
 
 export function createJobRecord(base, options = {}) {
   const env = options.env ?? process.env;
-  const sessionId =
-    options.sessionId ??
-    env[options.sessionIdEnv ?? SESSION_ID_ENV] ??
-    (options.cwd ? getCurrentSession(options.cwd) : null);
+  const ownerRootId = String(
+    options.ownerRootId ?? env[OWNER_ROOT_ID_ENV] ?? ""
+  ).trim();
   return {
     ...base,
     createdAt: nowIso(),
-    ...(sessionId ? { sessionId } : {})
+    ...(ownerRootId ? { ownerRootId } : {})
   };
 }
 
@@ -257,7 +256,7 @@ export async function runTrackedJob(job, runner, options = {}) {
     );
     if (!transition.transitioned) {
       // Job already left running state (cancel won the race) — kill the child immediately
-      try { terminateProcessTree(pid); } catch {}
+      try { terminateProcessTree(pid, pidIdentity); } catch {}
       return;
     }
   };

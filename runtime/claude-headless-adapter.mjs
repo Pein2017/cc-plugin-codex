@@ -1132,10 +1132,18 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
  */
 export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
   const platform = options.platform ?? process.platform;
-  if (pidIdentity && !validateProcessIdentity(pid, pidIdentity, options)) {
+  if (!pidIdentity) {
     return {
-      interrupted: true,
-      note: "Process already exited (PID recycled)",
+      interrupted: false,
+      note: "Refusing to signal a process without a deterministic identity.",
+      controlFailure: "missing_identity",
+    };
+  }
+  if (!validateProcessIdentity(pid, pidIdentity, options)) {
+    return {
+      interrupted: false,
+      note: "Refusing to signal a process whose identity no longer matches.",
+      controlFailure: "identity_mismatch",
     };
   }
 
@@ -1166,18 +1174,29 @@ export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
  */
 export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
   const platform = options.platform ?? process.platform;
-  // Verify PID identity to prevent killing recycled PIDs
-  if (pidIdentity && !validateProcessIdentity(pid, pidIdentity, options)) {
+  if (!pidIdentity) {
     return {
-      cancelled: true,
-      note: "Process already exited (PID recycled)",
+      cancelled: false,
+      note: "Refusing to terminate a process without a deterministic identity.",
+      controlFailure: "missing_identity",
+    };
+  }
+  if (!validateProcessIdentity(pid, pidIdentity, options)) {
+    return {
+      cancelled: false,
+      note: "Refusing to terminate a process whose identity no longer matches.",
+      controlFailure: "identity_mismatch",
     };
   }
 
   if (platform === "win32") {
-    const receipt = terminateProcessTree(pid, options);
+    const receipt = terminateProcessTree(pid, pidIdentity, options);
     if (!receipt.delivered) {
-      return { cancelled: true, note: "Process already exited" };
+      return {
+        cancelled: false,
+        note: `Process-tree termination was not delivered (${receipt.reason ?? "not_found"}).`,
+        controlFailure: receipt.reason ?? "not_delivered",
+      };
     }
     const dead = await waitForProcessExit(pid, 5000, options);
     return dead
@@ -1199,10 +1218,11 @@ export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
   }
 
   // Escalate to SIGKILL
-  if (pidIdentity && !validateProcessIdentity(pid, pidIdentity)) {
+  if (!validateProcessIdentity(pid, pidIdentity, options)) {
     return {
-      cancelled: true,
-      note: "Process exited during SIGTERM wait",
+      cancelled: false,
+      note: "Process identity was lost during SIGTERM wait; refusing SIGKILL.",
+      controlFailure: "identity_mismatch",
     };
   }
 

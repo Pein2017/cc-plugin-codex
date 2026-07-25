@@ -97,7 +97,10 @@ function selectEnvFile(env, context) {
     const fromCodexHome = existing(path.join(env.CODEX_HOME, ".env"));
     if (fromCodexHome) return fromCodexHome;
   }
-  return findAncestorEnv(context.cwd) ?? existing(path.join(os.homedir(), ".codex", ".env"));
+  const discovered = findAncestorEnv(context.cwd) ?? existing(path.join(os.homedir(), ".codex", ".env"));
+  if (discovered) return discovered;
+  const checkout = String(env.CC_RUNTIME_CHECKOUT ?? "").trim();
+  return checkout ? existing(path.join(checkout, "config", "runtime.env")) : null;
 }
 
 function parseEnv(filePath) {
@@ -156,10 +159,20 @@ function resolveCheckout(env) {
 
 function main() {
   const inherited = { ...process.env };
+  const hostThreadId = String(inherited.CODEX_THREAD_ID ?? "").trim();
   const context = bootstrapContext(process.argv.slice(2));
   const envFile = selectEnvFile(inherited, context);
   if (!envFile) throw new Error("No .codex/.env was found for the CC runtime bootstrap.");
-  const env = { ...inherited, ...parseEnv(envFile), CC_RUNTIME_ENV_FILE: envFile };
+  const configured = parseEnv(envFile);
+  delete configured.CODEX_THREAD_ID;
+  delete configured.CC_TRUSTED_OWNER_ROOT_ID;
+  const env = { ...inherited, ...configured, CC_RUNTIME_ENV_FILE: envFile };
+  if (hostThreadId) {
+    env.CODEX_THREAD_ID = hostThreadId;
+    env.CC_TRUSTED_OWNER_ROOT_ID = hostThreadId;
+  } else {
+    delete env.CC_TRUSTED_OWNER_ROOT_ID;
+  }
   const { checkout, cli } = resolveCheckout(env);
   env.CC_RUNTIME_SOURCE_ROOT = checkout;
   const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], {

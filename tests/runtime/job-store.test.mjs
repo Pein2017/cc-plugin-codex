@@ -156,6 +156,25 @@ describe("job store and mailbox", () => {
     assert.match(job.errorMessage, /Auto-reaped/);
   });
 
+  it("never treats a raw PID without identity as liveness ownership", () => {
+    const { workspace } = setup();
+    const old = new Date(Date.now() - 60_000).toISOString();
+    fs.writeFileSync(resolveJobFile(workspace, "cc-1"), `${JSON.stringify({
+      id: "cc-1",
+      workspaceRoot: workspace,
+      ownerRootId: "root-1",
+      status: "running",
+      createdAt: old,
+      updatedAt: old,
+      workerPid: process.pid,
+      workerPidIdentity: null,
+    })}\n`);
+    const job = listJobs(workspace).find((candidate) => candidate.id === "cc-1");
+    assert.equal(job.status, "failed");
+    assert.equal(job.requiresAttention, true);
+    assert.equal(job.controlFailure, "missing_identity");
+  });
+
   it("does not reap a live supervisor while its Claude child is between attempts", () => {
     const { workspace } = setup();
     const old = new Date(Date.now() - 60_000).toISOString();

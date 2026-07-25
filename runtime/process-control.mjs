@@ -58,9 +58,15 @@ function looksLikeMissingProcessMessage(text) {
   return /not found|no running instance|cannot find|does not exist|no such process/i.test(text);
 }
 
-export function terminateProcessTree(pid, options = {}) {
+export function terminateProcessTree(pid, expectedIdentity, options = {}) {
   if (!Number.isFinite(pid)) {
-    return { attempted: false, delivered: false, method: null };
+    return { attempted: false, delivered: false, method: null, reason: "missing_pid" };
+  }
+  if (!expectedIdentity) {
+    return { attempted: false, delivered: false, method: null, reason: "missing_identity" };
+  }
+  if (!validateProcessIdentity(pid, expectedIdentity, options)) {
+    return { attempted: false, delivered: false, method: null, reason: "identity_mismatch" };
   }
 
   const platform = options.platform ?? process.platform;
@@ -84,6 +90,9 @@ export function terminateProcessTree(pid, options = {}) {
 
     if (result.error?.code === "ENOENT") {
       try {
+        if (!validateProcessIdentity(pid, expectedIdentity, options)) {
+          return { attempted: false, delivered: false, method: null, reason: "identity_mismatch" };
+        }
         killImpl(pid);
         return { attempted: true, delivered: true, method: "kill" };
       } catch (error) {

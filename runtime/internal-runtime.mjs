@@ -25,7 +25,9 @@ import {
   enqueueSteeringMessage,
   generateJobId,
   getSteeringSnapshot,
+  getStateProtectionReceipt,
   listJobs,
+  listStoredJobs,
   nowIso,
   patchJob,
   readJobFile,
@@ -43,13 +45,17 @@ import {
   createProgressReporter,
   createWorkerLogStdio,
   runTrackedJob,
-  SESSION_ID_ENV,
+  OWNER_ROOT_ID_ENV,
 } from "./job-runner.mjs";
 import { enrichJob, sortJobsNewestFirst } from "./job-query.mjs";
 import { getProcessIdentity } from "./process-control.mjs";
 import { configureRuntimePaths, samePath } from "./paths.mjs";
 import { renderTaskResult } from "./render.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
+import {
+  acknowledgeCompletionEvents,
+  readUnreadCompletionEvents,
+} from "./completion-inbox.mjs";
 
 const CLI_PATH = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const SOURCE_ROOT = fs.realpathSync.native(path.resolve(path.dirname(CLI_PATH), ".."));
@@ -100,12 +106,28 @@ function resolveJob(jobs, reference) {
   throw new Error(`No Claude job found for ${id}.`);
 }
 
+function legacyOwnerRootId(job) {
+  return typeof job?.sessionId === "string" && job.sessionId.trim()
+    ? job.sessionId.trim()
+    : null;
+}
+
+function jobOwnerRootId(job) {
+  return typeof job?.ownerRootId === "string" && job.ownerRootId.trim()
+    ? job.ownerRootId.trim()
+    : legacyOwnerRootId(job);
+}
+
 class ClaudeRuntime {
   constructor(options = {}) {
+    const inheritedEnv = options.env ?? process.env;
+    const inheritedOwnerRootId = String(
+      inheritedEnv[OWNER_ROOT_ID_ENV] ?? inheritedEnv.CODEX_THREAD_ID ?? ""
+    ).trim();
     this.cwd = resolveWorkspaceRoot(options.cwd ?? process.cwd());
     const environment = resolveRuntimeEnvironment({
       cwd: this.cwd,
-      env: options.env ?? process.env,
+      env: inheritedEnv,
       envFile: options.envFile,
     });
     this.env = environment.env;
@@ -122,12 +144,26 @@ class ClaudeRuntime {
     }
     this.sourceRoot = SOURCE_ROOT;
     this.env.CC_RUNTIME_SOURCE_ROOT = this.sourceRoot;
-    this.ownerSessionId = String(
-      options.ownerSessionId ??
-      this.env[SESSION_ID_ENV] ??
-      this.env.CODEX_THREAD_ID ??
-      ""
+    this.operatorMode = options.operatorMode === true;
+    this.ownerRootId = String(
+      this.operatorMode && options.ownerRootId
+        ? options.ownerRootId
+        : inheritedOwnerRootId
     ).trim() || null;
+  }
+
+  assertOwnerRoot() {
+    if (!this.ownerRootId) {
+      throw new Error(
+        "A trusted Codex root identity is required. Invoke this lifecycle through the plugin bootstrap so CODEX_THREAD_ID can be captured."
+      );
+    }
+    return this.ownerRootId;
+  }
+
+  migrateMatchingLegacyOwner(job) {
+    if (job?.ownerRootId || legacyOwnerRootId(job) !== this.ownerRootId) return job;
+    return patchJob(this.cwd, job.id, { ownerRootId: this.ownerRootId }) ?? job;
   }
 
   readiness() {
@@ -143,6 +179,12 @@ class ClaudeRuntime {
       claudeConfigDir: this.env.CLAUDE_CONFIG_DIR ?? null,
       environment: this.environmentReceipt,
       sourceRoot: this.sourceRoot,
+      ownerRoot: {
+        available: Boolean(this.ownerRootId),
+        source: this.ownerRootId ? "codex_thread_environment" : null,
+        scope: "logical_root",
+      },
+      stateProtection: getStateProtectionReceipt(this.cwd),
     };
   }
 
@@ -157,22 +199,29 @@ class ClaudeRuntime {
     return receipt;
   }
 
-  list(options = {}) {
+  list() {
+    const ownerRootId = this.assertOwnerRoot();
     const jobs = sortJobsNewestFirst(listJobs(this.cwd));
-    const selected = options.all || !this.ownerSessionId
-      ? jobs
-      : jobs.filter((job) => job.sessionId === this.ownerSessionId);
-    return selected.map((job) => enrichJob(job));
+    return jobs
+      .filter((job) => jobOwnerRootId(job) === ownerRootId)
+      .map((job) => enrichJob(this.migrateMatchingLegacyOwner(job)));
   }
 
-  status(jobId = null, options = {}) {
-    if (jobId) return enrichJob(resolveJob(sortJobsNewestFirst(listJobs(this.cwd)), jobId));
-    const jobs = this.list(options);
+  status(jobId = null) {
+    const jobs = this.list();
+    if (jobId) return enrichJob(resolveJob(jobs, jobId));
+    const ownerRootId = this.assertOwnerRoot();
     return {
       workspaceRoot: this.cwd,
       active: jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status)),
-      recent: jobs.slice(0, Number(options.maxJobs) || 15),
+      recent: jobs.slice(0, 15),
+      unreadCompletions: readUnreadCompletionEvents(this.cwd, ownerRootId),
     };
+  }
+
+  operatorListAllJobs() {
+    if (!this.operatorMode) throw new Error("Cross-root listing is operator-only.");
+    return sortJobsNewestFirst(listStoredJobs(this.cwd)).map((job) => enrichJob(job));
   }
 
   assertSessionAvailable(sessionId, excludingJobId = null) {
@@ -188,6 +237,7 @@ class ClaudeRuntime {
   }
 
   async start(task, options = {}) {
+    const ownerRootId = this.assertOwnerRoot();
     const prompt = String(task ?? "").trim();
     const resumeSessionId = String(options.resumeSessionId ?? "").trim() || null;
     if (!prompt && !resumeSessionId) {
@@ -227,7 +277,7 @@ class ClaudeRuntime {
     }, {
       cwd: this.cwd,
       env: this.env,
-      sessionId: this.ownerSessionId,
+      ownerRootId,
     });
       const logFile = createJobLogFile(this.cwd, jobId, title);
       const request = {
@@ -269,6 +319,10 @@ class ClaudeRuntime {
             phase: "failed",
             completedAt: nowIso(),
             errorMessage: `Worker launch failed: ${error.message}`,
+            workerPid: null,
+            workerPidIdentity: null,
+            pid: null,
+            pidIdentity: null,
           });
         });
         child.unref();
@@ -303,9 +357,13 @@ class ClaudeRuntime {
   }
 
   async runWorker(jobId) {
+    const ownerRootId = this.assertOwnerRoot();
     const id = assertJobId(jobId);
     const stored = readJobFile(this.cwd, id);
     if (!stored) throw new Error(`No stored Claude job found for ${id}.`);
+    if (jobOwnerRootId(stored) !== ownerRootId) {
+      throw new Error(`Stored Claude job ${id} does not belong to the trusted Codex root.`);
+    }
     if (stored.status !== "queued") {
       throw new Error(`Claude job ${id} is ${stored.status}; worker requires queued.`);
     }
@@ -353,6 +411,7 @@ class ClaudeRuntime {
         warning: result.warning ?? null,
         failureClass: result.failureClass ?? null,
         failureReason: result.failureReason ?? null,
+        resumable: result.resumable === true,
         recoveryAttempts: result.recoveryAttempts ?? 0,
         attempts: result.attempts ?? [],
         steering: result.steering ?? getSteeringSnapshot(this.cwd, job.id),
@@ -404,11 +463,14 @@ class ClaudeRuntime {
 
   async followUp(jobId, message, options = {}) {
     const source = this.status(jobId);
-    if (!new Set(["completed", "interrupted"]).has(source.status)) {
-      throw new Error(`Claude job ${source.id} is ${source.status}; follow-up requires completed or interrupted.`);
+    const recoverability = source.recoverability ?? null;
+    if (!recoverability?.resumable || recoverability.mode !== "exact_session") {
+      throw new Error(
+        `Claude job ${source.id} is not explicitly resumable: ${recoverability?.reason ?? source.status}.`
+      );
     }
-    const sessionId = resultSessionId(source);
-    if (!sessionId) throw new Error(`Claude job ${source.id} has no Claude session to resume.`);
+    const sessionId = recoverability.exactSessionId ?? resultSessionId(source);
+    if (!sessionId) throw new Error(`Claude job ${source.id} has no owner-valid exact Claude session to resume.`);
     const request = readJobFile(this.cwd, source.id)?.request ?? {};
     return this.start(message, {
       write: options.write ?? source.write,
@@ -532,7 +594,7 @@ class ClaudeRuntime {
   }
 
   result(jobId = null) {
-    const jobs = this.list({ all: Boolean(jobId) });
+    const jobs = this.list();
     const job = jobId
       ? resolveJob(jobs, jobId)
       : jobs.find((candidate) => TERMINAL_STATUSES.has(candidate.status));
@@ -545,15 +607,34 @@ class ClaudeRuntime {
   }
 
   async wait(jobId, options = {}) {
+    const ownerRootId = this.assertOwnerRoot();
     const timeoutMs = Math.max(0, Number(options.timeoutMs) || 240_000);
     const pollIntervalMs = Math.max(50, Number(options.pollIntervalMs) || 500);
+    const acknowledgeTokens = Array.isArray(options.acknowledgeTokens)
+      ? options.acknowledgeTokens
+      : [];
+    const acknowledgement = acknowledgeTokens.length > 0
+      ? acknowledgeCompletionEvents(this.cwd, ownerRootId, acknowledgeTokens)
+      : { acknowledgedCount: 0, acknowledgedThrough: null, compactedCount: 0 };
     const deadline = Date.now() + timeoutMs;
-    let job = this.status(jobId);
-    while (ACTIVE_JOB_STATUSES.has(job.status) && Date.now() < deadline) {
+    let job = jobId ? this.status(jobId) : null;
+    let inbox = readUnreadCompletionEvents(this.cwd, ownerRootId);
+    while (
+      inbox.events.length === 0 &&
+      (!job || ACTIVE_JOB_STATUSES.has(job.status)) &&
+      Date.now() < deadline
+    ) {
       await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
-      job = this.status(jobId);
+      job = jobId ? this.status(jobId) : null;
+      inbox = readUnreadCompletionEvents(this.cwd, ownerRootId);
     }
-    return { job, waitTimedOut: ACTIVE_JOB_STATUSES.has(job.status), timeoutMs };
+    return {
+      job,
+      completionInbox: inbox,
+      acknowledgement,
+      waitTimedOut: inbox.events.length === 0 && (!job || ACTIVE_JOB_STATUSES.has(job.status)),
+      timeoutMs,
+    };
   }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: status
-description: 'Show active or recent local Claude Code jobs in this workspace, or detailed status for a specific job id. Supports optional waiting, timeout, and all-owner views. Use for tracked-job inspection and progress checks, not result retrieval.'
+description: 'Show current-root Claude Code jobs and unread completions, or wait durably for a job or the next root completion. Use for tracked-job inspection, completion delivery, and bounded waiting.'
 ---
 
 # Claude Code Status
@@ -13,9 +13,10 @@ Resolve `<plugin-root>` as two directories above this `SKILL.md` file. Run:
 The bootstrap must delegate to `CC_RUNTIME_CHECKOUT` from the selected
 `.codex/.env`; never execute a runtime from the plugin Cache.
 
-Supported arguments: `[job-id]`, `--wait`, `--timeout-ms <ms>`, `--all`, `--env-file <path>`
+Supported arguments: `[job-id]`, `--wait`, `--timeout-ms <ms>`, `--acknowledge-tokens <comma-separated-tokens>`, `--env-file <path>`
 
 Output:
 - Present the runtime stdout exactly as returned.
 - Do not add extra prose or reformat it.
-- By default, status overview is scoped to the current Codex session in this repository. `--all` widens that overview to all tracked jobs in the current repository workspace.
+- Status and direct job lookup are always scoped to the current Codex root. Cross-root `--all` is intentionally absent from this model-facing skill.
+- A wait may acknowledge tokens returned by an earlier call, but newly returned completion events remain unread until a later call echoes their tokens.

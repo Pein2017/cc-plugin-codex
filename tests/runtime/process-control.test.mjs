@@ -23,15 +23,21 @@ describe("cross-platform process control", () => {
   });
 
   it("fails honestly when graceful Windows SIGINT is unavailable", async () => {
-    const receipt = await interruptClaudeProcess(42, null, { platform: "win32" });
+    const identity = "638900000000000000|C:\\node.exe";
+    const receipt = await interruptClaudeProcess(42, identity, {
+      platform: "win32",
+      runCommandCheckedImpl: () => ({ stdout: `${identity}\r\n` }),
+    });
     assert.equal(receipt.interrupted, false);
     assert.match(receipt.note, /Graceful SIGINT is unavailable/);
   });
 
   it("uses taskkill semantics for destructive Windows cancellation", async () => {
     let invocation = null;
-    const receipt = await cancelClaudeProcess(42, null, {
+    const identity = "638900000000000000|C:\\node.exe";
+    const receipt = await cancelClaudeProcess(42, identity, {
       platform: "win32",
+      runCommandCheckedImpl: () => ({ stdout: `${identity}\r\n` }),
       runCommandImpl: (command, args) => {
         invocation = { command, args };
         return { command, args, status: 0, signal: null, stdout: "", stderr: "", error: null };
@@ -43,5 +49,21 @@ describe("cross-platform process control", () => {
       command: "taskkill",
       args: ["/PID", "42", "/T", "/F"],
     });
+  });
+
+  it("refuses missing and mismatched identities without signalling", async () => {
+    const missing = await interruptClaudeProcess(42, null, { platform: "linux" });
+    assert.equal(missing.interrupted, false);
+    assert.equal(missing.controlFailure, "missing_identity");
+
+    let signalled = false;
+    const mismatch = await cancelClaudeProcess(42, "expected", {
+      platform: "linux",
+      runCommandCheckedImpl: () => ({ stdout: "different\n" }),
+      killImpl: () => { signalled = true; },
+    });
+    assert.equal(mismatch.cancelled, false);
+    assert.equal(mismatch.controlFailure, "identity_mismatch");
+    assert.equal(signalled, false);
   });
 });

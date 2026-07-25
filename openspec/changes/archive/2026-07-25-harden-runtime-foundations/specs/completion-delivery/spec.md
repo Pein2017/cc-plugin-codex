@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Every terminal job emits one durable completion event
-The runtime SHALL create exactly one root-owned completion event when a job first reaches completed, interrupted, failed, or cancelled state.
+The runtime SHALL create exactly one root-owned completion event when a job first reaches completed, interrupted, failed, or cancelled state. The event SHALL remain useful without the detailed job record by carrying a bounded final message, an explicit truncation flag, detailed-result availability, and Claude-session availability.
 
 #### Scenario: Worker publishes terminal state
 - **WHEN** a non-terminal job first commits a terminal transition
@@ -10,6 +10,10 @@ The runtime SHALL create exactly one root-owned completion event when a job firs
 #### Scenario: Reconciliation sees an event after a crash
 - **WHEN** a terminal job exists without its deterministic completion event
 - **THEN** reconciliation appends the missing event once without duplicating an existing event
+
+#### Scenario: Final output exceeds the completion bound
+- **WHEN** a terminal job's final output is larger than 64 KiB in UTF-8
+- **THEN** the event retains a valid bounded prefix, marks it truncated, and points the caller to detailed result availability
 
 ### Requirement: Completion events use two-phase at-least-once delivery
 Each owner root SHALL have a monotonic completion sequence and an atomic cursor for the highest contiguously acknowledged event. A read or wait SHALL return the oldest unread contiguous batch with opaque delivery tokens and SHALL NOT acknowledge that batch in the same response-producing call.

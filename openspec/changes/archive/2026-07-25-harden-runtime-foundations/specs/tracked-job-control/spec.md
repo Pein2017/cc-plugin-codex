@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: One canonical owner root identity scopes orchestration
-Normal plugin execution SHALL receive one non-empty immutable `ownerRootId` from the trusted Codex bootstrap/host boundary. Model-facing skills and commands SHALL NOT accept an owner override. `CC_OWNER_SESSION_ID` or an explicit owner MAY be accepted only by a separate operator/test harness. A legacy `job.sessionId` equal to the trusted current root SHALL be upgraded without changing its value; foreign legacy values SHALL remain operator-visible only.
+Normal plugin execution SHALL receive one non-empty immutable `ownerRootId` from the Codex bootstrap/host boundary. This identity is a logical default-isolation boundary that prevents accidental cross-root orchestration; it is not a cryptographic authorization claim. Model-facing skills and commands SHALL NOT accept an owner override. An explicit owner MAY be accepted only by a separate operator/test harness. A legacy `job.sessionId` equal to the current root SHALL be upgraded without changing its value; foreign legacy values SHALL remain operator-visible only.
 
 #### Scenario: Trusted bootstrap launches the runtime
 - **WHEN** the Codex plugin bootstrap invokes a lifecycle operation
@@ -19,12 +19,12 @@ Normal plugin execution SHALL receive one non-empty immutable `ownerRootId` from
 - **WHEN** a retained legacy `sessionId` differs from the trusted root
 - **THEN** normal operations omit it and only the operator diagnostic path may inspect it
 
-### Requirement: Direct job operations require owner authorization
+### Requirement: Direct job operations require owner-root matching
 Normal status, result, steering, follow-up, interrupt, cancellation, wait, and completion acknowledgement operations SHALL resolve the target within the caller's non-empty `ownerRootId`.
 
 #### Scenario: Caller knows another root's job ID
 - **WHEN** a normal operation references a job owned by another Codex root
-- **THEN** the runtime reports no authorized matching job and performs no mutation
+- **THEN** the runtime reports no matching job in the caller's logical root scope and performs no mutation
 
 #### Scenario: Owner identity is missing
 - **WHEN** a normal plugin lifecycle operation is invoked without an injected trusted `ownerRootId`

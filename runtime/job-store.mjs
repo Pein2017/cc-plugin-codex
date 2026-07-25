@@ -12,7 +12,11 @@ import path from "node:path";
 
 import { resolvePluginDataRoot, resolvePluginStateRoot } from "./paths.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
-import { isProcessAlive, validateProcessIdentity, getProcessIdentity } from "./process-control.mjs";
+import { validateProcessIdentity, getProcessIdentity } from "./process-control.mjs";
+import {
+  markCompletionDetailedResultUnavailable,
+  reconcileTerminalJobCompletion,
+} from "./completion-inbox.mjs";
 
 const STATE_VERSION = 1;
 let ensuredPluginDataRoot = null;
@@ -41,6 +45,62 @@ const TERMINAL_JOB_STATUSES = new Set([
   "cancelled",
   "unknown",
 ]);
+
+function exactSessionIdOf(job) {
+  return job?.threadId ?? job?.result?.sessionId ?? job?.request?.resumeSessionId ?? null;
+}
+
+export function classifyJobRecoverability(job, status = job?.status) {
+  const exactSessionId = exactSessionIdOf(job);
+  if (status === "cancelled") {
+    return {
+      resumable: false,
+      mode: "blocked",
+      exactSessionId: null,
+      reason: "destructive_cancellation",
+    };
+  }
+  if (status === "completed" || status === "interrupted") {
+    return exactSessionId
+      ? {
+          resumable: true,
+          mode: "exact_session",
+          exactSessionId,
+          reason: status === "completed" ? "completed_exact_session" : "interrupted_exact_session",
+        }
+      : {
+          resumable: false,
+          mode: "blocked",
+          exactSessionId: null,
+          reason: `${status}_without_exact_session`,
+        };
+  }
+  if (status === "failed") {
+    const explicitlyResumable = job?.result?.resumable === true;
+    const drifted = job?.result?.failureClass === "protocol_session_drift";
+    return explicitlyResumable && exactSessionId && !drifted
+      ? {
+          resumable: true,
+          mode: "exact_session",
+          exactSessionId,
+          reason: "failure_explicitly_resumable",
+        }
+      : {
+          resumable: false,
+          mode: "blocked",
+          exactSessionId: null,
+          reason: drifted
+            ? "session_drift"
+            : job?.result?.failureClass ?? job?.errorMessage ?? "failure_not_proven_resumable",
+        };
+  }
+  return {
+    resumable: false,
+    mode: "blocked",
+    exactSessionId: null,
+    reason: `unsupported_terminal_status_${status ?? "missing"}`,
+  };
+}
 
 export function nowIso() {
   return new Date().toISOString();
@@ -89,6 +149,29 @@ export function resolveJobsDir(cwd) {
 
 export function ensureStateDir(cwd) {
   fs.mkdirSync(resolveJobsDir(cwd), { recursive: true, mode: 0o700 });
+}
+
+export function getStateProtectionReceipt(cwd, options = {}) {
+  const platform = options.platform ?? process.platform;
+  ensureStateDir(cwd);
+  if (platform === "win32") {
+    return {
+      platform,
+      status: "unverified",
+      mechanism: "native_windows_user_acl",
+      detail: "The runtime uses the current user's plugin data directory, but this process did not verify an effective owner-only Windows ACL.",
+    };
+  }
+  const stateMode = fs.statSync(resolveStateDir(cwd)).mode & 0o777;
+  const jobsMode = fs.statSync(resolveJobsDir(cwd)).mode & 0o777;
+  const verified = (stateMode & 0o077) === 0 && (jobsMode & 0o077) === 0;
+  return {
+    platform,
+    status: verified ? "verified_owner_only" : "unverified",
+    mechanism: "posix_mode",
+    stateMode: stateMode.toString(8).padStart(3, "0"),
+    jobsMode: jobsMode.toString(8).padStart(3, "0"),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -225,9 +308,8 @@ function activeLeaseOwner(lease) {
   const controlPid = owner.pid ?? owner.workerPid ?? null;
   const controlIdentity = owner.pid ? owner.pidIdentity : owner.workerPidIdentity;
   if (!controlPid) return null;
-  const alive = controlIdentity
-    ? validateProcessIdentity(controlPid, controlIdentity)
-    : isProcessAlive(controlPid);
+  if (!controlIdentity) return null;
+  const alive = validateProcessIdentity(controlPid, controlIdentity);
   return alive ? owner : null;
 }
 
@@ -312,8 +394,9 @@ function releaseJobSessionLease(job) {
   const sessionId = job?.sessionLease?.sessionId;
   const configIdentity = job?.sessionLease?.configIdentity;
   if (sessionId && configIdentity) {
-    releaseSessionLease(configIdentity, sessionId, job.id);
+    return releaseSessionLease(configIdentity, sessionId, job.id);
   }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,10 +463,42 @@ export function listStoredJobs(cwd) {
 
 export function listJobs(cwd) {
   const jobs = reapStaleJobs(cwd, readAllJobs(cwd));
+  reconcileCompletionEvents(cwd, jobs);
   return partitionJobsForRetention(jobs).retained;
 }
 
+function ownerRootIdOf(job) {
+  return typeof job?.ownerRootId === "string" && job.ownerRootId.trim()
+    ? job.ownerRootId.trim()
+    : typeof job?.sessionId === "string" && job.sessionId.trim()
+      ? job.sessionId.trim()
+      : null;
+}
+
+export function reconcileCompletionEvents(cwd, jobs = readAllJobs(cwd)) {
+  const receipts = [];
+  for (const job of jobs) {
+    if (!TERMINAL_JOB_STATUSES.has(job.status)) continue;
+    const ownerRootId = ownerRootIdOf(job);
+    if (!ownerRootId) continue;
+    try {
+      receipts.push(reconcileTerminalJobCompletion(cwd, ownerRootId, job));
+    } catch (error) {
+      receipts.push({
+        reconciled: false,
+        reason: "reconciliation_failed",
+        jobId: job.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return receipts;
+}
+
 function getRetentionBucketKey(job) {
+  if (typeof job.ownerRootId === "string" && job.ownerRootId.trim()) {
+    return job.ownerRootId.trim();
+  }
   if (typeof job.sessionId === "string" && job.sessionId.trim()) {
     return job.sessionId.trim();
   }
@@ -445,10 +560,8 @@ export function reapStaleJobs(cwd, jobs) {
     const controlIdentity = job.pid
       ? job.pidIdentity
       : job.workerPidIdentity;
-    const alive = controlPid
-      ? controlIdentity
-        ? validateProcessIdentity(controlPid, controlIdentity)
-        : isProcessAlive(controlPid)
+    const alive = controlPid && controlIdentity
+      ? validateProcessIdentity(controlPid, controlIdentity)
       : false;
     if (alive) return job;
 
@@ -456,8 +569,12 @@ export function reapStaleJobs(cwd, jobs) {
     try {
       const transitioned = transitionJob(cwd, job.id, [job.status], "failed", {
         errorMessage: controlPid
-          ? `Control process ${controlPid} died without completing. Auto-reaped.`
+          ? controlIdentity
+            ? `Control process ${controlPid} died or changed identity without completing. Auto-reaped.`
+            : `Control process ${controlPid} has no deterministic identity; refusing PID-only liveness ownership.`
           : "No live worker claimed this job before the startup grace period. Auto-reaped.",
+        requiresAttention: Boolean(controlPid && !controlIdentity),
+        controlFailure: controlPid && !controlIdentity ? "missing_identity" : null,
         completedAt: nowIso(),
         pid: null,
         pidIdentity: null,
@@ -693,8 +810,9 @@ function recoverStaleLock(lockFile) {
   try {
     observedStat = fs.statSync(lockFile);
     const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+    const ageMs = Date.now() - Number(lockData.timestamp ?? observedStat.mtimeMs);
     const ownerMatch = lockData.identity == null
-      ? isProcessAlive(lockData.pid)
+      ? Number.isFinite(ageMs) && ageMs <= LOCK_ACQUIRE_TIMEOUT_MS
       : validateProcessIdentity(lockData.pid, lockData.identity);
     if (ownerMatch) return false;
   } catch {}
@@ -820,12 +938,19 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
         job,
       };
     } else {
-      const updatedJob = {
+      let updatedJob = {
         ...job,
         status: next,
         ...extra,
         updatedAt: nowIso(),
       };
+      if (TERMINAL_JOB_STATUSES.has(next)) {
+        updatedJob = {
+          ...updatedJob,
+          recoverability:
+            extra.recoverability ?? classifyJobRecoverability(updatedJob, next),
+        };
+      }
       writeAtomic(jobFile, updatedJob);
       outcome = {
         transitioned: true,
@@ -837,7 +962,41 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
     releaseJobLock(lockFile, fd);
   }
   if (outcome.transitioned && TERMINAL_JOB_STATUSES.has(next)) {
-    releaseJobSessionLease(outcome.job);
+    const sessionLeaseReleased = releaseJobSessionLease(outcome.job);
+    const residencyReceipt = {
+      childProcessExited: outcome.job.pid == null,
+      processIdentitiesCleared:
+        outcome.job.pid == null &&
+        outcome.job.pidIdentity == null &&
+        outcome.job.workerPid == null &&
+        outcome.job.workerPidIdentity == null,
+      sessionLeaseReleased,
+      supervisorExitExpected: true,
+      verifiedAt: nowIso(),
+    };
+    outcome.job = patchJob(cwd, jobId, { residencyReceipt }) ?? {
+      ...outcome.job,
+      residencyReceipt,
+    };
+    const ownerRootId = ownerRootIdOf(outcome.job);
+    if (ownerRootId) {
+      try {
+        const completion = reconcileTerminalJobCompletion(cwd, ownerRootId, outcome.job);
+        outcome.completion = completion;
+      } catch (error) {
+        outcome.completion = {
+          reconciled: false,
+          reason: "publication_failed",
+          error: error instanceof Error ? error.message : String(error),
+        };
+        try {
+          patchJob(cwd, jobId, {
+            completionPending: true,
+            completionError: outcome.completion.error,
+          });
+        } catch {}
+      }
+    }
   }
   return outcome;
 }
@@ -861,8 +1020,13 @@ function writeAtomic(filePath, data) {
 
 export function cleanupOldJobs(cwd) {
   const jobs = reapStaleJobs(cwd, readAllJobs(cwd));
+  reconcileCompletionEvents(cwd, jobs);
   const { pruned: toRemove } = partitionJobsForRetention(jobs);
   for (const job of toRemove) {
+    const ownerRootId = ownerRootIdOf(job);
+    if (ownerRootId) {
+      try { markCompletionDetailedResultUnavailable(cwd, ownerRootId, job.id); } catch {}
+    }
     const jobFile = resolveJobFile(cwd, job.id);
     try {
       fs.unlinkSync(jobFile);

@@ -8,6 +8,7 @@ import { afterEach, describe, it } from "node:test";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const cli = path.join(root, "runtime", "cli.mjs");
+const operatorCli = path.join(root, "runtime", "operator-cli.mjs");
 const bootstrap = path.join(root, "plugins", "cc-for-pein", "bootstrap", "cc-runtime.mjs");
 const cleanups = [];
 
@@ -144,7 +145,7 @@ function fixture() {
       CODEX_HOME: codexHome,
       CC_RUNTIME_HOME: runtimeHome,
       CC_FAKE_INVOCATION_FILE: invocation,
-      CC_OWNER_SESSION_ID: "owner-1",
+      CODEX_THREAD_ID: "owner-1",
     },
   };
 }
@@ -284,6 +285,39 @@ describe("native runtime CLI", () => {
     assert.equal(invocation.args.includes("--resume"), true);
     assert.equal(invocation.args[invocation.args.indexOf("--resume") + 1], "fake-session-1");
     assert.doesNotMatch(invocation.prompt, /recover-once/);
+  });
+
+  it("scopes direct job lookup to the inherited Codex root and keeps all-roots listing operator-only", () => {
+    const test = fixture();
+    const launched = run(test, ["start", "--profile", "terminal-parity", "--json", "owner scope"]);
+    const completed = waitFor(test, launched.jobId, (job) => job.status === "completed");
+    assert.equal(completed.ownerRootId, "owner-1");
+
+    const foreignEnv = { ...test.env, CODEX_THREAD_ID: "owner-2" };
+    const foreign = spawnSync(process.execPath, [cli, "status", launched.jobId, "--json"], {
+      cwd: test.workspace,
+      env: foreignEnv,
+      encoding: "utf8",
+    });
+    assert.equal(foreign.status, 1);
+    assert.match(foreign.stderr, /No Claude job found/);
+
+    const modelAll = spawnSync(process.execPath, [cli, "status", "--all", "--json"], {
+      cwd: test.workspace,
+      env: test.env,
+      encoding: "utf8",
+    });
+    assert.equal(modelAll.status, 1);
+    assert.match(modelAll.stderr, /Unknown option --all/);
+
+    const operator = spawnSync(process.execPath, [operatorCli, "list-jobs", "--all", "--json"], {
+      cwd: test.workspace,
+      env: foreignEnv,
+      encoding: "utf8",
+    });
+    assert.equal(operator.status, 0, operator.stderr);
+    const diagnostic = JSON.parse(operator.stdout);
+    assert.equal(diagnostic.jobs.some((job) => job.id === launched.jobId), true);
   });
 
   it("interrupts with SIGINT and resumes the same Claude session", () => {

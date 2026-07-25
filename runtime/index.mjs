@@ -15,6 +15,7 @@ import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
  * @property {(jobId?: string|null, options?: object) => object} status
  * @property {(jobId?: string|null) => object} result
  * @property {(jobId: string, message: string, options?: object) => Promise<object>} followUp
+ * @property {(jobId?: string|null, options?: object) => Promise<object>} wait
  */
 
 /** @returns {ClaudeRuntimeLifecycle} */
@@ -28,5 +29,6 @@ export function createClaudeRuntime(options = {}) {
     status: runtime.status.bind(runtime),
     result: runtime.result.bind(runtime),
     followUp: runtime.followUp.bind(runtime),
+    wait: runtime.wait.bind(runtime),
   });
 }

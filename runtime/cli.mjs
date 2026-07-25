@@ -24,7 +24,7 @@ function usage() {
     "  node runtime/cli.mjs follow-up <job-id> <message>",
     "  node runtime/cli.mjs interrupt <job-id>",
     "  node runtime/cli.mjs cancel <job-id>",
-    "  node runtime/cli.mjs status [job-id] [--wait] [--all]",
+    "  node runtime/cli.mjs status [job-id] [--wait] [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
     "  node runtime/cli.mjs result [job-id]",
     "  node runtime/cli.mjs readiness",
   ].join("\n");
@@ -39,7 +39,7 @@ function normalizeArgv(argv) {
 
 function parse(argv, config = {}) {
   return parseArgs(normalizeArgv(argv), {
-    valueOptions: ["cwd", "owner-session-id", "env-file", ...(config.valueOptions ?? [])],
+    valueOptions: ["cwd", "env-file", ...(config.valueOptions ?? [])],
     booleanOptions: ["json", ...(config.booleanOptions ?? [])],
     aliasMap: { C: "cwd", m: "model", ...(config.aliasMap ?? {}) },
   });
@@ -48,7 +48,6 @@ function parse(argv, config = {}) {
 function runtimeFor(options) {
   return createInternalClaudeRuntime({
     cwd: options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd(),
-    ownerSessionId: options["owner-session-id"] ?? null,
     envFile: options["env-file"] ?? null,
     env: process.env,
   });
@@ -92,19 +91,27 @@ async function start(argv) {
 }
 
 async function status(argv) {
+  if (argv.some((value) => value === "--all" || value.startsWith("--all="))) {
+    throw new Error("Unknown option --all. Cross-root listing is available only through runtime/operator-cli.mjs.");
+  }
   const { options, positionals } = parse(argv, {
-    valueOptions: ["timeout-ms"],
-    booleanOptions: ["wait", "all"],
+    valueOptions: ["timeout-ms", "acknowledge-tokens"],
+    booleanOptions: ["wait"],
   });
   const runtime = runtimeFor(options);
   const id = positionals[0] ?? null;
   if (options.wait) {
-    if (!id) throw new Error("status --wait requires a job id.");
-    const receipt = await runtime.wait(id, { timeoutMs: options["timeout-ms"] });
-    output(receipt, renderJobStatus(receipt.job), options.json);
+    const receipt = await runtime.wait(id, {
+      timeoutMs: options["timeout-ms"],
+      acknowledgeTokens: String(options["acknowledge-tokens"] ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    });
+    output(receipt, receipt.job ? renderJobStatus(receipt.job) : `${JSON.stringify(receipt, null, 2)}\n`, options.json);
     return;
   }
-  const receipt = runtime.status(id, { all: options.all });
+  const receipt = runtime.status(id);
   output(receipt, id ? renderJobStatus(receipt) : renderStatus(receipt), options.json);
 }
 

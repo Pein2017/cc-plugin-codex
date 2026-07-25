@@ -33,7 +33,7 @@ describe("native plugin contract", () => {
     assert.doesNotMatch(runtimeText, /\.\.\/scripts|plugins\/cache|sendbird\/cc-plugin-codex|installer-cli/);
   });
 
-  it("exposes only the seven stable lifecycle actions from the public index", () => {
+  it("exposes the hardened job lifecycle plus durable wait from the public index", () => {
     const runtime = createClaudeRuntime({
       cwd: root,
       env: {
@@ -50,6 +50,7 @@ describe("native plugin contract", () => {
       "start",
       "status",
       "steer",
+      "wait",
     ]);
     assert.equal(Object.isFrozen(runtime), true);
   });

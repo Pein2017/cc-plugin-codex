@@ -1,0 +1,670 @@
+/**
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Root-owned, durable completion delivery.  This deliberately has no
+ * dependency on the public lifecycle API: supervisors may append/reconcile
+ * terminal receipts, while a future host adapter may read and acknowledge
+ * them without keeping a Claude process resident.
+ */
+
+import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import { resolvePluginStateRoot } from "./paths.mjs";
+import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
+import { resolveWorkspaceRoot } from "./workspace.mjs";
+
+export const COMPLETION_INBOX_VERSION = 1;
+export const DEFAULT_ACKNOWLEDGED_TAIL = 100;
+export const DEFAULT_UNREAD_BATCH_SIZE = 20;
+export const MAX_COMPLETION_MESSAGE_BYTES = 64 * 1024;
+
+const INBOX_DIRECTORY_NAME = "completion-inboxes";
+const INBOX_FILE_NAME = "inbox.json";
+const LOCK_FILE_NAME = "inbox.lock";
+const LOCK_TIMEOUT_MS = 15_000;
+const LOCK_STALE_MS = 60_000;
+const LOCK_RETRY_MS = 10;
+const TERMINAL_STATUSES = new Set(["completed", "interrupted", "failed", "cancelled"]);
+
+function assertText(value, label) {
+  if (typeof value !== "string" || !value.trim() || value.includes("\0")) {
+    throw new Error(`${label} must be a non-empty text value.`);
+  }
+  return value.trim();
+}
+
+function assertPositiveInteger(value, label) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+  return number;
+}
+
+function boundedUtf8(value, maxBytes = MAX_COMPLETION_MESSAGE_BYTES) {
+  const text = String(value ?? "");
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
+    return { text, truncated: false };
+  }
+  let end = text.length;
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > maxBytes) end -= 1;
+  return { text: text.slice(0, end), truncated: true };
+}
+
+function canonicalWorkspace(cwd) {
+  const workspace = resolveWorkspaceRoot(cwd);
+  try {
+    return fs.realpathSync.native(workspace);
+  } catch {
+    return path.resolve(workspace);
+  }
+}
+
+function digest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function workspaceHash(cwd) {
+  return digest(canonicalWorkspace(cwd)).slice(0, 16);
+}
+
+export function resolveCompletionOwnerHash(ownerRootId) {
+  return digest(assertText(ownerRootId, "owner root ID")).slice(0, 32);
+}
+
+export function deterministicCompletionEventId(ownerRootId, jobId) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  const job = assertText(jobId, "job ID");
+  return `completion-${digest(`${owner}\0${job}`)}`;
+}
+
+export function resolveCompletionInboxDir(cwd, ownerRootId) {
+  assertText(ownerRootId, "owner root ID");
+  return path.join(
+    resolvePluginStateRoot(),
+    workspaceHash(cwd),
+    INBOX_DIRECTORY_NAME,
+    resolveCompletionOwnerHash(ownerRootId)
+  );
+}
+
+export function resolveCompletionInboxFile(cwd, ownerRootId) {
+  return path.join(resolveCompletionInboxDir(cwd, ownerRootId), INBOX_FILE_NAME);
+}
+
+function platformProtectionReceipt(directory) {
+  if (process.platform === "win32") {
+    return {
+      platform: "win32",
+      protection: "not-verified",
+      message:
+        "Native Windows ACL verification is unavailable in this runtime; no user-scoped ACL guarantee is claimed.",
+    };
+  }
+
+  let directoryMode = null;
+  try {
+    directoryMode = fs.statSync(directory).mode & 0o777;
+  } catch {}
+  return {
+    platform: "posix",
+    protection: directoryMode != null && (directoryMode & 0o077) === 0
+      ? "owner-only"
+      : "mode-not-verified",
+    requestedDirectoryMode: "0700",
+    requestedFileMode: "0600",
+    effectiveDirectoryMode: directoryMode == null ? null : directoryMode.toString(8).padStart(4, "0"),
+  };
+}
+
+function ensureInboxDirectory(cwd, ownerRootId) {
+  const directory = resolveCompletionInboxDir(cwd, ownerRootId);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(directory, 0o700); } catch {}
+  }
+  return directory;
+}
+
+export function getCompletionInboxProtection(cwd, ownerRootId) {
+  return platformProtectionReceipt(ensureInboxDirectory(cwd, ownerRootId));
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function defaultInbox(ownerRootId, directory) {
+  return {
+    version: COMPLETION_INBOX_VERSION,
+    ownerRootId: assertText(ownerRootId, "owner root ID"),
+    ownerHash: resolveCompletionOwnerHash(ownerRootId),
+    nextSequence: 1,
+    acknowledgedThrough: 0,
+    events: [],
+    protection: platformProtectionReceipt(directory),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+}
+
+function validateResumability(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Completion resumability must be an explicit object.");
+  }
+  const classification = assertText(value.classification, "resumability classification");
+  const claudeSessionId = value.claudeSessionId == null
+    ? null
+    : assertText(value.claudeSessionId, "Claude session ID");
+  const blockingReason = value.blockingReason == null
+    ? null
+    : assertText(value.blockingReason, "resumability blocking reason");
+  if (classification === "resumable" && !claudeSessionId) {
+    throw new Error("Resumable completion requires an exact Claude session ID.");
+  }
+  if (classification !== "resumable" && !blockingReason) {
+    throw new Error("Non-resumable completion requires a blocking reason.");
+  }
+  return { classification, claudeSessionId, blockingReason };
+}
+
+function validateStoredEvent(event, ownerRootId, previousSequence) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    throw new Error("Completion inbox contains an invalid event.");
+  }
+  if (event.version !== COMPLETION_INBOX_VERSION) {
+    throw new Error(`Unsupported completion event version: ${event.version}.`);
+  }
+  const sequence = assertPositiveInteger(event.sequence, "completion sequence");
+  if (sequence !== previousSequence + 1) {
+    throw new Error("Completion inbox event sequences must be contiguous.");
+  }
+  if (event.ownerRootId !== ownerRootId) {
+    throw new Error("Completion inbox owner does not match the requested root.");
+  }
+  const jobId = assertText(event.jobId, "job ID");
+  const expectedId = deterministicCompletionEventId(ownerRootId, jobId);
+  if (event.eventId !== expectedId) {
+    throw new Error("Completion event identity does not match its owner and job.");
+  }
+  if (!TERMINAL_STATUSES.has(event.terminalStatus)) {
+    throw new Error(`Invalid terminal completion status: ${event.terminalStatus}.`);
+  }
+  assertText(event.completedAt, "completion timestamp");
+  assertText(event.summary, "completion summary");
+  assertText(event.deliveryToken, "delivery token");
+  validateResumability(event.resumability);
+  if (typeof event.detailedResultAvailable !== "boolean") {
+    throw new Error("Completion detailed-result availability must be boolean.");
+  }
+  if (typeof event.finalMessage !== "string" || typeof event.truncated !== "boolean") {
+    throw new Error("Completion final-message receipt is invalid.");
+  }
+  if (typeof event.claudeSessionIdAvailable !== "boolean") {
+    throw new Error("Completion Claude-session availability receipt is invalid.");
+  }
+  return sequence;
+}
+
+function validateInbox(inbox, ownerRootId, directory) {
+  if (!inbox || typeof inbox !== "object" || Array.isArray(inbox)) {
+    throw new Error("Completion inbox must be an object.");
+  }
+  if (inbox.version !== COMPLETION_INBOX_VERSION) {
+    throw new Error(`Unsupported completion inbox version: ${inbox.version}.`);
+  }
+  const owner = assertText(ownerRootId, "owner root ID");
+  if (inbox.ownerRootId !== owner || inbox.ownerHash !== resolveCompletionOwnerHash(owner)) {
+    throw new Error("Completion inbox owner identity is invalid.");
+  }
+  const acknowledgedThrough = Number(inbox.acknowledgedThrough);
+  const nextSequence = Number(inbox.nextSequence);
+  if (!Number.isSafeInteger(acknowledgedThrough) || acknowledgedThrough < 0) {
+    throw new Error("Completion acknowledgement cursor is invalid.");
+  }
+  if (!Number.isSafeInteger(nextSequence) || nextSequence < 1) {
+    throw new Error("Completion next sequence is invalid.");
+  }
+  if (!Array.isArray(inbox.events)) {
+    throw new Error("Completion inbox events must be an array.");
+  }
+  // Compaction is allowed to remove an acknowledged prefix, so the first
+  // retained event need not be sequence one.  The retained segment itself
+  // remains contiguous, and any retained unread event must begin exactly at
+  // the acknowledgement cursor plus one.
+  let previousSequence = inbox.events.length > 0 ? inbox.events[0].sequence - 1 : 0;
+  for (const event of inbox.events) {
+    previousSequence = validateStoredEvent(event, owner, previousSequence);
+  }
+  const firstUnread = inbox.events.find((event) => event.sequence > acknowledgedThrough);
+  if (firstUnread && firstUnread.sequence !== acknowledgedThrough + 1) {
+    throw new Error("Completion inbox unread events must begin after the acknowledgement cursor.");
+  }
+  if (nextSequence <= previousSequence || acknowledgedThrough >= nextSequence) {
+    throw new Error("Completion inbox cursor state is inconsistent.");
+  }
+  const expectedProtection = platformProtectionReceipt(directory);
+  return {
+    ...inbox,
+    acknowledgedThrough,
+    nextSequence,
+    protection: inbox.protection ?? expectedProtection,
+  };
+}
+
+function readInbox(cwd, ownerRootId, create = false) {
+  const directory = create
+    ? ensureInboxDirectory(cwd, ownerRootId)
+    : resolveCompletionInboxDir(cwd, ownerRootId);
+  const filePath = path.join(directory, INBOX_FILE_NAME);
+  try {
+    return validateInbox(JSON.parse(fs.readFileSync(filePath, "utf8")), ownerRootId, directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function fsyncDirectory(directory) {
+  if (process.platform === "win32") return;
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(directory, "r");
+    fs.fsyncSync(descriptor);
+  } catch {
+    // Directory fsync is a best-effort durability improvement on filesystems
+    // that do not support opening a directory as a regular descriptor.
+  } finally {
+    if (descriptor != null) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+  }
+}
+
+function writeInboxAtomic(filePath, inbox) {
+  const directory = path.dirname(filePath);
+  const temporary = path.join(
+    directory,
+    `${INBOX_FILE_NAME}.tmp.${process.pid}.${Date.now().toString(36)}.${randomBytes(6).toString("hex")}`
+  );
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify(inbox, null, 2)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporary, filePath);
+    if (process.platform !== "win32") {
+      try { fs.chmodSync(filePath, 0o600); } catch {}
+    }
+    fsyncDirectory(directory);
+  } catch (error) {
+    if (descriptor != null) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+    try { fs.unlinkSync(temporary); } catch {}
+    throw error;
+  }
+}
+
+function sleepSync(milliseconds) {
+  const shared = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(shared), 0, 0, milliseconds);
+}
+
+/** @param {unknown} error */
+function errorCode(error) {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  return String(/** @type {{ code?: unknown }} */ (error).code ?? "");
+}
+
+function clearStaleLock(lockPath) {
+  let lock = null;
+  let observed = null;
+  try {
+    observed = fs.statSync(lockPath);
+    lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    if (lock.identity && validateProcessIdentity(lock.pid, lock.identity)) return false;
+    if (!lock.identity && Date.now() - observed.mtimeMs < LOCK_STALE_MS) return false;
+  } catch {
+    try {
+      const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+      if (age < LOCK_STALE_MS) return false;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    const current = fs.statSync(lockPath);
+    if (observed && (current.dev !== observed.dev || current.ino !== observed.ino)) return false;
+    fs.unlinkSync(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireInboxLock(directory) {
+  const lockPath = path.join(directory, LOCK_FILE_NAME);
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  while (true) {
+    clearStaleLock(lockPath);
+    const token = randomBytes(16).toString("hex");
+    const candidate = `${lockPath}.${process.pid}.${token}.candidate`;
+    let descriptor = null;
+    try {
+      descriptor = fs.openSync(candidate, "wx", 0o600);
+      const identity = getProcessIdentity(process.pid);
+      fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid, identity, token, createdAt: nowIso() }), "utf8");
+      fs.fsyncSync(descriptor);
+      const stat = fs.fstatSync(descriptor);
+      fs.linkSync(candidate, lockPath);
+      fs.unlinkSync(candidate);
+      fs.closeSync(descriptor);
+      return { lockPath, token, stat };
+    } catch (error) {
+      if (descriptor != null) {
+        try { fs.closeSync(descriptor); } catch {}
+      }
+      try { fs.unlinkSync(candidate); } catch {}
+      if (errorCode(error) !== "EEXIST" || Date.now() >= deadline) {
+        if (errorCode(error) === "EEXIST") {
+          throw Object.assign(
+            new Error("Timed out acquiring completion inbox lock."),
+            { code: "ETIMEDOUT" }
+          );
+        }
+        throw error;
+      }
+      sleepSync(LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS));
+    }
+  }
+}
+
+function releaseInboxLock(lock) {
+  if (!lock) return;
+  try {
+    const stat = fs.statSync(lock.lockPath);
+    const current = JSON.parse(fs.readFileSync(lock.lockPath, "utf8"));
+    if (stat.dev === lock.stat.dev && stat.ino === lock.stat.ino && current.token === lock.token) {
+      fs.unlinkSync(lock.lockPath);
+    }
+  } catch {}
+}
+
+function withInboxLock(cwd, ownerRootId, operation) {
+  const directory = ensureInboxDirectory(cwd, ownerRootId);
+  const lock = acquireInboxLock(directory);
+  try {
+    const inbox = readInbox(cwd, ownerRootId, true) ?? defaultInbox(ownerRootId, directory);
+    return operation(inbox, path.join(directory, INBOX_FILE_NAME), directory);
+  } finally {
+    releaseInboxLock(lock);
+  }
+}
+
+function normalizeCompletionInput(ownerRootId, completion) {
+  if (!completion || typeof completion !== "object" || Array.isArray(completion)) {
+    throw new Error("Completion event input must be an object.");
+  }
+  const jobId = assertText(completion.jobId, "job ID");
+  const terminalStatus = assertText(completion.terminalStatus, "terminal completion status");
+  if (!TERMINAL_STATUSES.has(terminalStatus)) {
+    throw new Error(`Invalid terminal completion status: ${terminalStatus}.`);
+  }
+  const resultPointer = completion.resultPointer == null ? null : String(completion.resultPointer);
+  const final = boundedUtf8(completion.finalMessage ?? completion.summary);
+  return {
+    version: COMPLETION_INBOX_VERSION,
+    eventId: deterministicCompletionEventId(ownerRootId, jobId),
+    ownerRootId: assertText(ownerRootId, "owner root ID"),
+    jobId,
+    terminalStatus,
+    completedAt: completion.completedAt == null ? nowIso() : assertText(completion.completedAt, "completion timestamp"),
+    summary: assertText(completion.summary, "completion summary"),
+    resumability: validateResumability(completion.resumability),
+    detailedResultAvailable: Boolean(completion.detailedResultAvailable),
+    resultPointer,
+    finalMessage: final.text,
+    truncated: final.truncated,
+    claudeSessionIdAvailable: Boolean(
+      completion.claudeSessionIdAvailable ?? completion.resumability?.claudeSessionId
+    ),
+  };
+}
+
+function publicEvent(event) {
+  return {
+    version: event.version,
+    sequence: event.sequence,
+    eventId: event.eventId,
+    jobId: event.jobId,
+    terminalStatus: event.terminalStatus,
+    completedAt: event.completedAt,
+    summary: event.summary,
+    resumability: { ...event.resumability },
+    detailedResultAvailable: event.detailedResultAvailable,
+    resultPointer: event.resultPointer,
+    finalMessage: event.finalMessage,
+    truncated: event.truncated,
+    claudeSessionIdAvailable: event.claudeSessionIdAvailable,
+    deliveryToken: event.deliveryToken,
+  };
+}
+
+export function appendCompletionEvent(cwd, ownerRootId, completion) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  const normalized = normalizeCompletionInput(owner, completion);
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const existing = inbox.events.find((event) => event.eventId === normalized.eventId);
+    if (existing) {
+      if (existing.jobId !== normalized.jobId || existing.ownerRootId !== owner) {
+        throw new Error("Completion event identity collision.");
+      }
+      return { appended: false, event: publicEvent(existing), sequence: existing.sequence };
+    }
+    const event = {
+      ...normalized,
+      sequence: inbox.nextSequence,
+      deliveryToken: `delivery-${randomBytes(32).toString("base64url")}`,
+    };
+    const updated = {
+      ...inbox,
+      nextSequence: inbox.nextSequence + 1,
+      events: [...inbox.events, event],
+      updatedAt: nowIso(),
+    };
+    writeInboxAtomic(filePath, updated);
+    return { appended: true, event: publicEvent(event), sequence: event.sequence };
+  });
+}
+
+function unreadContiguousEvents(inbox, limit) {
+  const result = [];
+  let expectedSequence = inbox.acknowledgedThrough + 1;
+  for (const event of inbox.events) {
+    if (event.sequence <= inbox.acknowledgedThrough) continue;
+    if (event.sequence !== expectedSequence || result.length >= limit) break;
+    result.push(event);
+    expectedSequence += 1;
+  }
+  return result;
+}
+
+export function readUnreadCompletionEvents(cwd, ownerRootId, options = {}) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  const requestedLimit = options.limit == null ? DEFAULT_UNREAD_BATCH_SIZE : options.limit;
+  const limit = Math.min(assertPositiveInteger(requestedLimit, "unread completion limit"), 100);
+  const inbox = readInbox(cwd, owner, false);
+  if (!inbox) {
+    return {
+      version: COMPLETION_INBOX_VERSION,
+      ownerRootId: owner,
+      acknowledgedThrough: 0,
+      events: [],
+      protection: getCompletionInboxProtection(cwd, owner),
+    };
+  }
+  return {
+    version: inbox.version,
+    ownerRootId: owner,
+    acknowledgedThrough: inbox.acknowledgedThrough,
+    events: unreadContiguousEvents(inbox, limit).map(publicEvent),
+    protection: inbox.protection,
+  };
+}
+
+function compactInbox(inbox, acknowledgedTail) {
+  const tail = Math.max(0, Number(acknowledgedTail));
+  if (!Number.isSafeInteger(tail)) {
+    throw new Error("Acknowledged completion tail must be a non-negative integer.");
+  }
+  const retainAfter = Math.max(0, inbox.acknowledgedThrough - tail);
+  const events = inbox.events.filter((event) => event.sequence > retainAfter);
+  return { ...inbox, events, compactedCount: inbox.events.length - events.length };
+}
+
+export function compactAcknowledgedCompletionEvents(cwd, ownerRootId, options = {}) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  const acknowledgedTail = options.acknowledgedTail ?? DEFAULT_ACKNOWLEDGED_TAIL;
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const compacted = compactInbox(inbox, acknowledgedTail);
+    if (compacted.compactedCount > 0) {
+      const updated = { ...compacted, updatedAt: nowIso() };
+      delete updated.compactedCount;
+      writeInboxAtomic(filePath, updated);
+    }
+    return {
+      acknowledgedThrough: inbox.acknowledgedThrough,
+      compactedCount: compacted.compactedCount,
+      retainedEventCount: compacted.events.length,
+    };
+  });
+}
+
+export function acknowledgeCompletionEvents(cwd, ownerRootId, deliveryTokens, options = {}) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  if (!Array.isArray(deliveryTokens)) {
+    throw new Error("Completion acknowledgement tokens must be an array.");
+  }
+  if (deliveryTokens.length === 0) {
+    const inbox = readInbox(cwd, owner, false);
+    return { acknowledgedThrough: inbox?.acknowledgedThrough ?? 0, acknowledgedCount: 0, compactedCount: 0 };
+  }
+  const tokens = deliveryTokens.map((token) => assertText(token, "delivery token"));
+  if (new Set(tokens).size !== tokens.length) {
+    throw new Error("Completion acknowledgement tokens must not repeat.");
+  }
+  const acknowledgedTail = options.acknowledgedTail ?? DEFAULT_ACKNOWLEDGED_TAIL;
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const alreadyAcknowledged = inbox.events.filter(
+      (event) => event.sequence <= inbox.acknowledgedThrough
+    );
+    if (tokens.every((token) => alreadyAcknowledged.some((event) => event.deliveryToken === token))) {
+      return {
+        acknowledgedThrough: inbox.acknowledgedThrough,
+        acknowledgedCount: 0,
+        compactedCount: 0,
+      };
+    }
+    const expected = unreadContiguousEvents(inbox, tokens.length);
+    if (expected.length !== tokens.length || expected.some((event, index) => event.deliveryToken !== tokens[index])) {
+      throw new Error("Completion acknowledgement must cover the oldest unread contiguous token prefix.");
+    }
+    const advanced = {
+      ...inbox,
+      acknowledgedThrough: expected.at(-1).sequence,
+    };
+    const compacted = compactInbox(advanced, acknowledgedTail);
+    const updated = { ...compacted, updatedAt: nowIso() };
+    delete updated.compactedCount;
+    writeInboxAtomic(filePath, updated);
+    return {
+      acknowledgedThrough: advanced.acknowledgedThrough,
+      acknowledgedCount: tokens.length,
+      compactedCount: compacted.compactedCount,
+    };
+  });
+}
+
+function completionFromTerminalJob(job, options) {
+  if (!job || typeof job !== "object" || Array.isArray(job)) {
+    throw new Error("Terminal job must be an object.");
+  }
+  if (!TERMINAL_STATUSES.has(job.status)) {
+    return null;
+  }
+  const summary =
+    options.summary ??
+    job.completionSummary ??
+    job.summary ??
+    job.finalMessage ??
+    job.errorMessage ??
+    `${job.status} job ${job.id}`;
+  const recoverability = job.recoverability ?? null;
+  const resumability = options.resumability ?? job.resumability ?? (
+    recoverability?.resumable
+      ? {
+          classification: "resumable",
+          claudeSessionId: recoverability.exactSessionId,
+        }
+      : {
+          classification: "not_resumable",
+          blockingReason: recoverability?.reason ?? "terminal job is not resumable",
+        }
+  );
+  return {
+    jobId: job.id,
+    terminalStatus: job.status,
+    completedAt: job.completedAt ?? job.updatedAt ?? nowIso(),
+    summary,
+    resumability,
+    detailedResultAvailable: options.detailedResultAvailable ?? true,
+    resultPointer: options.resultPointer ?? job.id,
+    finalMessage:
+      options.finalMessage ??
+      job.result?.rawOutput ??
+      job.result?.partialOutput ??
+      job.rendered ??
+      summary,
+    claudeSessionIdAvailable: Boolean(
+      options.claudeSessionIdAvailable ?? resumability?.claudeSessionId
+    ),
+  };
+}
+
+export function markCompletionDetailedResultUnavailable(cwd, ownerRootId, jobId) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  const eventId = deterministicCompletionEventId(owner, jobId);
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const index = inbox.events.findIndex((event) => event.eventId === eventId);
+    if (index < 0) return { updated: false, reason: "missing_event" };
+    const current = inbox.events[index];
+    if (!current.detailedResultAvailable && current.resultPointer == null) {
+      return { updated: false, reason: "already_unavailable" };
+    }
+    const events = [...inbox.events];
+    events[index] = {
+      ...current,
+      detailedResultAvailable: false,
+      resultPointer: null,
+    };
+    writeInboxAtomic(filePath, { ...inbox, events, updatedAt: nowIso() });
+    return { updated: true, reason: "marked_unavailable" };
+  });
+}
+
+export function reconcileTerminalJobCompletion(cwd, ownerRootId, job, options = {}) {
+  const completion = completionFromTerminalJob(job, options);
+  if (!completion) return { reconciled: false, reason: "not-terminal", event: null };
+  const result = appendCompletionEvent(cwd, ownerRootId, completion);
+  return { reconciled: result.appended, reason: result.appended ? "appended" : "already-present", event: result.event };
+}
+
+export function reconcileTerminalJobCompletions(cwd, ownerRootId, jobs, options = {}) {
+  if (!Array.isArray(jobs)) throw new Error("Terminal jobs must be an array.");
+  return jobs.map((job) => reconcileTerminalJobCompletion(cwd, ownerRootId, job, options));
+}
