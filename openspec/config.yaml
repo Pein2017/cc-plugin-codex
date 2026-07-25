@@ -1,0 +1,26 @@
+schema: spec-driven
+
+context: |
+  Project: CC for Pein, a checkout-owned Codex Plugin for durable Claude Code orchestration.
+  Runtime: Node.js 20.19+ ESM, portable across macOS, Linux, and native Windows.
+  Public lifecycle owner: runtime/index.mjs. Keep Claude stream-json, process,
+  persistence, recovery, mailbox, and environment details behind that boundary.
+  Source/runtime policy: the local checkout is the sole source and runtime dependency.
+  Do not depend on Sendbird, upstream installers, Codex forwarding subagents, or
+  versioned plugin cache paths. Claude Code CLI remains an explicit host dependency.
+  Environment policy: resolve one dotenv-compatible file without evaluating shell code;
+  support CLAUDE_CONFIG_DIR, proxy variables, CONDA_EXE, and terminal-parity execution.
+  Verification: run focused tests while iterating and npm run check before acceptance.
+rules:
+  proposal:
+    - Include explicit non-goals and lifecycle ordering when a change depends on another change.
+    - Distinguish current verified behavior from proposed behavior.
+  design:
+    - Record ownership, persistence, recovery, and process-lifecycle boundaries explicitly.
+    - Prefer Codex Multi-Agent V2 semantics over compatibility with the old cc API.
+  specs:
+    - Every requirement must include at least one observable scenario.
+    - Treat root-thread isolation and Claude session ownership as correctness boundaries.
+  tasks:
+    - Include focused automated tests and one real Claude Code smoke when behavior crosses the CLI boundary.
+    - Do not mix later lifecycle changes into an earlier change.

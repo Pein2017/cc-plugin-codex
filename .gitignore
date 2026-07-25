@@ -1,4 +1,5 @@
 .claude/
+.serena/
 node_modules/
 *.log
 .DS_Store
