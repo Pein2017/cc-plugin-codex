@@ -17,6 +17,26 @@ Canonical arguments are `--task-name <name>`, `--fork-turns none`, and a
 message. Optional extensions are `--description <text>`, `--model <model>`,
 `--reasoning-effort <level>`, and `--execution-profile safe|terminal-parity`.
 
+Use model and effort as separate arguments. This plugin supports exactly two
+Claude models, pinned to the full model IDs verified against
+the installed Claude Code 2.1.220 and active account:
+
+- `Sonnet`, `Sonnet 5`, or model alias `sonnet` →
+  `--model claude-sonnet-5`.
+- `Opus`, `Opus 5`, `Ops5` when used as a model selector, or model alias `opus`
+  → `--model claude-opus-5`.
+
+Do not select Fable, Haiku, or another Claude model through this skill. Treat an
+`Ops5` substring inside an Agent/task name as a label, not an implicit model
+request; apply the mapping only when the user uses it to select the model. If
+the user does not select a model, the runtime's explicit default is
+`claude-opus-5`, including under `terminal-parity`.
+
+The exact effort values are `low`, `medium`, `high`, `xhigh`, and `max`; map
+human wording such as “x-high” to `--reasoning-effort xhigh`. Never pass partial
+names such as `opus-5` or `sonnet-5`, and never silently retry with a different
+model if Claude rejects the requested one.
+
 - Require `fork_turns=none` explicitly. Context inheritance (`all` or a
   positive count) is unsupported and must fail rather than being put into a
   Claude prompt.
@@ -24,4 +44,10 @@ message. Optional extensions are `--description <text>`, `--model <model>`,
   the current logical Codex root.
 - Never accept, infer, or adopt a Terminal Claude session; Terminal-session
   adoption is deferred to a future OpenSpec change.
-- Present the runtime receipt exactly as returned.
+- Keep the complete runtime receipt available for targeting and later lifecycle
+  operations, but do not print its raw JSON by default.
+- On successful spawn, present one concise sentence containing only the stable
+  Agent path and current status. Show the complete receipt only when the user
+  explicitly requests raw or debug output.
+- On failure or when recovery/action is required, report the actionable details
+  instead of replacing them with a generic success acknowledgement.

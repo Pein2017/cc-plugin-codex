@@ -303,6 +303,7 @@ class ClaudeRuntime {
         permissionMode: options.permissionMode ?? null,
         dangerouslySkipPermissions: Boolean(options.dangerouslySkipPermissions),
         allowedTools: normalizeAllowedTools(options.allowedTools),
+        sessionName: String(options.sessionName ?? "").trim() || null,
         resumeSessionId,
       };
       writeJobFile(this.cwd, jobId, {
@@ -519,6 +520,7 @@ class ClaudeRuntime {
         write: Boolean(request.write),
         claudeOptions: {
           ...profile.claudeOptions,
+          sessionName: request.sessionName ?? undefined,
           resumeSessionId: request.resumeSessionId ?? undefined,
         },
         onProgress,
@@ -603,6 +605,7 @@ class ClaudeRuntime {
       dangerouslySkipPermissions:
         options.dangerouslySkipPermissions ?? request.dangerouslySkipPermissions,
       allowedTools: options.allowedTools ?? request.allowedTools,
+      sessionName: options.sessionName ?? request.sessionName,
       resumeSessionId: sessionId,
       parentJobId: source.id,
       title: "Claude Code Follow-up",

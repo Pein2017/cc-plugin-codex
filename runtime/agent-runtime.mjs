@@ -6,6 +6,7 @@
  */
 
 import { createAgentStore } from "./agent-store.mjs";
+import { resolveModel } from "./claude-headless-adapter.mjs";
 import { readUnreadCompletionEvents } from "./completion-inbox.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
 import {
@@ -56,10 +57,11 @@ function normalizeAllowedTools(value) {
 }
 
 function internalOptions(input, fallback = {}) {
+  const requestedModel = input.model ?? fallback.model;
   return {
     write: input.write ?? fallback.write,
     profile: input.execution_profile ?? fallback.profile,
-    model: input.model ?? fallback.model,
+    model: requestedModel ? resolveModel(requestedModel) : requestedModel,
     effort: input.reasoning_effort ?? fallback.effort,
     permissionMode: input.permission_mode ?? fallback.permissionMode,
     dangerouslySkipPermissions:
@@ -405,6 +407,7 @@ class AgentRuntime {
         readinessReceipt,
         jobId,
         agentId: agent.agentId,
+        sessionName: agent.name,
         title: `Claude Agent ${agent.name}`,
       });
     } catch (error) {
@@ -585,6 +588,7 @@ class AgentRuntime {
         agentId: agent.agentId,
         resumeSessionId,
         parentJobId: agent.latestJobId,
+        sessionName: agent.name,
         title: initialActivation
           ? `Claude Agent ${agent.name} initial activation`
           : `Claude Agent ${agent.name} follow-up`,

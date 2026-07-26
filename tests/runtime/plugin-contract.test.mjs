@@ -31,7 +31,7 @@ describe("native plugin contract", () => {
     const pluginRoot = path.join(root, "plugins", "cc-for-pein");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "cc-for-pein");
-    assert.equal(manifest.version, "0.2.0");
+    assert.match(manifest.version, /^0\.2\.0\+codex\.[A-Za-z0-9._-]+$/);
     assert.equal(manifest.hooks, undefined);
     assert.equal(manifest.author.name, "Pein");
     const skills = fs.readdirSync(path.join(pluginRoot, "skills"), { withFileTypes: true })
@@ -94,13 +94,46 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("keeps package, lockfile, manifest, and local marketplace metadata on v0.2", () => {
+  it("keeps spawn success concise while retaining explicit raw and actionable output", () => {
+    const text = fs.readFileSync(
+      path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(text, /do not print its raw JSON by default/i);
+    assert.match(text, /one concise sentence[\s\S]*Agent path and current status/i);
+    assert.match(text, /explicitly requests raw or debug output/i);
+    assert.match(text, /failure[\s\S]*actionable details/i);
+    assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
+  });
+
+  it("documents exact Claude model and effort identifiers without invented fallback", () => {
+    const text = fs.readFileSync(
+      path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(text, /Sonnet.*Sonnet 5[\s\S]*--model claude-sonnet-5/);
+    assert.match(text, /Opus.*Opus 5.*Ops5[\s\S]*--model claude-opus-5/);
+    assert.match(text, /supports exactly two[\s\S]*Claude models/i);
+    assert.match(text, /runtime's explicit default is[\s\S]*`claude-opus-5`/i);
+    assert.doesNotMatch(text, /--model (?:fable|haiku)/);
+    assert.match(text, /low.*medium.*high.*xhigh.*max/s);
+    assert.match(text, /Ops5.*Agent\/task name[\s\S]*not an implicit model/s);
+    assert.match(text, /Never pass partial[\s\S]*`opus-5`[\s\S]*`sonnet-5`/);
+    assert.match(text, /never silently retry with a different[\s\S]*model/i);
+  });
+
+  it("keeps v0.2 base metadata synchronized with one local plugin cachebuster", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(root, "plugins", "cc-for-pein", ".codex-plugin", "plugin.json"), "utf8"),
+    );
     const marketplace = JSON.parse(fs.readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
     assert.equal(packageJson.version, "0.2.0");
     assert.equal(lockfile.version, "0.2.0");
     assert.equal(lockfile.packages[""].version, "0.2.0");
+    assert.equal(manifest.version.split("+")[0], packageJson.version);
+    assert.match(manifest.version, /^0\.2\.0\+codex\.[A-Za-z0-9._-]+$/);
     assert.match(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.2\.0/);
   });
 });

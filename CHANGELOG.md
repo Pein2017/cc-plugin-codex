@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Make `$cc-for-pein:spawn-agent` acknowledge successful starts with only the
+  Agent path and status by default; retain full runtime JSON for explicit raw or
+  debug requests and preserve actionable failure details.
+- Pin the spawn skill's two supported model selections to
+  `claude-sonnet-5` and `claude-opus-5`, document `low` through `max` effort
+  values separately, reject every other model before launch, and forbid partial
+  model names or silent fallback after account rejection. Apply the Opus 5
+  default to both execution profiles and name fresh sessions to avoid the
+  observed auxiliary title-generation model call.
+
 ## 0.2.0 - 2026-07-25
 
 - Replace the public job lifecycle with six canonical Agent operations:

@@ -15,15 +15,20 @@ afterEach(() => {
 });
 
 describe("execution profiles", () => {
-  it("keeps terminal-parity free of implicit Claude overrides", () => {
+  it("pins terminal-parity to the plugin model default without other implicit overrides", () => {
     const profile = createExecutionProfile({
       profile: "terminal-parity",
       write: true,
       env: { CLAUDE_CONFIG_DIR: "/project/.claude" },
     });
-    assert.deepEqual(Object.keys(profile.claudeOptions), ["env"]);
-    assert.deepEqual(profile.receipt.addedOverrides, []);
+    assert.deepEqual(Object.keys(profile.claudeOptions), ["env", "model"]);
+    assert.equal(profile.claudeOptions.model, "claude-opus-5");
+    assert.deepEqual(profile.receipt.addedOverrides, ["model"]);
     assert.equal(profile.receipt.inheritedClaudeConfiguration, true);
+    assert.throws(
+      () => createExecutionProfile({ profile: "terminal-parity", model: "haiku", env: {} }),
+      /Unsupported Claude model/
+    );
   });
 
   it("records caller-explicit headless permission overrides", () => {
@@ -35,7 +40,7 @@ describe("execution profiles", () => {
     });
     assert.equal(profile.claudeOptions.permissionMode, "auto");
     assert.deepEqual(profile.claudeOptions.allowedTools, ["mcp__serena__get_symbols_overview"]);
-    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "permissionMode"]);
+    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "model", "permissionMode"]);
   });
 
   it("models the explicit unrestricted native launcher without weakening safe", () => {
@@ -46,7 +51,7 @@ describe("execution profiles", () => {
     });
     assert.equal(profile.claudeOptions.dangerouslySkipPermissions, true);
     assert.equal(profile.claudeOptions.env.IS_SANDBOX, "1");
-    assert.deepEqual(profile.receipt.addedOverrides, ["dangerouslySkipPermissions"]);
+    assert.deepEqual(profile.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
     assert.throws(
       () => createExecutionProfile({ profile: "safe", dangerouslySkipPermissions: true }),
       /safe must remain sandboxed/

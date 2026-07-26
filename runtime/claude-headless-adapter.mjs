@@ -741,9 +741,10 @@ export function pruneStaleSandboxSettings(options = {}) {
 // ---------------------------------------------------------------------------
 
 export const MODEL_ALIASES = new Map([
-  ["opus", "claude-opus-4-7[1m]"],
-  ["sonnet", "claude-sonnet-4-6[1m]"],
-  ["haiku", "claude-haiku-4-5"],
+  ["opus", "claude-opus-5"],
+  ["claude-opus-5", "claude-opus-5"],
+  ["sonnet", "claude-sonnet-5"],
+  ["claude-sonnet-5", "claude-sonnet-5"],
 ]);
 
 export const EFFORT_ALIASES = {
@@ -753,22 +754,20 @@ export const EFFORT_ALIASES = {
 
 export const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
-export const DEFAULT_MODEL = "opus";
+export const DEFAULT_MODEL = "claude-opus-5";
 
 export const DEFAULT_EFFORT_BY_MODEL = new Map([
   ["opus", "xhigh"],
-  ["claude-opus-4-7", "xhigh"],
-  ["claude-opus-4-7[1m]", "xhigh"],
+  ["claude-opus-5", "xhigh"],
   ["sonnet", "high"],
-  ["claude-sonnet-4-6", "high"],
-  ["claude-sonnet-4-6[1m]", "high"],
+  ["claude-sonnet-5", "high"],
 ]);
 
 export function resolveDefaultModel(model) {
   if (model == null || String(model).trim() === "") {
     return DEFAULT_MODEL;
   }
-  return model;
+  return resolveModel(model);
 }
 
 export function resolveDefaultEffort(model, effort) {
@@ -781,7 +780,12 @@ export function resolveDefaultEffort(model, effort) {
 
 export function resolveModel(model) {
   if (!model) return undefined;
-  return MODEL_ALIASES.get(model) ?? model;
+  const normalized = String(model).trim().toLowerCase();
+  const resolved = MODEL_ALIASES.get(normalized);
+  if (resolved) return resolved;
+  throw new Error(
+    `Unsupported Claude model "${model}". Use sonnet/claude-sonnet-5 or opus/claude-opus-5.`
+  );
 }
 
 export function resolveEffort(effort) {
@@ -834,6 +838,13 @@ export function buildArgs(prompt, options = {}) {
 
   if (options.noSessionPersistence) {
     args.push("--no-session-persistence");
+  }
+  if (options.sessionName && !options.sessionId && !options.resumeSessionId) {
+    const sessionName = String(options.sessionName).trim();
+    if (!sessionName || sessionName.includes("\0")) {
+      throw new Error("Claude session name must be non-empty text without NUL bytes.");
+    }
+    args.push("--name", sessionName);
   }
   if (options.model) {
     args.push("--model", resolveModel(options.model));

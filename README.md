@@ -45,6 +45,21 @@ $cc-for-pein:interrupt-agent
 $cc-for-pein:list-agents
 ```
 
+Successful `spawn-agent` calls report only the stable Agent path and current
+status by default. The complete structured receipt remains available when raw
+or debug output is explicitly requested.
+
+The entire runtime model surface is pinned to two choices: Sonnet 5 maps to
+`claude-sonnet-5`, and Opus 5 maps to `claude-opus-5`. Opus 5 is the explicit
+default in both execution profiles. Fable, Haiku, older model IDs, and any
+other available Claude model fail before Claude launches. Model and reasoning
+effort remain separate arguments; `x-high` maps to effort value `xhigh`.
+
+Each fresh Agent session receives its durable Agent name through Claude's
+`--name` option. This preserves a useful Claude-side label and avoids the
+auxiliary title-generation model call observed for unnamed sessions; resumed
+sessions keep their existing identity and are not renamed.
+
 Plugin skills necessarily remain namespaced; they are not literal replacement
 registrations for Codex built-in tools. Each invokes only
 `plugins/cc-for-pein/bootstrap/cc-runtime.mjs`, which delegates to the
@@ -113,11 +128,12 @@ registry and inbox are rebuildable projections.
 ## Execution profiles
 
 `safe` is the default. It supplies the runtime's explicit sandbox and
-permission policy. `terminal-parity` adds only headless transport and lifecycle
-flags: it does not implicitly override model, effort, settings, permissions,
-tools, MCP configuration, or system prompts. Given the same canonical working
-directory and environment, it loads the same Claude configuration as a direct
-Terminal session.
+permission policy. `terminal-parity` adds only headless transport, lifecycle,
+and the plugin-wide exact model constraint: it does not implicitly override
+effort, settings, permissions, tools, MCP configuration, or system prompts.
+Given the same canonical working directory and environment, it loads the same
+Claude configuration as a direct Terminal session except that every turn is
+pinned to Sonnet 5 or Opus 5; its default is Opus 5.
 
 For explicitly unrestricted native authority, a caller may request
 `terminal-parity` plus `--dangerously-skip-permissions`. The runtime sets

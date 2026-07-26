@@ -329,7 +329,10 @@ describe("canonical Agent runtime CLI", () => {
     waitForAgent(test, terminal.path, (value) => value.status === "completed" && value.latestJobId === followup.turn.jobId);
     const recorded = invocations(test);
     assert.equal(recorded.length, 2);
+    assert.equal(recorded[0].args[recorded[0].args.indexOf("--model") + 1], "claude-opus-5");
+    assert.equal(recorded[0].args[recorded[0].args.indexOf("--name") + 1], "resume");
     assert.equal(recorded[1].args.includes("--resume"), true);
+    assert.equal(recorded[1].args.includes("--name"), false);
     assert.equal(recorded[1].args[recorded[1].args.indexOf("--resume") + 1], "fake-session-resume");
     assert.match(recorded[1].prompt, /queued before follow-up/);
     assert.match(recorded[1].prompt, /session=resume follow-up/);
@@ -404,6 +407,18 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(swallowedUnknown.status, 1);
     assert.match(swallowedUnknown.stderr, /Missing value for --message/);
     assert.deepEqual(list(test).agents, []);
+
+    const unsupportedModel = command(test, [
+      "spawn_agent",
+      "--task-name", "unsupported_model",
+      "--fork-turns", "none",
+      "--model", "fable",
+      "--json", "must fail before Claude starts",
+    ]);
+    assert.equal(unsupportedModel.status, 1);
+    assert.match(unsupportedModel.stderr, /Unsupported Claude model/);
+    assert.deepEqual(list(test).agents, []);
+    assert.deepEqual(invocations(test), []);
   });
 
   it("preserves terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
@@ -414,10 +429,12 @@ describe("canonical Agent runtime CLI", () => {
     ]);
     waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     const invocation = invocations(test)[0];
-    for (const flag of ["--model", "--effort", "--settings", "--permission-mode", "--allowedTools", "--strict-mcp-config"]) {
+    for (const flag of ["--effort", "--settings", "--permission-mode", "--allowedTools", "--strict-mcp-config"]) {
       assert.equal(invocation.args.includes(flag), false, flag);
     }
+    assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
+    assert.equal(invocation.args[invocation.args.indexOf("--name") + 1], "parity");
     assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(path.dirname(test.workspace), ".claude"));
     assert.equal(invocation.env.CONDA_EXE, "/opt/conda/bin/conda");
     assert.equal(invocation.env.HTTP_PROXY, "http://127.0.0.1:9090");

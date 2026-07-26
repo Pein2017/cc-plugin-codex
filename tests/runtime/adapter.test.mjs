@@ -38,6 +38,29 @@ describe("Claude headless adapter", () => {
     assert.equal(args.includes("--dangerously-skip-permissions"), true);
   });
 
+  it("pins the only two supported models and names only fresh sessions", () => {
+    const initial = buildArgs("ignored", {
+      model: "opus",
+      effort: "xhigh",
+      sessionName: "audit_agent",
+    });
+    assert.equal(initial[initial.indexOf("--model") + 1], "claude-opus-5");
+    assert.equal(initial[initial.indexOf("--name") + 1], "audit_agent");
+
+    const sonnet = buildArgs("ignored", { model: "claude-sonnet-5" });
+    assert.equal(sonnet[sonnet.indexOf("--model") + 1], "claude-sonnet-5");
+    assert.throws(() => buildArgs("ignored", { model: "fable" }), /Unsupported Claude model/);
+    assert.throws(() => buildArgs("ignored", { model: "claude-opus-4-7" }), /Unsupported Claude model/);
+
+    const resumed = buildArgs("ignored", {
+      model: "opus",
+      sessionName: "audit_agent",
+      resumeSessionId: "session-1",
+    });
+    assert.equal(resumed.includes("--name"), false);
+    assert.equal(resumed[resumed.indexOf("--resume") + 1], "session-1");
+  });
+
   it("retains session, partial output, and terminal completion", () => {
     const parser = new StreamParser();
     parser.feed(`${JSON.stringify({ type: "system", subtype: "init", session_id: "s-1" })}\n`);

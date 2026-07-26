@@ -2,8 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * One semantic owner for every Claude CLI override. `terminal-parity` inherits
- * the user's normal Claude envelope; `safe` adds an explicit sandbox/tool
- * policy suitable for delegated work.
+ * the user's normal Claude envelope except for the plugin-wide two-model
+ * constraint; `safe` also adds an explicit sandbox/tool policy suitable for
+ * delegated work.
  */
 import {
   SANDBOX_READ_ONLY_TOOLS,
@@ -44,8 +45,10 @@ export function createExecutionProfile(options = {}) {
     const env = dangerouslySkipPermissions
       ? { ...inheritedEnv, IS_SANDBOX: "1" }
       : inheritedEnv;
-    const claudeOptions = { env };
-    if (options.model) claudeOptions.model = options.model;
+    const claudeOptions = {
+      env,
+      model: resolveDefaultModel(options.model),
+    };
     if (options.effort) claudeOptions.effort = resolveEffort(options.effort);
     if (options.permissionMode) claudeOptions.permissionMode = options.permissionMode;
     if (dangerouslySkipPermissions) {
