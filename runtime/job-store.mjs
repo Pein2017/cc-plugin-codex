@@ -493,12 +493,43 @@ function readReconciledJobs(cwd) {
   return jobs;
 }
 
+function assertOwnerRootId(ownerRootId) {
+  if (
+    typeof ownerRootId !== "string" ||
+    !ownerRootId.trim() ||
+    ownerRootId.includes("\0")
+  ) {
+    throw new Error("ownerRootId must be non-empty text.");
+  }
+  return ownerRootId.trim();
+}
+
+function readReconciledJobsForOwner(cwd, ownerRootId) {
+  const normalizedOwnerRootId = assertOwnerRootId(ownerRootId);
+  const ownedJobs = readAllJobs(cwd).filter(
+    (job) => ownerRootIdOf(job) === normalizedOwnerRootId
+  );
+  const jobs = reapStaleJobs(cwd, ownedJobs);
+  reconcileCompletionEvents(cwd, jobs);
+  return jobs;
+}
+
 export function listJobs(cwd) {
   return partitionJobsForRetention(readReconciledJobs(cwd)).retained;
 }
 
 /**
- * Read-only reconciliation view for Agent projections.
+ * Normal root-scoped job view. Raw receipts are filtered before any lifecycle
+ * repair so a caller cannot reap, bind, or publish another root's state.
+ */
+export function listJobsForOwner(cwd, ownerRootId) {
+  return partitionJobsForRetention(
+    readReconciledJobsForOwner(cwd, ownerRootId)
+  ).retained;
+}
+
+/**
+ * Owner-scoped reconciliation view for Agent projections.
  *
  * Public diagnostics intentionally retain only a bounded terminal-job window,
  * but cleanup must keep any Agent-linked terminal fact whose registry
@@ -506,8 +537,8 @@ export function listJobs(cwd) {
  * narrow, durable view of precisely those facts; otherwise an old retained
  * file can become permanently invisible before it is projected.
  */
-export function listJobsForAgentReconciliation(cwd) {
-  const jobs = readReconciledJobs(cwd);
+export function listJobsForAgentReconciliation(cwd, ownerRootId) {
+  const jobs = readReconciledJobsForOwner(cwd, ownerRootId);
   const retained = partitionJobsForRetention(jobs).retained;
   const byId = new Map(retained.map((job) => [job.id, job]));
   for (const job of jobs) {
@@ -721,7 +752,7 @@ function isWithinReapGracePeriod(job, now = Date.now()) {
 
 /**
  * Detect zombie jobs whose PID has died and auto-transition them to "failed".
- * Called from listJobs() so every job-reading path benefits automatically.
+ * Called by global and owner-scoped reconciliation views.
  */
 export function reapStaleJobs(cwd, jobs) {
   return jobs.map((job) => {

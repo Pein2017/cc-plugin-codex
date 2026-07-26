@@ -28,7 +28,7 @@ import {
   getSteeringSnapshot,
   getStateProtectionReceipt,
   isJobPublicProgressDeliveryEligible,
-  listJobs,
+  listJobsForOwner,
   listStoredJobs,
   nowIso,
   patchJob,
@@ -294,7 +294,7 @@ class ClaudeRuntime {
 
   list() {
     const ownerRootId = this.assertOwnerRoot();
-    const jobs = sortJobsNewestFirst(listJobs(this.cwd));
+    const jobs = sortJobsNewestFirst(listJobsForOwner(this.cwd, ownerRootId));
     return jobs
       .filter((job) => jobOwnerRootId(job) === ownerRootId)
       .map((job) => enrichJob(this.migrateMatchingLegacyOwner(job)));
@@ -319,7 +319,7 @@ class ClaudeRuntime {
 
   assertSessionAvailable(sessionId, excludingJobId = null) {
     if (!sessionId) return;
-    const owner = listJobs(this.cwd).find((job) =>
+    const owner = listStoredJobs(this.cwd).find((job) =>
       job.id !== excludingJobId &&
       ACTIVE_JOB_STATUSES.has(job.status) &&
       resultSessionId(job) === sessionId

@@ -349,10 +349,11 @@ class AgentRuntime {
     const activeJobIds = new Set(
       this.store.listAgents().map((agent) => agent.activeJobId).filter(Boolean)
     );
-    return listJobsForAgentReconciliation(this.cwd).filter((job) =>
-      job.ownerRootId === this.ownerRootId &&
-      ((typeof job.agentId === "string" && job.agentId) || activeJobIds.has(job.id))
-    );
+    return listJobsForAgentReconciliation(this.cwd, this.ownerRootId)
+      .map((job) => this.jobs.migrateMatchingLegacyOwner(job))
+      .filter((job) =>
+        (typeof job.agentId === "string" && job.agentId) || activeJobIds.has(job.id)
+      );
   }
 
   migrateLegacySelectedModel(agent, jobs, sessionArtifacts = null) {
