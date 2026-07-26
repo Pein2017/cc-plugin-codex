@@ -22,6 +22,7 @@ import { runClaudeTaskSession } from "./job-supervisor.mjs";
 import {
   ACTIVE_JOB_STATUSES,
   cleanupOldJobs,
+  claimJobPublicProgress,
   enqueueSteeringMessage,
   generateJobId,
   getSteeringSnapshot,
@@ -46,6 +47,7 @@ import {
   createProgressReporter,
   createWorkerLogStdio,
   runTrackedJob,
+  safePublicToolName,
   OWNER_ROOT_ID_ENV,
 } from "./job-runner.mjs";
 import { enrichJob, sortJobsNewestFirst } from "./job-query.mjs";
@@ -118,6 +120,76 @@ function jobOwnerRootId(job) {
   return typeof job?.ownerRootId === "string" && job.ownerRootId.trim()
     ? job.ownerRootId.trim()
     : legacyOwnerRootId(job);
+}
+
+const PUBLIC_PROGRESS_ACTIVITY = Object.freeze({
+  initialized: { phase: "running", summary: "Claude session initialized." },
+  thinking: { phase: "thinking", summary: "Claude is reasoning." },
+  responding: { phase: "running", summary: "Claude is drafting its response." },
+  tool: { phase: "tool", summary: "Claude is using a tool." },
+  hook: { phase: "hook", summary: "Claude completed a hook." },
+  retrying: { phase: "retry", summary: "Claude is retrying an API request." },
+  reconnecting: { phase: "reconnect_backoff", summary: "Claude is reconnecting." },
+});
+
+function projectPublicProgress(job, ownerRootId, jobId = null, options = {}) {
+  if (
+    jobOwnerRootId(job) !== ownerRootId ||
+    !job.agentId ||
+    !ACTIVE_JOB_STATUSES.has(job.status) ||
+    (jobId != null && job.id !== jobId)
+  ) {
+    return null;
+  }
+      const progress = job.publicProgress;
+      const revision = Number(progress?.revision ?? 0);
+      const deliveredRevision = Number(job.publicProgressDeliveredRevision ?? 0);
+      const activity = typeof progress?.activity === "string" ? progress.activity : "";
+      const template = PUBLIC_PROGRESS_ACTIVITY[activity];
+      if (
+        !template ||
+        !Number.isSafeInteger(revision) ||
+        revision < 1 ||
+        (options.requirePending !== false && revision <= deliveredRevision)
+      ) {
+        return null;
+      }
+      let summary = template.summary;
+      if (activity === "tool") {
+        const match = String(progress?.summary ?? "").match(/^Claude is using ([A-Za-z0-9_.:-]{1,80})\.$/);
+        const tool = safePublicToolName(match?.[1]);
+        if (tool) summary = `Claude is using ${tool}.`;
+      }
+      const updatedAt = typeof progress?.updatedAt === "string" && Number.isFinite(Date.parse(progress.updatedAt))
+        ? progress.updatedAt
+        : job.updatedAt;
+  return {
+        kind: "progress",
+        jobId: job.id,
+        agentId: job.agentId,
+        progress: {
+          revision,
+          activity,
+          phase: template.phase,
+          summary,
+          updatedAt,
+        },
+  };
+}
+
+function pendingPublicProgress(cwd, ownerRootId, jobId = null, progressJobIds = null) {
+  const jobs = jobId
+    ? [readJobFile(cwd, jobId)].filter(Boolean)
+    : Array.isArray(progressJobIds)
+      ? progressJobIds.map((candidate) => readJobFile(cwd, candidate)).filter(Boolean)
+      : listStoredJobs(cwd);
+  return jobs
+    .map((job) => projectPublicProgress(job, ownerRootId, jobId))
+    .filter(Boolean)
+    .sort((left, right) =>
+      Date.parse(left.progress.updatedAt ?? 0) - Date.parse(right.progress.updatedAt ?? 0) ||
+      left.jobId.localeCompare(right.jobId)
+    )[0] ?? null;
 }
 
 class ClaudeRuntime {
@@ -741,31 +813,63 @@ class ClaudeRuntime {
     const acknowledgeTokens = Array.isArray(options.acknowledgeTokens)
       ? options.acknowledgeTokens
       : [];
+    const resolveProgressJobIds = () => {
+      const values = typeof options.progressJobIds === "function"
+        ? options.progressJobIds()
+        : options.progressJobIds;
+      return Array.isArray(values)
+        ? [...new Set(values.map((value) => assertJobId(value)))]
+        : null;
+    };
     const acknowledgement = acknowledgeTokens.length > 0
       ? acknowledgeAgentCompletionEvents(this.cwd, ownerRootId, acknowledgeTokens)
       : { acknowledgedCount: 0, acknowledgedThrough: null, compactedCount: 0 };
     const deadline = Date.now() + timeoutMs;
     let job = jobId ? this.status(jobId) : null;
-    let inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
-    while (
-      inbox.events.length === 0 &&
-      (!job || ACTIVE_JOB_STATUSES.has(job.status)) &&
-      Date.now() < deadline
-    ) {
-      await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
-      job = jobId ? this.status(jobId) : null;
+    let inbox = { events: [] };
+    let selectedProgress = null;
+    while (true) {
       inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
+      if (inbox.events.length > 0) break;
+      const progress = pendingPublicProgress(
+        this.cwd,
+        ownerRootId,
+        jobId,
+        resolveProgressJobIds()
+      );
+      if (!progress) {
+        job = jobId ? this.status(jobId) : null;
+        if ((job && !ACTIVE_JOB_STATUSES.has(job.status)) || Date.now() >= deadline) break;
+        await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
+        continue;
+      }
+      // Completion is authoritative and always wins a race with advisory
+      // progress. Recheck immediately before advancing the progress revision.
+      inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
+      if (inbox.events.length > 0) break;
+      const claimed = claimJobPublicProgress(this.cwd, progress.jobId);
+      if (claimed.claimed && claimed.job) {
+        selectedProgress = projectPublicProgress(claimed.job, ownerRootId, jobId, {
+          requirePending: false,
+        });
+        if (selectedProgress) break;
+      }
+      // Another waiter may have claimed the same oldest revision. Re-select
+      // immediately so a different pending Agent is not reported as timeout.
     }
-    const waitTimedOut = inbox.events.length === 0 && (!job || ACTIVE_JOB_STATUSES.has(job.status));
+    const update = inbox.events[0] ?? selectedProgress ?? null;
+    const waitTimedOut = update == null && (!job || ACTIVE_JOB_STATUSES.has(job.status));
     return {
       // The public Agent runtime intentionally does not expose the internal
       // acknowledgement receipt; it only needs the next delivery token.
-      update: inbox.events[0] ?? null,
+      update,
       acknowledgement,
       waitTimedOut,
       message: waitTimedOut
         ? "Timed out waiting for CC Agent activity."
-        : "CC Agent activity is available.",
+        : update?.kind === "progress"
+          ? "CC Agent progress is available."
+          : "CC Agent completion is available.",
     };
   }
 }

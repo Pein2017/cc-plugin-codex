@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import { runTrackedJob } from "../../runtime/job-runner.mjs";
+import {
+  createJobProgressUpdater,
+  PUBLIC_PROGRESS_TEXT_HEARTBEAT_MS,
+  runTrackedJob,
+} from "../../runtime/job-runner.mjs";
 import { readJobFile, transitionJob, writeJobFile } from "../../runtime/job-store.mjs";
 
 const priorHome = process.env.CC_RUNTIME_HOME;
@@ -44,6 +48,54 @@ function completedExecution() {
 }
 
 describe("tracked worker ownership", () => {
+  it("persists only sanitized, rate-limited public progress", () => {
+    const { workspace, job } = setup();
+    let observedAt = Date.parse("2026-07-26T00:00:00.000Z");
+    const update = createJobProgressUpdater(workspace, job.id, { now: () => observedAt });
+
+    update({
+      kind: "text",
+      text: "secret response body",
+      message: "secret response body",
+      phase: "running",
+    });
+    let stored = readJobFile(workspace, job.id);
+    assert.deepEqual(stored.publicProgress, {
+      revision: 1,
+      activity: "responding",
+      phase: "running",
+      summary: "Claude is drafting its response.",
+      updatedAt: "2026-07-26T00:00:00.000Z",
+    });
+    assert.equal(JSON.stringify(stored.publicProgress).includes("secret"), false);
+
+    observedAt += PUBLIC_PROGRESS_TEXT_HEARTBEAT_MS - 1;
+    update({ kind: "text", message: "another secret", phase: "running" });
+    assert.equal(readJobFile(workspace, job.id).publicProgress.revision, 1);
+
+    observedAt += 1;
+    update({ kind: "text", message: "still secret", phase: "running" });
+    assert.equal(readJobFile(workspace, job.id).publicProgress.revision, 2);
+
+    observedAt += 1;
+    update({
+      kind: "tool_use",
+      tool: "C:\\Users\\alice\\secret.txt",
+      input: { file_path: "/secret/path" },
+      message: "Using tool with /secret/path",
+      phase: "tool",
+    });
+    stored = readJobFile(workspace, job.id);
+    assert.equal(stored.publicProgress.revision, 3);
+    assert.equal(stored.publicProgress.summary, "Claude is using a tool.");
+    assert.equal(JSON.stringify(stored.publicProgress).includes("/secret/path"), false);
+    assert.equal(JSON.stringify(stored.publicProgress).includes("alice"), false);
+
+    observedAt += 1;
+    update({ kind: "tool_use", tool: "Read", message: "Using Read", phase: "tool" });
+    assert.equal(readJobFile(workspace, job.id).publicProgress.summary, "Claude is using Read.");
+  });
+
   it("allows only one worker to claim a queued job", async () => {
     const { workspace, job } = setup();
     let starts = 0;

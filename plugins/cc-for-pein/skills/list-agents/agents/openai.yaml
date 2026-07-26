@@ -1,4 +1,4 @@
 interface:
   display_name: "CC List Agents"
-  short_description: "List durable Claude Agents in the current Codex root"
-  default_prompt: "Use $cc-for-pein:list-agents to inspect current-root Claude Agent state."
+  short_description: "Experimental: list current-root durable Claude Agents"
+  default_prompt: "Experimental: use $cc-for-pein:list-agents only for current-root state; listing is not progress and cannot reactivate an idle Codex parent."

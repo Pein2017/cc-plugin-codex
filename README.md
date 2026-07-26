@@ -5,7 +5,13 @@ in headless stream-json mode. It owns durable orchestration only; Claude Code
 continues to own authentication, project configuration, memory, hooks,
 plugins, skills, MCP configuration, sessions, and tool execution.
 
-Version 0.3 makes a named Agent—not an internal job ID—the public object. A
+> **Experimental feature:** the six CC Agent skills are an evolving local
+> orchestration surface. They preserve durable Claude work, but cannot make an
+> idle Codex parent start a new model turn after it has already ended. A parent
+> that needs a child result must keep the join obligation inside its active
+> turn.
+
+Version 0.4 makes a named Agent—not an internal job ID—the public object. A
 Claude turn is temporary. An Agent has a stable root-scoped identity, a native
 Claude session pointer when safe, a durable message queue, and nonresident
 history after its worker exits.
@@ -26,7 +32,7 @@ compatibility or release guarantee.
 ## Public lifecycle
 
 `runtime/index.mjs` is the only model-facing lifecycle interface. Its complete
-v0.3 surface is:
+v0.4 surface is:
 
 ```text
 spawn_agent({ task_name, message, fork_turns: "none", model, description?, reasoning_effort?, execution_profile? })
@@ -50,9 +56,9 @@ $cc-for-pein:list-agents
 
 Successful `spawn-agent` calls report the selected model plus the stable Agent
 path and current status. `list-agents` reports only canonical name/status
-records, and `wait-agent` reports timeout/activity plus at most one bounded
-acknowledgement-bearing update. Neither default operation returns Claude's
-final output.
+records. `wait-agent` reports at most one bounded update: either coalesced safe
+progress or an acknowledgement-bearing completion with a 4096-byte handoff for
+parent synthesis. It never returns the full Claude final output.
 
 The entire runtime model surface is pinned to two choices: Sonnet 5 maps to
 `claude-sonnet-5`, and Opus 5 maps to `claude-opus-5`. Every initial spawn must
@@ -87,19 +93,28 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.3 |
+| Surface | Codex Multi-Agent V2 | CC for Pein v0.4 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | Same six runtime names, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | Same core fields; only `fork_turns=none` is supported because Codex context cannot safely become Claude history |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
-| Wait | Untargeted mailbox activity/timeout | Same concise shape plus at most one bounded durable acknowledgement update |
+| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, with one safe progress milestone or durable bounded completion handoff in the wait receipt |
 | Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
 
 `list_agents` intentionally includes logical nonresident terminal history.
 `wait_agent` is also intentionally narrower than a host-agent mailbox: it
 wakes for the current root's durable Agent activity, not arbitrary Codex
-inter-agent messages or a new user steer.
+inter-agent messages or a new user steer. Like Codex V2, `spawn_agent` never
+auto-waits, completion wakes a blocked wait, and an already-idle/final parent is
+not automatically restarted.
+
+The parent chooses one of three policies: required work must complete before
+final; parallel-then-join work runs alongside useful non-overlapping parent
+work and joins before its dependency boundary; explicitly detached work is
+allowed only when the user requests background execution and the result is not
+needed in the current answer. Quiet wait timeouts are not failures and should
+not trigger repetitive narration or `list_agents` polling.
 
 `fork_turns=all`, positive fork counts, `agent_type`, Codex service-tier
 routing, and Claude session adoption fail explicitly rather than being ignored
@@ -120,13 +135,20 @@ does not start a Claude process. `followup_task` uses the same mailbox but
 guarantees work: it delivers to an active turn, or starts one exact-session or
 receipt-proven safe-fresh turn and assigns queued entries in order.
 
-`wait_agent` reads the current root's durable completion mailbox. It may first
-acknowledge a valid oldest Agent-linked token returned by a previous wait, then
-returns at most the oldest unread bounded summary. New activity remains unread
-until a later call echoes its token, so a lost host response safely redelivers.
-Legacy unowned events remain stored but cannot block Agent-linked delivery.
-Repeated `list_agents` calls are state-only and do not inspect or acknowledge
-the inbox. Stored Claude final output remains internal.
+`wait_agent` first checks the current root's durable completion mailbox, then
+safe public progress. A progress update is advisory and contains only a generic
+activity/phase summary plus, at most, a sanitized tool name; Claude response,
+thinking, tool arguments, paths, hook payloads, receipts, and session IDs stay
+private. Repeated text/thinking is coalesced and rate-limited.
+
+A completion update includes a 4096-byte bounded handoff and truncation flag.
+It remains unread until a later call echoes its token, so a lost host response
+safely redelivers the same handoff. The parent should synthesize it directly;
+it must not start a follow-up or ask Claude to write a temporary/repository file
+solely to recover the already-completed result. Legacy unowned events remain
+stored but cannot block Agent-linked delivery. Repeated `list_agents` calls are
+state-only. The complete Claude final output remains internal and in Claude's
+native artifacts/runtime evidence.
 
 Job receipts are bounded internal execution evidence. Agent identity, session
 binding, mailbox entries, and completion projection survive worker exit and
@@ -215,7 +237,7 @@ does not remove the plugin. After that:
   refreshes with `codex plugin add`, and fails closed if the marketplace root
   drifted. Start a new Codex task to test newly discovered skill metadata.
 
-Verify the installed snapshot has exactly the six v0.3 skills and every one
+Verify the installed snapshot has exactly the six v0.4 Experimental skills and every one
 delegates only to `CC_RUNTIME_CHECKOUT`.
 
 ## Provenance

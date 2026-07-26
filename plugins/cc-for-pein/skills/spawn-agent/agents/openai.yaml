@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Spawn Agent"
-  short_description: "Create a durable Claude Agent and start its first turn"
-  default_prompt: "Use $cc-for-pein:spawn-agent with fork_turns=none and an explicit Sonnet or Opus model to create a named Claude Agent."
+  short_description: "Experimental: start an asynchronous durable Claude Agent"
+  default_prompt: "Experimental: use $cc-for-pein:spawn-agent with fork_turns=none and an explicit Sonnet or Opus model; classify join policy first, because completion cannot reactivate an idle Codex parent."

@@ -1,9 +1,12 @@
 ---
 name: interrupt-agent
-description: 'Gracefully interrupt a CC Agent current turn while keeping the durable Agent identity and any safely proven continuation path.'
+description: 'Experimental: gracefully interrupt a CC Agent current turn while keeping its durable identity and any safely proven continuation path.'
 ---
 
 # Interrupt Agent
+
+> **Experimental.** Interruption semantics depend on Claude flush evidence and
+> do not imply deletion, archive, or automatic Codex-parent reactivation.
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 

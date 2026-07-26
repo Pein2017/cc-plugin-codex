@@ -146,15 +146,18 @@ describe("completion inbox", () => {
     })).event;
     const linked = appendCompletionEvent(workspace, ownerRootId, completion("agent-completion", {
       agentId: "agent-current",
-      finalMessage: "Claude final output must not enter the Agent summary",
+      finalMessage: "Claude final output enters only the bounded handoff",
     })).event;
 
     const delivered = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
     assert.deepEqual(delivered.events, [{
+      kind: "completion",
       agentId: "agent-current",
       agentStatus: "completed",
       terminalStatus: "completed",
       summary: "Agent turn completed.",
+      completionMessage: "Claude final output enters only the bounded handoff",
+      completionMessageTruncated: false,
       deliveryToken: linked.deliveryToken,
     }]);
     assert.equal("finalMessage" in delivered.events[0], false);

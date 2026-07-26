@@ -14,7 +14,30 @@ export { nowIso };
 
 export const OWNER_ROOT_ID_ENV = "CC_TRUSTED_OWNER_ROOT_ID";
 export const MAX_JOB_LOG_BYTES = 1024 * 1024;
+export const PUBLIC_PROGRESS_TEXT_HEARTBEAT_MS = 10_000;
+export const PUBLIC_PROGRESS_REPEAT_MILESTONE_MS = 2_000;
+export const MAX_PUBLIC_PROGRESS_SUMMARY_BYTES = 192;
 const LOG_TRUNCATION_MARKER = "[... earlier log output truncated ...]\n";
+const SAFE_PUBLIC_TOOL_NAMES = new Set([
+  "Agent",
+  "AskUserQuestion",
+  "Bash",
+  "Edit",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "NotebookEdit",
+  "Read",
+  "Skill",
+  "Task",
+  "TaskOutput",
+  "TaskStop",
+  "TodoWrite",
+  "WebFetch",
+  "WebSearch",
+  "Write",
+]);
 
 function sliceTextTailByBytes(text, maxBytes) {
   const normalized = typeof text === "string" ? text : String(text ?? "");
@@ -90,6 +113,9 @@ function appendToBoundedLog(logFile, text) {
 function normalizeProgressEvent(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return {
+      kind: typeof value.kind === "string" && value.kind.trim() ? value.kind.trim() : null,
+      subtype: typeof value.subtype === "string" && value.subtype.trim() ? value.subtype.trim() : null,
+      tool: typeof value.tool === "string" && value.tool.trim() ? value.tool.trim() : null,
       message: String(value.message ?? "").trim(),
       phase: typeof value.phase === "string" && value.phase.trim() ? value.phase.trim() : null,
       threadId: typeof value.threadId === "string" && value.threadId.trim() ? value.threadId.trim() : null,
@@ -101,6 +127,9 @@ function normalizeProgressEvent(value) {
   }
 
   return {
+    kind: null,
+    subtype: null,
+    tool: null,
     message: String(value ?? "").trim(),
     phase: null,
     threadId: null,
@@ -109,6 +138,50 @@ function normalizeProgressEvent(value) {
     logTitle: null,
     logBody: null
   };
+}
+
+function boundedProgressSummary(value, maxBytes = MAX_PUBLIC_PROGRESS_SUMMARY_BYTES) {
+  const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (Buffer.byteLength(normalized, "utf8") <= maxBytes) return normalized;
+  let end = normalized.length;
+  while (end > 0 && Buffer.byteLength(`${normalized.slice(0, end)}...`, "utf8") > maxBytes) end -= 1;
+  return `${normalized.slice(0, end)}...`;
+}
+
+export function safePublicToolName(value) {
+  const name = String(value ?? "").trim();
+  return SAFE_PUBLIC_TOOL_NAMES.has(name) ? name : null;
+}
+
+export function publicProgressFromEvent(event) {
+  const normalized = normalizeProgressEvent(event);
+  if (normalized.kind === "tool_use") {
+    const tool = safePublicToolName(normalized.tool);
+    return {
+      activity: "tool",
+      phase: "tool",
+      summary: boundedProgressSummary(tool ? `Claude is using ${tool}.` : "Claude is using a tool."),
+    };
+  }
+  if (normalized.kind === "thinking") {
+    return { activity: "thinking", phase: "thinking", summary: "Claude is reasoning." };
+  }
+  if (normalized.kind === "text") {
+    return { activity: "responding", phase: "running", summary: "Claude is drafting its response." };
+  }
+  if (normalized.kind === "system" && normalized.subtype === "init") {
+    return { activity: "initialized", phase: "running", summary: "Claude session initialized." };
+  }
+  if (normalized.kind === "system" && normalized.subtype === "hook_response") {
+    return { activity: "hook", phase: "hook", summary: "Claude completed a hook." };
+  }
+  if (normalized.kind === "system" && normalized.subtype === "api_retry") {
+    return { activity: "retrying", phase: "retry", summary: "Claude is retrying an API request." };
+  }
+  if (normalized.kind === "system" && normalized.subtype === "reconnecting") {
+    return { activity: "reconnecting", phase: "reconnect_backoff", summary: "Claude is reconnecting." };
+  }
+  return null;
 }
 
 export function appendLogLine(logFile, message) {
@@ -166,10 +239,15 @@ export function createJobRecord(base, options = {}) {
   };
 }
 
-export function createJobProgressUpdater(workspaceRoot, jobId) {
+export function createJobProgressUpdater(workspaceRoot, jobId, options = {}) {
+  const initial = readJobFile(workspaceRoot, jobId)?.publicProgress ?? null;
+  const now = typeof options.now === "function" ? options.now : Date.now;
   let lastPhase = null;
   let lastThreadId = null;
   let lastTurnId = null;
+  let lastPublicProgress = initial;
+  let lastPublicProgressAt = initial?.updatedAt ? Date.parse(initial.updatedAt) : 0;
+  let publicProgressRevision = Number(initial?.revision ?? 0);
 
   return (event) => {
     const normalized = normalizeProgressEvent(event);
@@ -192,6 +270,29 @@ export function createJobProgressUpdater(workspaceRoot, jobId) {
       lastTurnId = normalized.turnId;
       patch.turnId = normalized.turnId;
       changed = true;
+    }
+
+    const publicProgress = publicProgressFromEvent(normalized);
+    if (publicProgress) {
+      const observedAt = now();
+      const fingerprint = `${publicProgress.activity}\0${publicProgress.phase}\0${publicProgress.summary}`;
+      const priorFingerprint = lastPublicProgress
+        ? `${lastPublicProgress.activity}\0${lastPublicProgress.phase}\0${lastPublicProgress.summary}`
+        : null;
+      const repeatInterval = ["responding", "thinking"].includes(publicProgress.activity)
+        ? PUBLIC_PROGRESS_TEXT_HEARTBEAT_MS
+        : PUBLIC_PROGRESS_REPEAT_MILESTONE_MS;
+      if (fingerprint !== priorFingerprint || observedAt - lastPublicProgressAt >= repeatInterval) {
+        publicProgressRevision += 1;
+        lastPublicProgressAt = observedAt;
+        lastPublicProgress = {
+          revision: publicProgressRevision,
+          ...publicProgress,
+          updatedAt: new Date(observedAt).toISOString(),
+        };
+        patch.publicProgress = lastPublicProgress;
+        changed = true;
+      }
     }
 
     if (!changed) {

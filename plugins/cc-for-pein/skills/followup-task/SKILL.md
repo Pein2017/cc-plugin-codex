@@ -1,9 +1,12 @@
 ---
 name: followup-task
-description: 'Send a durable message to a CC Agent and guarantee work: deliver to its active turn or activate an idle Agent through its proven continuation path.'
+description: 'Experimental: send durable work to a CC Agent and guarantee delivery or activation through its proven continuation path.'
 ---
 
 # Follow Up Agent
+
+> **Experimental.** This can activate a Claude turn, but cannot automatically
+> reactivate an idle Codex parent after that turn finishes.
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 

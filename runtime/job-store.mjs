@@ -800,6 +800,38 @@ export function mutateJob(cwd, jobId, updater) {
   }
 }
 
+/**
+ * Atomically claim the newest advisory public-progress revision for delivery.
+ * Completion acknowledgement uses its own durable inbox; this cursor only
+ * prevents concurrent waits from regressing or normally duplicating progress.
+ */
+export function claimJobPublicProgress(cwd, jobId) {
+  const jobFile = resolveJobFile(cwd, jobId);
+  const lockFile = jobFile + ".lock";
+  const fd = acquireJobLock(lockFile);
+  try {
+    const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+    const revision = Number(job.publicProgress?.revision ?? 0);
+    const deliveredRevision = Number(job.publicProgressDeliveredRevision ?? 0);
+    if (!Number.isSafeInteger(revision) || revision < 1 || revision <= deliveredRevision) {
+      return { claimed: false, job };
+    }
+    const updatedJob = {
+      ...job,
+      id: jobId,
+      publicProgressDeliveredRevision: revision,
+      updatedAt: nowIso(),
+    };
+    writeAtomic(jobFile, updatedJob);
+    return { claimed: true, job: updatedJob };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { claimed: false, job: null };
+    throw error;
+  } finally {
+    releaseJobLock(lockFile, fd);
+  }
+}
+
 function normalizeSteeringState(job) {
   const steering = job?.steering && typeof job.steering === "object"
     ? job.steering
@@ -1006,10 +1038,15 @@ function recoverStaleLock(lockFile) {
     observedStat = fs.statSync(lockFile);
     const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
     const ageMs = Date.now() - Number(lockData.timestamp ?? observedStat.mtimeMs);
-    const ownerMatch = lockData.identity == null
-      ? Number.isFinite(ageMs) && ageMs <= LOCK_ACQUIRE_TIMEOUT_MS
-      : validateProcessIdentity(lockData.pid, lockData.identity);
-    if (ownerMatch) return false;
+    // A complete recent ownership record is a live lease even if one /proc or
+    // platform identity probe fails transiently. Reclaiming it immediately can
+    // admit two writers and silently overwrite a mailbox update. Once the
+    // bounded lease expires, a matching process identity still protects a
+    // genuinely long-running owner.
+    const leaseIsRecent = Number.isFinite(ageMs) && ageMs <= LOCK_ACQUIRE_TIMEOUT_MS;
+    const ownerMatch = lockData.identity != null &&
+      validateProcessIdentity(lockData.pid, lockData.identity);
+    if (leaseIsRecent || ownerMatch) return false;
   } catch {}
 
   try {

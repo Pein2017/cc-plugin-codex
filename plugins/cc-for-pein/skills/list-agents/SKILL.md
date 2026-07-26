@@ -1,9 +1,12 @@
 ---
 name: list-agents
-description: 'List durable CC Agents in the current Codex root, including nonresident terminal history.'
+description: 'Experimental: list durable CC Agents in the current Codex root, including nonresident terminal history.'
 ---
 
 # List Agents
+
+> **Experimental.** This is a state snapshot, not a progress stream, completion
+> inbox read, or mechanism for reactivating an idle Codex parent.
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 

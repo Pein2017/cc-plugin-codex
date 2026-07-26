@@ -244,13 +244,47 @@ function canonicalAgentStatus(agent) {
   }
 }
 
+function canonicalFrozenAgentStatus(status) {
+  switch (status) {
+    case "completed":
+      return { completed: null };
+    case "interrupted":
+      return "interrupted";
+    case "errored":
+      return { errored: "Claude Agent execution failed." };
+    default:
+      return { errored: "Claude Agent entered an unknown terminal state." };
+  }
+}
+
 function publicCompletionUpdate(summary, agents) {
   const agent = agents.find((candidate) => candidate.agentId === summary.agentId);
   return {
+    kind: "completion",
     agent_name: agent?.path ?? summary.agentId,
-    agent_status: agent ? canonicalAgentStatus(agent) : { errored: "Claude Agent record is unavailable." },
+    // Completion delivery is at-least-once. Keep every token's terminal status
+    // tied to the frozen inbox fact instead of a later follow-up lifecycle.
+    agent_status: canonicalFrozenAgentStatus(summary.agentStatus),
     summary: summary.summary,
+    completion_message: summary.completionMessage,
+    completion_message_truncated: summary.completionMessageTruncated,
     delivery_token: summary.deliveryToken,
+  };
+}
+
+function publicProgressUpdate(update, agents) {
+  const agent = agents.find((candidate) => candidate.agentId === update.agentId);
+  return {
+    kind: "progress",
+    agent_name: agent?.path ?? update.agentId,
+    agent_status: agent ? canonicalAgentStatus(agent) : { errored: "Claude Agent record is unavailable." },
+    progress: {
+      revision: update.progress.revision,
+      activity: update.progress.activity,
+      phase: update.progress.phase,
+      summary: update.progress.summary,
+      updated_at: update.progress.updatedAt,
+    },
   };
 }
 
@@ -970,9 +1004,18 @@ class AgentRuntime {
     const acknowledgeTokens = Array.isArray(input.acknowledge_tokens)
       ? input.acknowledge_tokens
       : [];
+    // Correct any recoverable terminal fact before the completion payload is
+    // first exposed and frozen under its delivery token.
+    this.reconcile();
+    // Refresh the light Agent registry on every poll so a root-wide wait can
+    // observe progress from a turn started after the wait began.
+    const progressJobIds = () => this.store.listAgents()
+      .map((agent) => agent.activeJobId)
+      .filter(Boolean);
     const waited = await this.jobs.wait(null, {
       timeoutMs: timeout,
       acknowledgeTokens,
+      progressJobIds,
     });
     this.reconcile();
     const agents = this.store.listAgents();
@@ -980,7 +1023,11 @@ class AgentRuntime {
       message: waited.message,
       timedOut: waited.waitTimedOut,
     };
-    if (waited.update) receipt.update = publicCompletionUpdate(waited.update, agents);
+    if (waited.update) {
+      receipt.update = waited.update.kind === "progress"
+        ? publicProgressUpdate(waited.update, agents)
+        : publicCompletionUpdate(waited.update, agents);
+    }
     return receipt;
   }
 

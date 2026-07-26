@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-26
+
+- Mark all six CC Agent skills and discovery descriptions as Experimental and
+  state the current host limitation: background completion cannot start a new
+  Codex parent turn after the parent has ended.
+- Add required, parallel-then-join, and explicitly detached parent policies;
+  keep spawn asynchronous while forbidding a parent final with unresolved
+  required work.
+- Wake `wait_agent` on coalesced safe progress milestones without exposing
+  Claude response/thinking text, tool inputs, paths, hooks, sessions, or raw
+  receipts.
+- Add a two-phase-redelivered 4096-byte completion handoff for parent synthesis,
+  with completion priority and explicit truncation, removing the need for a
+  recovery follow-up or temporary-file workaround.
+- Base the orchestration policy on a read-only audit of Codex Multi-Agent V2 at
+  `4c43465133428898aa84f0bfc02c306ed65fb66a`: asynchronous spawn, root mailbox
+  wait, separate state listing, queue-only completion, and no idle-parent
+  auto-reactivation.
+- Keep recent job-lock ownership records as bounded leases even if a transient
+  process-identity probe fails, preventing concurrent mailbox writers from
+  silently overwriting a steering message.
+
 ## 0.3.0 - 2026-07-26
 
 - Make `$cc-for-pein:spawn-agent` acknowledge successful starts with only the

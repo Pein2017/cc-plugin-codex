@@ -1,9 +1,12 @@
 ---
 name: send-message
-description: 'Durably send a message to a named CC Agent. It delivers to an active turn when possible and queues without activation when the Agent is idle.'
+description: 'Experimental: durably deliver or queue a message for a named CC Agent without implicitly activating an idle Agent.'
 ---
 
 # Send Agent Message
+
+> **Experimental.** Queueing a message does not activate an idle Claude Agent
+> or reactivate an idle Codex parent.
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 

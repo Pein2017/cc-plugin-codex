@@ -1,9 +1,13 @@
 ---
 name: spawn-agent
-description: 'Create a durable, root-scoped Claude Agent and start its first turn. Requires a task name, message, and fork_turns=none. Use when Claude Code should work as a named, follow-up-capable Agent rather than a one-shot job.'
+description: 'Experimental: create a durable, root-scoped Claude Agent and start its first asynchronous turn. Requires a task name, message, explicit Sonnet/Opus model, and fork_turns=none.'
 ---
 
 # Spawn Claude Agent
+
+> **Experimental.** Agent identity and Claude execution are durable, but this
+> plugin cannot automatically start a new Codex model turn after the parent has
+> ended. The parent must retain and resolve every required join obligation.
 
 Use this skill to create a named Agent in the current Codex root. Resolve
 `<plugin-root>` as two directories above this `SKILL.md`, then run:
@@ -54,3 +58,20 @@ model if Claude rejects the requested one.
   requests raw or debug output.
 - On failure or when recovery/action is required, report the actionable details
   instead of replacing them with a generic success acknowledgement.
+
+## Parent orchestration policy
+
+Before spawning, classify the result:
+
+- `required`: the current answer or decision depends on it. Do not give the
+  parent final answer until `$cc-for-pein:wait-agent` returns its completion and
+  the result is synthesized.
+- `parallel-then-join`: meaningful non-overlapping parent work can proceed
+  first. Do that work, then join before the first dependency boundary or final.
+- `explicitly-detached`: allowed only when the user clearly requests background
+  execution and the result is not needed in the current answer. Report that an
+  idle parent will not be automatically reactivated.
+
+Spawn independent lanes before waiting. Do not call wait by reflex while useful
+non-overlapping work remains, but never treat a `running` spawn acknowledgement
+as permission to end a required or parallel-then-join parent turn.

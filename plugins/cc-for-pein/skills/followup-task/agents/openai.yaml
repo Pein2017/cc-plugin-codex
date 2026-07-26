@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Follow-up Task"
-  short_description: "Send work to a Claude Agent and guarantee activation"
-  default_prompt: "Use $cc-for-pein:followup-task to continue a named Claude Agent."
+  short_description: "Experimental: send work and guarantee Agent activation"
+  default_prompt: "Experimental: use $cc-for-pein:followup-task to continue a named Claude Agent; its completion cannot reactivate an idle Codex parent."

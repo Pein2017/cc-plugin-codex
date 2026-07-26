@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Send Message"
-  short_description: "Deliver or queue a durable message for a Claude Agent"
-  default_prompt: "Use $cc-for-pein:send-message to deliver a durable message to a named Claude Agent."
+  short_description: "Experimental: deliver or queue a durable Agent message"
+  default_prompt: "Experimental: use $cc-for-pein:send-message to deliver or queue a durable Agent message; queueing cannot reactivate an idle Codex parent."

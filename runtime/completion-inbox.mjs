@@ -20,6 +20,7 @@ export const DEFAULT_ACKNOWLEDGED_TAIL = 100;
 export const DEFAULT_UNREAD_BATCH_SIZE = 20;
 export const DEFAULT_AGENT_SUMMARY_BATCH_SIZE = 1;
 export const MAX_COMPLETION_MESSAGE_BYTES = 64 * 1024;
+export const MAX_AGENT_COMPLETION_HANDOFF_BYTES = 4 * 1024;
 
 const INBOX_DIRECTORY_NAME = "completion-inboxes";
 const INBOX_FILE_NAME = "inbox.json";
@@ -67,8 +68,19 @@ function boundedUtf8(value, maxBytes = MAX_COMPLETION_MESSAGE_BYTES) {
   if (Buffer.byteLength(text, "utf8") <= maxBytes) {
     return { text, truncated: false };
   }
-  let end = text.length;
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > maxBytes) end -= 1;
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  let end = low;
+  const lastCodeUnit = text.charCodeAt(end - 1);
+  const nextCodeUnit = text.charCodeAt(end);
+  if (lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF && nextCodeUnit >= 0xDC00 && nextCodeUnit <= 0xDFFF) {
+    end -= 1;
+  }
   return { text: text.slice(0, end), truncated: true };
 }
 
@@ -231,6 +243,9 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   }
   if (typeof event.claudeSessionIdAvailable !== "boolean") {
     throw new Error("Completion Claude-session availability receipt is invalid.");
+  }
+  if (event.firstDeliveredAt != null) {
+    assertText(event.firstDeliveredAt, "completion first-delivery timestamp");
   }
   return sequence;
 }
@@ -489,18 +504,21 @@ function publicEvent(event) {
 
 /**
  * The completion inbox stores a complete, bounded terminal receipt for
- * recovery and operator diagnostics. Model-facing orchestration must not turn
- * that durable record into an unsolicited final answer, however. Keep this
- * projection deliberately small and derive its text from lifecycle state.
+ * recovery and operator diagnostics. Model-facing orchestration receives only
+ * a small handoff for parent synthesis, never the full durable record.
  */
 function publicAgentCompletionSummary(event) {
   if (!event.agentId) return null;
   const terminal = String(event.terminalStatus ?? "completed");
+  const handoff = boundedUtf8(event.finalMessage, MAX_AGENT_COMPLETION_HANDOFF_BYTES);
   return {
+    kind: "completion",
     agentId: event.agentId,
     agentStatus: event.agentStatus,
     terminalStatus: terminal,
     summary: `Agent turn ${terminal}.`,
+    completionMessage: handoff.text,
+    completionMessageTruncated: Boolean(event.truncated || handoff.truncated),
     deliveryToken: event.deliveryToken,
   };
 }
@@ -542,11 +560,13 @@ export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}
         // Completion facts already acknowledged by Codex are immutable. A
         // durable job correction remains diagnosable, but must not rewrite a
         // receipt the caller may already have acted upon.
-        if (existing.sequence <= inbox.acknowledgedThrough) {
+        if (existing.sequence <= inbox.acknowledgedThrough || existing.firstDeliveredAt) {
           return {
             appended: false,
             corrected: false,
-            reason: "acknowledged_event_immutable",
+            reason: existing.firstDeliveredAt
+              ? "delivered_event_immutable"
+              : "acknowledged_event_immutable",
             event: publicEvent(existing),
             sequence: existing.sequence,
           };
@@ -648,13 +668,25 @@ export function readUnreadAgentCompletionSummaries(cwd, ownerRootId, options = {
   const owner = assertText(ownerRootId, "owner root ID");
   const requestedLimit = options.limit == null ? DEFAULT_AGENT_SUMMARY_BATCH_SIZE : options.limit;
   const limit = Math.min(assertPositiveInteger(requestedLimit, "Agent completion summary limit"), 100);
-  const inbox = readInbox(cwd, owner, false);
-  if (!inbox) return { events: [] };
-  return {
-    events: unreadAgentLinkedEvents(inbox, limit)
-      .map(publicAgentCompletionSummary)
-      .filter(Boolean),
-  };
+  if (!readInbox(cwd, owner, false)) return { events: [] };
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const selected = unreadAgentLinkedEvents(inbox, limit);
+    const selectedIds = new Set(selected.map((event) => event.eventId));
+    let changed = false;
+    const deliveredAt = nowIso();
+    const events = inbox.events.map((event) => {
+      if (!selectedIds.has(event.eventId) || event.firstDeliveredAt) return event;
+      changed = true;
+      return { ...event, firstDeliveredAt: deliveredAt };
+    });
+    const updated = changed ? { ...inbox, events, updatedAt: deliveredAt } : inbox;
+    if (changed) writeInboxAtomic(filePath, updated);
+    return {
+      events: unreadAgentLinkedEvents(updated, limit)
+        .map(publicAgentCompletionSummary)
+        .filter(Boolean),
+    };
+  });
 }
 
 function compactInbox(inbox, acknowledgedTail) {

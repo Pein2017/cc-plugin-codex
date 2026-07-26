@@ -380,9 +380,11 @@ describe("canonical Agent runtime CLI", () => {
 
     const firstWait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
     assert.equal(firstWait.timedOut, false);
+    assert.equal(firstWait.update.kind, "completion");
     assert.equal(firstWait.update.agent_name, spawned.agent.path);
     assert.ok(firstWait.update.delivery_token);
-    assert.equal(JSON.stringify(firstWait).includes("completed:session=delivery"), false);
+    assert.match(firstWait.update.completion_message, /^completed:session=delivery/);
+    assert.equal(firstWait.update.completion_message_truncated, false);
     const redelivered = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
     assert.deepEqual(redelivered, firstWait);
     const secondWait = run(test, [
@@ -391,6 +393,35 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(secondWait.timedOut, true);
     assert.equal(secondWait.update, undefined);
     assert.deepEqual(list(test), firstList);
+  });
+
+  it("reports safe stream progress before the bounded completion handoff", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--task-name", "progress_stream", "--fork-turns", "none",
+      "--model", "sonnet", "--json", "session=progress-stream delay=2000",
+    ]);
+    waitForJob(test, spawned.turn.jobId, (value) => Number(value.publicProgress?.revision ?? 0) >= 2);
+
+    const progress = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(progress.timedOut, false);
+    assert.deepEqual(progress.update, {
+      kind: "progress",
+      agent_name: spawned.agent.path,
+      agent_status: "running",
+      progress: {
+        revision: 2,
+        activity: "responding",
+        phase: "running",
+        summary: "Claude is drafting its response.",
+        updated_at: progress.update.progress.updated_at,
+      },
+    });
+    assert.equal(JSON.stringify(progress).includes("session=progress-stream"), false);
+
+    const completion = run(test, ["wait_agent", "--timeout-ms", "5000", "--json"], { timeout: 10_000 });
+    assert.equal(completion.update.kind, "completion");
+    assert.match(completion.update.completion_message, /^completed:session=progress-stream/);
   });
 
   it("interrupts only a running Agent turn and keeps the logical Agent record", () => {

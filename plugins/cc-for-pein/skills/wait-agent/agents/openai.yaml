@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Wait Agent"
-  short_description: "Wait durably for current-root Claude Agent activity"
-  default_prompt: "Use $cc-for-pein:wait-agent to wait for durable Claude Agent completion activity."
+  short_description: "Experimental: wait for bounded Agent progress or completion"
+  default_prompt: "Experimental: use $cc-for-pein:wait-agent only when blocked on current-root Agent activity; synthesize required completion before final because waiting cannot reactivate an idle Codex parent."

@@ -31,7 +31,7 @@ describe("native plugin contract", () => {
     const pluginRoot = path.join(root, "plugins", "cc-for-pein");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "cc-for-pein");
-    assert.match(manifest.version, /^0\.3\.0\+codex\.[A-Za-z0-9._-]+$/);
+    assert.match(manifest.version, /^0\.4\.0\+codex\.[A-Za-z0-9._-]+$/);
     assert.equal(manifest.hooks, undefined);
     assert.equal(manifest.author.name, "Pein");
     const skills = fs.readdirSync(path.join(pluginRoot, "skills"), { withFileTypes: true })
@@ -143,23 +143,34 @@ describe("native plugin contract", () => {
         "utf8",
       );
       assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
-      assert.match(text, /raw JSON/i);
-      assert.match(text, /final Claude output/i);
+      assert.match(text, /Experimental/i);
+      if (name === "list-agents") assert.match(text, /final Claude output/i);
+      else assert.match(text, /completion handoff/i);
     }
   });
 
-  it("keeps v0.3 base metadata synchronized with one local plugin cachebuster", () => {
+  it("marks all six skill prompts and discovery descriptions Experimental", () => {
+    for (const name of canonicalSkills) {
+      const skillRoot = path.join(root, "plugins", "cc-for-pein", "skills", name);
+      assert.match(fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8"), /Experimental/i);
+      const metadata = fs.readFileSync(path.join(skillRoot, "agents", "openai.yaml"), "utf8");
+      assert.match(metadata, /Experimental/i);
+      assert.match(metadata, /cannot reactivate an idle Codex parent/i);
+    }
+  });
+
+  it("keeps v0.4 base metadata synchronized with one local plugin cachebuster", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
     const manifest = JSON.parse(
       fs.readFileSync(path.join(root, "plugins", "cc-for-pein", ".codex-plugin", "plugin.json"), "utf8"),
     );
     const marketplace = JSON.parse(fs.readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
-    assert.equal(packageJson.version, "0.3.0");
-    assert.equal(lockfile.version, "0.3.0");
-    assert.equal(lockfile.packages[""].version, "0.3.0");
+    assert.equal(packageJson.version, "0.4.0");
+    assert.equal(lockfile.version, "0.4.0");
+    assert.equal(lockfile.packages[""].version, "0.4.0");
     assert.equal(manifest.version.split("+")[0], packageJson.version);
-    assert.match(manifest.version, /^0\.3\.0\+codex\.[A-Za-z0-9._-]+$/);
-    assert.match(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.3\.0/);
+    assert.match(manifest.version, /^0\.4\.0\+codex\.[A-Za-z0-9._-]+$/);
+    assert.match(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.4\.0/);
   });
 });
