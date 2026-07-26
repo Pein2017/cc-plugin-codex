@@ -39,7 +39,7 @@ The installed plugin SHALL expose exactly `$cc-for-pein:spawn-agent`, `$cc-for-p
 - **THEN** all six Experimental lifecycle skills are present in the model-visible catalog and none of the old lifecycle skills is discoverable
 
 ### Requirement: wait_agent returns bounded root mailbox activity
-`wait_agent` SHALL accept optional `timeout_ms` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include a bounded completion handoff and opaque delivery token; a progress update SHALL include only the safe public-progress projection. It SHALL omit raw inbox state, full Agent records, full final output, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
+`wait_agent` SHALL accept optional `timeout_ms` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL default its observation upper bound to 600000 ms, SHALL reject values above 3600000 ms, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include a bounded completion handoff and opaque delivery token; a progress update SHALL include only the safe public-progress projection when its adaptive delivery interval is eligible. It SHALL omit raw inbox state, full Agent records, full final output, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
 
 #### Scenario: Unread completion predates wait
 - **WHEN** the root inbox already contains an unread Agent completion
@@ -60,3 +60,11 @@ The installed plugin SHALL expose exactly `$cc-for-pein:spawn-agent`, `$cc-for-p
 #### Scenario: Root mailbox remains quiet
 - **WHEN** `timeout_ms` expires without new current-root Agent progress or completion activity
 - **THEN** wait returns an honest timeout without interrupting or changing any Agent
+
+#### Scenario: Caller omits timeout
+- **WHEN** the parent calls wait without `timeout_ms`
+- **THEN** the observation deadline is 600000 ms while eligible progress or completion may return earlier
+
+#### Scenario: Caller exceeds the maximum
+- **WHEN** the parent requests `timeout_ms` greater than 3600000
+- **THEN** wait rejects the invalid bound before changing Agent or delivery state

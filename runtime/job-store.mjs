@@ -12,7 +12,11 @@ import path from "node:path";
 
 import { resolvePluginDataRoot, resolvePluginStateRoot } from "./paths.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
-import { validateProcessIdentity, getProcessIdentity } from "./process-control.mjs";
+import {
+  validateProcessIdentity,
+  getProcessIdentity,
+  isProcessAlive,
+} from "./process-control.mjs";
 import { createAgentStore } from "./agent-store.mjs";
 import {
   markCompletionDetailedResultUnavailable,
@@ -35,6 +39,13 @@ export const ACTIVE_JOB_STATUSES = new Set([
   "running",
   "interrupting",
   "cancelling",
+]);
+export const PUBLIC_PROGRESS_INITIAL_DELIVERY_INTERVAL_MS = 5_000;
+export const PUBLIC_PROGRESS_MAX_DELIVERY_INTERVAL_MS = 30_000;
+const PUBLIC_PROGRESS_RESET_ACTIVITIES = new Set([
+  "retrying",
+  "reconnecting",
+  "responding",
 ]);
 const NO_SESSION_RETENTION_BUCKET = "__no-session__";
 const SESSION_LEASES_DIR_NAME = "session-leases";
@@ -800,6 +811,21 @@ export function mutateJob(cwd, jobId, updater) {
   }
 }
 
+export function isJobPublicProgressDeliveryEligible(job, nowMs = Date.now()) {
+  const revision = Number(job?.publicProgress?.revision ?? 0);
+  const deliveredRevision = Number(job?.publicProgressDeliveredRevision ?? 0);
+  if (!Number.isSafeInteger(revision) || revision < 1 || revision <= deliveredRevision) {
+    return false;
+  }
+  const activity = String(job?.publicProgress?.activity ?? "");
+  const deliveredActivity = String(job?.publicProgressDeliveredActivity ?? "");
+  if (PUBLIC_PROGRESS_RESET_ACTIVITIES.has(activity) && activity !== deliveredActivity) {
+    return true;
+  }
+  const nextDeliveryAt = Date.parse(job?.publicProgressNextDeliveryAt ?? "");
+  return !Number.isFinite(nextDeliveryAt) || nowMs >= nextDeliveryAt;
+}
+
 /**
  * Atomically claim the newest advisory public-progress revision for delivery.
  * Completion acknowledgement uses its own durable inbox; this cursor only
@@ -811,16 +837,37 @@ export function claimJobPublicProgress(cwd, jobId) {
   const fd = acquireJobLock(lockFile);
   try {
     const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
-    const revision = Number(job.publicProgress?.revision ?? 0);
-    const deliveredRevision = Number(job.publicProgressDeliveredRevision ?? 0);
-    if (!Number.isSafeInteger(revision) || revision < 1 || revision <= deliveredRevision) {
+    if (!isJobPublicProgressDeliveryEligible(job)) {
       return { claimed: false, job };
     }
+    const revision = Number(job.publicProgress.revision);
+    const deliveredRevision = Number(job.publicProgressDeliveredRevision ?? 0);
+    const activity = String(job.publicProgress.activity ?? "");
+    const deliveredActivity = String(job.publicProgressDeliveredActivity ?? "");
+    const priorInterval = Number(job.publicProgressDeliveryIntervalMs);
+    const hasAdaptiveState = Number.isFinite(Date.parse(job.publicProgressDeliveredAt ?? ""));
+    const resetBackoff = !hasAdaptiveState || deliveredRevision < 1 || (
+      PUBLIC_PROGRESS_RESET_ACTIVITIES.has(activity) && activity !== deliveredActivity
+    );
+    const normalizedPriorInterval = Number.isFinite(priorInterval) && priorInterval > 0
+      ? Math.min(priorInterval, PUBLIC_PROGRESS_MAX_DELIVERY_INTERVAL_MS)
+      : PUBLIC_PROGRESS_INITIAL_DELIVERY_INTERVAL_MS;
+    const nextInterval = resetBackoff
+      ? PUBLIC_PROGRESS_INITIAL_DELIVERY_INTERVAL_MS
+      : Math.min(
+          normalizedPriorInterval * 2,
+          PUBLIC_PROGRESS_MAX_DELIVERY_INTERVAL_MS
+        );
+    const deliveredAt = nowIso();
     const updatedJob = {
       ...job,
       id: jobId,
       publicProgressDeliveredRevision: revision,
-      updatedAt: nowIso(),
+      publicProgressDeliveredActivity: activity,
+      publicProgressDeliveredAt: deliveredAt,
+      publicProgressDeliveryIntervalMs: nextInterval,
+      publicProgressNextDeliveryAt: new Date(Date.parse(deliveredAt) + nextInterval).toISOString(),
+      updatedAt: deliveredAt,
     };
     writeAtomic(jobFile, updatedJob);
     return { claimed: true, job: updatedJob };
@@ -1007,6 +1054,7 @@ export function tryCloseSteeringWindow(cwd, jobId) {
 // ---------------------------------------------------------------------------
 
 const LOCK_ACQUIRE_TIMEOUT_MS = 30_000;
+const LOCK_IDENTITY_FAILURE_GRACE_MS = 1_000;
 const LOCK_RETRY_MIN_DELAY_MS = 10;
 const LOCK_RETRY_MAX_DELAY_MS = 50;
 
@@ -1038,15 +1086,18 @@ function recoverStaleLock(lockFile) {
     observedStat = fs.statSync(lockFile);
     const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
     const ageMs = Date.now() - Number(lockData.timestamp ?? observedStat.mtimeMs);
-    // A complete recent ownership record is a live lease even if one /proc or
-    // platform identity probe fails transiently. Reclaiming it immediately can
-    // admit two writers and silently overwrite a mailbox update. Once the
-    // bounded lease expires, a matching process identity still protects a
-    // genuinely long-running owner.
-    const leaseIsRecent = Number.isFinite(ageMs) && ageMs <= LOCK_ACQUIRE_TIMEOUT_MS;
+    const ownerPid = Number(lockData.pid);
+    const ownerAlive = Number.isSafeInteger(ownerPid) && ownerPid > 0 &&
+      isProcessAlive(ownerPid);
     const ownerMatch = lockData.identity != null &&
-      validateProcessIdentity(lockData.pid, lockData.identity);
-    if (leaseIsRecent || ownerMatch) return false;
+      validateProcessIdentity(ownerPid, lockData.identity);
+    // Protect a matching live owner for its full mutation. If a platform
+    // identity read fails transiently while the PID is still alive, allow only
+    // a short grace window: normal mutations finish well inside it, while a
+    // crashed/dead owner is reclaimed immediately even with a future timestamp.
+    const transientProbeGrace = ownerAlive && Number.isFinite(ageMs) &&
+      ageMs <= LOCK_IDENTITY_FAILURE_GRACE_MS;
+    if (ownerMatch || transientProbeGrace) return false;
   } catch {}
 
   try {

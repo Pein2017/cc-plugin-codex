@@ -130,12 +130,17 @@ function fixture(ownerRootId = "owner-1") {
     `CC_RUNTIME_CHECKOUT=${root}`,
     "",
   ].join("\n"));
+  const inheritedEnv = { ...process.env };
+  // A CC-bootstrapped parent exports its own trusted root. The fixture owns a
+  // fresh logical root and must not let that ambient identity override the
+  // explicit CODEX_THREAD_ID below.
+  delete inheritedEnv.CC_TRUSTED_OWNER_ROOT_ID;
   return {
     workspace,
     invocation,
     envFile,
     env: {
-      ...process.env,
+      ...inheritedEnv,
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CC_RUNTIME_HOME: runtimeHome,

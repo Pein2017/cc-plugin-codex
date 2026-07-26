@@ -116,6 +116,22 @@ describe("job store and mailbox", () => {
     );
   });
 
+  it("reclaims a recent lock from a provably dead owner without waiting for the acquire deadline", () => {
+    const { workspace } = setup();
+    const lockFile = `${resolveJobFile(workspace, "cc-1")}.lock`;
+    fs.writeFileSync(lockFile, JSON.stringify({
+      pid: 99_999_999,
+      identity: "dead-owner",
+      token: "dead-token",
+      // Future skew must not keep a lock whose PID is already gone.
+      timestamp: Date.now() + 1_500,
+    }));
+    const startedAt = Date.now();
+    const message = enqueueSteeringMessage(workspace, "cc-1", "after crash");
+    assert.ok(Date.now() - startedAt < 1_000);
+    assert.equal(message.sequence, 1);
+  });
+
   it("holds one exact-session lease across workspaces and releases it at terminal", () => {
     const { workspace } = setup();
     const otherWorkspace = path.join(path.dirname(workspace), "other-workspace");

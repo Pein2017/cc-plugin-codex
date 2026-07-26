@@ -13,6 +13,10 @@
 - Wake `wait_agent` on coalesced safe progress milestones without exposing
   Claude response/thinking text, tool inputs, paths, hooks, sessions, or raw
   receipts.
+- Give public waits a 10-minute default and one-hour maximum observation bound;
+  adapt routine progress delivery from 5 to 10, 20, then 30 seconds while
+  letting completion and high-value retry/reconnect/response transitions
+  bypass or reset the heartbeat cooldown.
 - Add a two-phase-redelivered 4096-byte completion handoff for parent synthesis,
   with completion priority and explicit truncation, removing the need for a
   recovery follow-up or temporary-file workaround.
@@ -20,9 +24,12 @@
   `4c43465133428898aa84f0bfc02c306ed65fb66a`: asynchronous spawn, root mailbox
   wait, separate state listing, queue-only completion, and no idle-parent
   auto-reactivation.
-- Keep recent job-lock ownership records as bounded leases even if a transient
-  process-identity probe fails, preventing concurrent mailbox writers from
-  silently overwriting a steering message.
+- Give a live lock owner a short identity-probe grace so concurrent mailbox
+  writers cannot silently overwrite a steering message, while reclaiming a
+  lock from a provably dead owner immediately even under clock skew.
+- Make the unit and integration harnesses independent of ambient Codex/CC root
+  variables so the same check gate is reproducible in CI and a bootstrapped CC
+  session.
 
 ## 0.3.0 - 2026-07-26
 

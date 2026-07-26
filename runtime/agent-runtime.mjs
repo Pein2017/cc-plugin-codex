@@ -24,6 +24,8 @@ import {
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
 const ACTIVATION_RECOVERY_GRACE_MS = 2_000;
+const DEFAULT_AGENT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+const MAX_AGENT_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_NAME_PATTERN = /^[a-z0-9_]+$/;
 const CLAUDE_SESSION_MODEL_SCAN_BYTES = 4 * 1024 * 1024;
 
@@ -999,8 +1001,12 @@ class AgentRuntime {
 
   async waitAgent(inputValue = {}) {
     const input = assertObject(inputValue, "wait_agent input");
-    const timeout = input.timeout_ms == null ? 30_000 : Number(input.timeout_ms);
-    if (!Number.isFinite(timeout) || timeout < 0) throw new Error("wait_agent timeout_ms must be non-negative.");
+    const timeout = input.timeout_ms == null
+      ? DEFAULT_AGENT_WAIT_TIMEOUT_MS
+      : Number(input.timeout_ms);
+    if (!Number.isFinite(timeout) || timeout < 0 || timeout > MAX_AGENT_WAIT_TIMEOUT_MS) {
+      throw new Error("wait_agent timeout_ms must be between 0 and 3600000 milliseconds.");
+    }
     const acknowledgeTokens = Array.isArray(input.acknowledge_tokens)
       ? input.acknowledge_tokens
       : [];

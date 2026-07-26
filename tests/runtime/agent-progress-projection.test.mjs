@@ -116,8 +116,69 @@ describe("Agent progress projection", () => {
     });
   });
 
+  it("adaptively backs off routine progress while urgent phase changes reset delivery", async () => {
+    const { runtime, workspace } = setup();
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.progress.revision, 3);
+    let job = readJobFile(workspace, "cc-progress");
+    assert.equal(job.publicProgressDeliveryIntervalMs, 5_000);
+
+    writeJobFile(workspace, "cc-progress", {
+      ...job,
+      publicProgress: {
+        revision: 4,
+        activity: "hook",
+        phase: "hook",
+        summary: "Claude completed a hook.",
+        updatedAt: "2026-07-26T00:00:04.000Z",
+      },
+    });
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).timedOut, true);
+
+    job = readJobFile(workspace, "cc-progress");
+    writeJobFile(workspace, "cc-progress", {
+      ...job,
+      publicProgressNextDeliveryAt: new Date(Date.now() - 1).toISOString(),
+    });
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.progress.revision, 4);
+    job = readJobFile(workspace, "cc-progress");
+    assert.equal(job.publicProgressDeliveryIntervalMs, 10_000);
+
+    writeJobFile(workspace, "cc-progress", {
+      ...job,
+      publicProgress: {
+        revision: 5,
+        activity: "retrying",
+        phase: "retry",
+        summary: "Claude is retrying an API request.",
+        updatedAt: "2026-07-26T00:00:05.000Z",
+      },
+    });
+    const urgent = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(urgent.update.progress.activity, "retrying");
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveryIntervalMs, 5_000);
+  });
+
+  it("caps public Agent wait at one hour", async () => {
+    const { runtime } = setup();
+    await assert.rejects(
+      runtime.waitAgent({ timeout_ms: 3_600_001 }),
+      /between 0 and 3600000/
+    );
+  });
+
   it("prioritizes a durable completion over pending progress", async () => {
     const { runtime, workspace, ownerRootId, agent } = setup();
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.kind, "progress");
+    writeJobFile(workspace, "cc-progress", {
+      ...readJobFile(workspace, "cc-progress"),
+      publicProgress: {
+        revision: 4,
+        activity: "hook",
+        phase: "hook",
+        summary: "Claude completed a hook.",
+        updatedAt: "2026-07-26T00:00:04.000Z",
+      },
+    });
     runtime.store.updateAgent(agent.agentId, (current) => ({
       ...current,
       status: "completed",

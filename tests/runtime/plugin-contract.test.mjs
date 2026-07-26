@@ -70,6 +70,8 @@ describe("native plugin contract", () => {
       cwd: root,
       env: {
         ...process.env,
+        CODEX_THREAD_ID: "plugin-contract-root",
+        CC_TRUSTED_OWNER_ROOT_ID: "plugin-contract-root",
         CC_RUNTIME_HOME: path.join(root, ".test-runtime-contract"),
         CC_RUNTIME_ENV_FILE: path.join(root, "config", "runtime.env"),
       },
@@ -145,7 +147,12 @@ describe("native plugin contract", () => {
       assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
       assert.match(text, /Experimental/i);
       if (name === "list-agents") assert.match(text, /final Claude output/i);
-      else assert.match(text, /completion handoff/i);
+      else {
+        assert.match(text, /completion handoff/i);
+        assert.match(text, /600000 ms/);
+        assert.match(text, /3600000 ms/);
+        assert.match(text, /5 to 10, 20, and[\s\S]*30 seconds/);
+      }
     }
   });
 

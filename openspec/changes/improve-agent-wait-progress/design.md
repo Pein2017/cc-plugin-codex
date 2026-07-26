@@ -37,7 +37,7 @@ The worker will derive a `publicProgress` record from existing stream events. It
 
 Repeated text/thinking events are coalesced and rate-limited. Tool, hook, retry, reconnect, and phase changes may create new milestones. The full log and partial output remain internal.
 
-Progress delivery uses a separate persisted `publicProgressDeliveredRevision` on the job. `wait_agent` compares the two revisions, atomically claims at most one oldest pending root-owned Agent update under the job lock, and advances only the advisory delivery revision. A process crash may duplicate a progress hint, which is acceptable; concurrent normal waits cannot regress or claim the same revision. Completion remains the authoritative durable event. The parent passes the current root's active job IDs into the wait so each poll reads only that small set rather than parsing all retained workspace jobs.
+Progress delivery uses a separate persisted `publicProgressDeliveredRevision` plus optional adaptive delivery timestamps/interval on the job. `wait_agent` compares the revisions, atomically claims at most one oldest eligible root-owned Agent update under the job lock, and advances only the advisory delivery state. Routine activity retains only the latest revision and backs off from 5 to 10, 20, then at most 30 seconds. Retry, reconnect, and the first transition into responding reset that backoff. Completion never enters the cooldown and always has priority. A process crash may duplicate a progress hint, which is acceptable; concurrent normal waits cannot regress or claim the same revision. The parent passes the current root's active job IDs into the wait so each poll reads only that small set rather than parsing all retained workspace jobs.
 
 A separate Agent-store schema or progress inbox was rejected because progress is non-authoritative, job-scoped, and safely reconstructible. A new `watch` operation was rejected because the canonical six-operation surface already has the correct event barrier.
 
@@ -53,13 +53,15 @@ Returning a bounded handoff was chosen over asking the Agent for a follow-up or 
 
 `wait_agent` will still have no target. It subscribes logically to the current root, first acknowledges prior completion tokens, then checks completion, then progress, and finally polls until activity or timeout. A timeout changes no Agent or job state. The skill will suppress narration of unchanged timeouts and will not use `list_agents` as a progress-polling substitute.
 
+The public default observation upper bound is 10 minutes and the accepted maximum is one hour. These are deadlines rather than sleep durations: completion returns as soon as it is durable, while progress is returned only when its adaptive heartbeat becomes eligible. A separate completion-only mode or model-facing interval knob was rejected for now because the same default can preserve both prompt simplicity and bounded liveness feedback.
+
 ### 5. Experimental status is part of discovery metadata
 
 All six `SKILL.md` files and their `agents/openai.yaml` descriptions will say Experimental. The README and changelog will explain that durable Agent identity and Claude execution are real, but automatic host turn wakeup and exact parity with Codex's internal mailbox are not claimed.
 
 ## Risks / Trade-offs
 
-- [Progress can be noisy] → Coalesce text/thinking, bound summaries, return one update per wait, and keep completion priority.
+- [Progress can be noisy] → Coalesce to the newest routine revision, adapt delivery from 5 to 30 seconds, return one update per wait, and keep completion priority.
 - [Progress may repeat after a race or crash] → Treat it as advisory and identify it with monotonic job revision; never use it as completion evidence.
 - [A 4096-byte handoff can truncate a long conclusion] → Mark truncation explicitly and retain full Claude artifacts/internal job result for operator diagnosis; the parent can ask a focused follow-up only when the missing tail is genuinely needed.
 - [A parent can still end too early] → Put the join obligation in the spawn and wait skill contracts and state the host limitation prominently; no local plugin can safely force a new Codex turn after final.

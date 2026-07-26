@@ -136,10 +136,15 @@ guarantees work: it delivers to an active turn, or starts one exact-session or
 receipt-proven safe-fresh turn and assigns queued entries in order.
 
 `wait_agent` first checks the current root's durable completion mailbox, then
-safe public progress. A progress update is advisory and contains only a generic
-activity/phase summary plus, at most, a sanitized tool name; Claude response,
-thinking, tool arguments, paths, hook payloads, receipts, and session IDs stay
-private. Repeated text/thinking is coalesced and rate-limited.
+safe public progress. Its default observation upper bound is 10 minutes and
+its accepted maximum is one hour; completion returns immediately rather than
+waiting for that upper bound. A progress update is advisory and contains only
+a generic activity/phase summary plus, at most, a sanitized tool name; Claude
+response, thinking, tool arguments, paths, hook payloads, receipts, and session
+IDs stay private. Repeated routine activity is coalesced into the latest
+revision and delivered with an adaptive 5, 10, 20, then 30 second heartbeat.
+Retry, reconnect, and first-response transitions reset that backoff, while
+completion always bypasses it.
 
 A completion update includes a 4096-byte bounded handoff and truncation flag.
 It remains unread until a later call echoes its token, so a lost host response

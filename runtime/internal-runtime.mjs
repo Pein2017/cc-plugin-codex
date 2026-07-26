@@ -27,6 +27,7 @@ import {
   generateJobId,
   getSteeringSnapshot,
   getStateProtectionReceipt,
+  isJobPublicProgressDeliveryEligible,
   listJobs,
   listStoredJobs,
   nowIso,
@@ -150,7 +151,10 @@ function projectPublicProgress(job, ownerRootId, jobId = null, options = {}) {
         !template ||
         !Number.isSafeInteger(revision) ||
         revision < 1 ||
-        (options.requirePending !== false && revision <= deliveredRevision)
+        (options.requirePending !== false && (
+          revision <= deliveredRevision ||
+          !isJobPublicProgressDeliveryEligible(job)
+        ))
       ) {
         return null;
       }

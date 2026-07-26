@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Wait Agent"
   short_description: "Experimental: wait for bounded Agent progress or completion"
-  default_prompt: "Experimental: use $cc-for-pein:wait-agent only when blocked on current-root Agent activity; synthesize required completion before final because waiting cannot reactivate an idle Codex parent."
+  default_prompt: "Experimental: use $cc-for-pein:wait-agent with its long bounded wait and adaptive progress heartbeat only when blocked on current-root Agent activity; synthesize required completion before final because waiting cannot reactivate an idle Codex parent."

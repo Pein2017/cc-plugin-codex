@@ -22,6 +22,14 @@ Each active Agent job SHALL maintain an optional monotonic public-progress revis
 - **WHEN** a current-root Agent publishes a new public-progress revision before timeout and no completion is unread
 - **THEN** wait returns promptly with that Agent's bounded progress update
 
+#### Scenario: Routine progress remains noisy
+- **WHEN** an Agent continues publishing tool, hook, thinking, or response heartbeat revisions after an earlier progress delivery
+- **THEN** wait retains the latest revision and adaptively delays routine delivery across 5, 10, 20, then at most 30 seconds
+
+#### Scenario: High-value phase changes during backoff
+- **WHEN** retry, reconnect, or the first responding transition occurs during a routine progress cooldown
+- **THEN** the new phase is immediately eligible and resets the adaptive interval
+
 #### Scenario: A new turn starts after wait begins
 - **WHEN** a current-root Agent turn is created after root-wide wait has already blocked and then publishes progress
 - **THEN** the same wait refreshes current active turns and returns that progress before timeout
@@ -48,6 +56,10 @@ Unread Agent completion events SHALL be selected before pending progress revisio
 #### Scenario: Progress and completion are both pending
 - **WHEN** a current-root progress revision and unread completion event are available together
 - **THEN** wait returns the completion event and leaves the progress hint non-authoritative
+
+#### Scenario: Completion arrives during progress cooldown
+- **WHEN** a current-root Agent completes before its next progress heartbeat is eligible
+- **THEN** wait returns the completion promptly without waiting for the progress interval
 
 #### Scenario: Wait times out after earlier progress
 - **WHEN** all observed progress revisions have already been delivered and no completion arrives before the deadline
