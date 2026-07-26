@@ -31,7 +31,7 @@ describe("native plugin contract", () => {
     const pluginRoot = path.join(root, "plugins", "cc-for-pein");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "cc-for-pein");
-    assert.match(manifest.version, /^0\.2\.0\+codex\.[A-Za-z0-9._-]+$/);
+    assert.match(manifest.version, /^0\.3\.0\+codex\.[A-Za-z0-9._-]+$/);
     assert.equal(manifest.hooks, undefined);
     assert.equal(manifest.author.name, "Pein");
     const skills = fs.readdirSync(path.join(pluginRoot, "skills"), { withFileTypes: true })
@@ -94,14 +94,25 @@ describe("native plugin contract", () => {
     }
   });
 
+  it("keeps every lifecycle skill eligible for model-visible discovery", () => {
+    for (const name of canonicalSkills) {
+      const metadata = fs.readFileSync(
+        path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
+        "utf8",
+      );
+      assert.doesNotMatch(metadata, /allow_implicit_invocation:\s*false/);
+    }
+  });
+
   it("keeps spawn success concise while retaining explicit raw and actionable output", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
     assert.match(text, /do not print its raw JSON by default/i);
-    assert.match(text, /one concise sentence[\s\S]*Agent path and current status/i);
-    assert.match(text, /explicitly requests raw or debug output/i);
+    assert.match(text, /one concise sentence[\s\S]*selected model[\s\S]*Agent path[\s\S]*current status/i);
+    assert.match(text, /Do not include final[\s\S]*Claude output/i);
+    assert.match(text, /explicitly[\s\S]*requests raw or debug output/i);
     assert.match(text, /failure[\s\S]*actionable details/i);
     assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
   });
@@ -114,7 +125,10 @@ describe("native plugin contract", () => {
     assert.match(text, /Sonnet.*Sonnet 5[\s\S]*--model claude-sonnet-5/);
     assert.match(text, /Opus.*Opus 5.*Ops5[\s\S]*--model claude-opus-5/);
     assert.match(text, /supports exactly two[\s\S]*Claude models/i);
-    assert.match(text, /runtime's explicit default is[\s\S]*`claude-opus-5`/i);
+    assert.match(text, /requires[\s\S]*explicit[\s\S]*--model/i);
+    assert.match(text, /does not select Sonnet or Opus[\s\S]*stop and ask/i);
+    assert.match(text, /must reject a launch without `--model`/i);
+    assert.doesNotMatch(text, /runtime's explicit default is/);
     assert.doesNotMatch(text, /--model (?:fable|haiku)/);
     assert.match(text, /low.*medium.*high.*xhigh.*max/s);
     assert.match(text, /Ops5.*Agent\/task name[\s\S]*not an implicit model/s);
@@ -122,18 +136,30 @@ describe("native plugin contract", () => {
     assert.match(text, /never silently retry with a different[\s\S]*model/i);
   });
 
-  it("keeps v0.2 base metadata synchronized with one local plugin cachebuster", () => {
+  it("keeps list and wait receipts concise by default", () => {
+    for (const name of ["list-agents", "wait-agent"]) {
+      const text = fs.readFileSync(
+        path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
+        "utf8",
+      );
+      assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
+      assert.match(text, /raw JSON/i);
+      assert.match(text, /final Claude output/i);
+    }
+  });
+
+  it("keeps v0.3 base metadata synchronized with one local plugin cachebuster", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
     const manifest = JSON.parse(
       fs.readFileSync(path.join(root, "plugins", "cc-for-pein", ".codex-plugin", "plugin.json"), "utf8"),
     );
     const marketplace = JSON.parse(fs.readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
-    assert.equal(packageJson.version, "0.2.0");
-    assert.equal(lockfile.version, "0.2.0");
-    assert.equal(lockfile.packages[""].version, "0.2.0");
+    assert.equal(packageJson.version, "0.3.0");
+    assert.equal(lockfile.version, "0.3.0");
+    assert.equal(lockfile.packages[""].version, "0.3.0");
     assert.equal(manifest.version.split("+")[0], packageJson.version);
-    assert.match(manifest.version, /^0\.2\.0\+codex\.[A-Za-z0-9._-]+$/);
-    assert.match(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.2\.0/);
+    assert.match(manifest.version, /^0\.3\.0\+codex\.[A-Za-z0-9._-]+$/);
+    assert.match(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.3\.0/);
   });
 });

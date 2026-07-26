@@ -18,6 +18,7 @@ import { resolveWorkspaceRoot } from "./workspace.mjs";
 export const COMPLETION_INBOX_VERSION = 1;
 export const DEFAULT_ACKNOWLEDGED_TAIL = 100;
 export const DEFAULT_UNREAD_BATCH_SIZE = 20;
+export const DEFAULT_AGENT_SUMMARY_BATCH_SIZE = 1;
 export const MAX_COMPLETION_MESSAGE_BYTES = 64 * 1024;
 
 const INBOX_DIRECTORY_NAME = "completion-inboxes";
@@ -486,6 +487,24 @@ function publicEvent(event) {
   };
 }
 
+/**
+ * The completion inbox stores a complete, bounded terminal receipt for
+ * recovery and operator diagnostics. Model-facing orchestration must not turn
+ * that durable record into an unsolicited final answer, however. Keep this
+ * projection deliberately small and derive its text from lifecycle state.
+ */
+function publicAgentCompletionSummary(event) {
+  if (!event.agentId) return null;
+  const terminal = String(event.terminalStatus ?? "completed");
+  return {
+    agentId: event.agentId,
+    agentStatus: event.agentStatus,
+    terminalStatus: terminal,
+    summary: `Agent turn ${terminal}.`,
+    deliveryToken: event.deliveryToken,
+  };
+}
+
 function sameCompletionFact(existing, normalized) {
   return [
     "version",
@@ -578,6 +597,26 @@ function unreadContiguousEvents(inbox, limit) {
   return result;
 }
 
+/**
+ * Legacy one-shot jobs did not have a durable Agent identity. They remain in
+ * the immutable inbox for forensic compatibility, but they are not events the
+ * Agent lifecycle can deliver. Advance the scan over those records so an old
+ * legacy prefix cannot starve a current Agent completion.
+ */
+function unreadAgentLinkedEvents(inbox, limit) {
+  const result = [];
+  let expectedSequence = inbox.acknowledgedThrough + 1;
+  for (const event of inbox.events) {
+    if (event.sequence <= inbox.acknowledgedThrough) continue;
+    if (event.sequence !== expectedSequence) break;
+    expectedSequence += 1;
+    if (!event.agentId) continue;
+    result.push(event);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 export function readUnreadCompletionEvents(cwd, ownerRootId, options = {}) {
   const owner = assertText(ownerRootId, "owner root ID");
   const requestedLimit = options.limit == null ? DEFAULT_UNREAD_BATCH_SIZE : options.limit;
@@ -598,6 +637,23 @@ export function readUnreadCompletionEvents(cwd, ownerRootId, options = {}) {
     acknowledgedThrough: inbox.acknowledgedThrough,
     events: unreadContiguousEvents(inbox, limit).map(publicEvent),
     protection: inbox.protection,
+  };
+}
+
+/**
+ * Read the narrow, Agent-only projection used by the public wait lifecycle.
+ * Full completion records remain available only through durable runtime state.
+ */
+export function readUnreadAgentCompletionSummaries(cwd, ownerRootId, options = {}) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  const requestedLimit = options.limit == null ? DEFAULT_AGENT_SUMMARY_BATCH_SIZE : options.limit;
+  const limit = Math.min(assertPositiveInteger(requestedLimit, "Agent completion summary limit"), 100);
+  const inbox = readInbox(cwd, owner, false);
+  if (!inbox) return { events: [] };
+  return {
+    events: unreadAgentLinkedEvents(inbox, limit)
+      .map(publicAgentCompletionSummary)
+      .filter(Boolean),
   };
 }
 
@@ -657,6 +713,56 @@ export function acknowledgeCompletionEvents(cwd, ownerRootId, deliveryTokens, op
     const expected = unreadContiguousEvents(inbox, tokens.length);
     if (expected.length !== tokens.length || expected.some((event, index) => event.deliveryToken !== tokens[index])) {
       throw new Error("Completion acknowledgement must cover the oldest unread contiguous token prefix.");
+    }
+    const advanced = {
+      ...inbox,
+      acknowledgedThrough: expected.at(-1).sequence,
+    };
+    const compacted = compactInbox(advanced, acknowledgedTail);
+    const updated = { ...compacted, updatedAt: nowIso() };
+    delete updated.compactedCount;
+    writeInboxAtomic(filePath, updated);
+    return {
+      acknowledgedThrough: advanced.acknowledgedThrough,
+      acknowledgedCount: tokens.length,
+      compactedCount: compacted.compactedCount,
+    };
+  });
+}
+
+/**
+ * Acknowledge the oldest unread Agent-linked prefix. The cursor may move over
+ * quarantined legacy events that precede that prefix, but never rewrites or
+ * otherwise mutates those stored facts.
+ */
+export function acknowledgeAgentCompletionEvents(cwd, ownerRootId, deliveryTokens, options = {}) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  if (!Array.isArray(deliveryTokens)) {
+    throw new Error("Completion acknowledgement tokens must be an array.");
+  }
+  if (deliveryTokens.length === 0) {
+    const inbox = readInbox(cwd, owner, false);
+    return { acknowledgedThrough: inbox?.acknowledgedThrough ?? 0, acknowledgedCount: 0, compactedCount: 0 };
+  }
+  const tokens = deliveryTokens.map((token) => assertText(token, "delivery token"));
+  if (new Set(tokens).size !== tokens.length) {
+    throw new Error("Completion acknowledgement tokens must not repeat.");
+  }
+  const acknowledgedTail = options.acknowledgedTail ?? DEFAULT_ACKNOWLEDGED_TAIL;
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const alreadyAcknowledged = inbox.events.filter(
+      (event) => event.sequence <= inbox.acknowledgedThrough
+    );
+    if (tokens.every((token) => alreadyAcknowledged.some((event) => event.deliveryToken === token))) {
+      return {
+        acknowledgedThrough: inbox.acknowledgedThrough,
+        acknowledgedCount: 0,
+        compactedCount: 0,
+      };
+    }
+    const expected = unreadAgentLinkedEvents(inbox, tokens.length);
+    if (expected.length !== tokens.length || expected.some((event, index) => event.deliveryToken !== tokens[index])) {
+      throw new Error("Completion acknowledgement must cover the oldest unread Agent-linked token prefix.");
     }
     const advanced = {
       ...inbox,

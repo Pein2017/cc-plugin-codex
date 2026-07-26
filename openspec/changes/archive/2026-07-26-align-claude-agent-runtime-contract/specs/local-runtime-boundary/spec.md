@@ -1,9 +1,5 @@
-# local-runtime-boundary Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define the checkout-owned runtime, host Claude dependency, environment selection, and portability boundary.
-## Requirements
 ### Requirement: Checkout-owned executable runtime
 The installed CC for Pein plugin SHALL load executable runtime source only from the configured independent Pein2017 clone or its registered worktree. It SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, or a versioned plugin Cache path.
 
@@ -18,24 +14,6 @@ The installed CC for Pein plugin SHALL load executable runtime source only from 
 #### Scenario: Development worktree provenance is inspected
 - **WHEN** the release worktree's Git common directory and remotes are inspected
 - **THEN** they resolve only to the independent local clone and its Pein2017 `origin`, with no upstream or external-repo dependency
-
-### Requirement: Host Claude Code dependency is explicit
-The runtime SHALL use the host `claude` CLI for authentication, Claude configuration, sessions, hooks, memories, skills, plugins, MCP configuration, and tool execution.
-
-#### Scenario: Claude CLI is unavailable
-- **WHEN** the configured Claude executable cannot be resolved
-- **THEN** readiness fails without substituting an upstream package or cached runtime
-
-### Requirement: Exactly one environment file is selected
-The runtime SHALL select at most one dotenv-compatible environment file in this precedence order: explicit path, `${CODEX_HOME}/.env`, nearest ancestor `.codex/.env`, then checkout default. It SHALL parse values as data and SHALL NOT evaluate the file as shell code.
-
-#### Scenario: Explicit environment file wins
-- **WHEN** an existing explicit environment file is provided together with lower-precedence candidates
-- **THEN** only the explicit file overlays the inherited environment
-
-#### Scenario: Explicit environment file is missing
-- **WHEN** an explicit environment-file path does not exist
-- **THEN** startup fails instead of silently falling back
 
 ### Requirement: Runtime environment preserves required host settings
 The selected environment SHALL carry uppercase and lowercase proxy variables, no-proxy variables, `CONDA_EXE`, `PATH`, and other valid inherited or file-defined values to the Claude subprocess. The effective `CLAUDE_CONFIG_DIR` SHALL be selected from non-empty `CLAUDE_NATIVE_CONFIG_DIR`, then non-empty `CLAUDE_CONFIG_DIR`, then `/data/CoordExp/.claude`. Receipts SHALL expose only the effective config path and redacted network endpoints, not arbitrary environment values.
@@ -52,6 +30,8 @@ The selected environment SHALL carry uppercase and lowercase proxy variables, no
 - **WHEN** readiness or execution emits an environment receipt
 - **THEN** it identifies the effective Claude config directory and redacted proxy endpoints without recording proxy credentials or unrelated environment values
 
+## ADDED Requirements
+
 ### Requirement: Local development separates runtime hot updates from plugin discovery refresh
 Executable runtime changes SHALL take effect directly from `CC_RUNTIME_CHECKOUT` without uninstalling or reinstalling the plugin. Changes to plugin skills, skill metadata, manifest, or bootstrap SHALL be refreshed by atomically adding the current local plugin snapshot without first removing the plugin or a correctly bound marketplace.
 
@@ -66,17 +46,3 @@ Executable runtime changes SHALL take effect directly from `CC_RUNTIME_CHECKOUT`
 #### Scenario: Local marketplace root drifts
 - **WHEN** refresh mode detects that `pein-local` points somewhere other than the current independent clone
 - **THEN** it fails closed instead of silently refreshing from the wrong source; initial installation may explicitly rebind the marketplace once
-
-### Requirement: Runtime support scope is Linux
-The checkout-owned runtime SHALL support Node.js 20.19 or newer on Linux. macOS
-and native Windows behavior is best-effort and SHALL NOT be treated as a release
-or compatibility guarantee without a separate OpenSpec change and real-platform
-acceptance evidence.
-
-#### Scenario: Supported Linux runtime starts
-- **WHEN** the checkout runs on Linux with a compatible Node.js and host Claude CLI
-- **THEN** the full runtime, installation, process-control, and state-protection contracts apply
-
-#### Scenario: Non-Linux runtime is attempted
-- **WHEN** the checkout is invoked on macOS or native Windows
-- **THEN** any surviving defensive behavior is explicitly unsupported and its limitations do not block the Linux release

@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein",
-  "version": "0.2.0+codex.20260725172742",
+  "version": "0.3.0+codex.20260726061357",
   "description": "Checkout-owned Claude Code Agent runtime with durable roots, messages, completion delivery, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",

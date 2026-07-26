@@ -326,6 +326,7 @@ function validateAgent(agent, rootThreadId, workspaceRoot) {
   validateContinuation(agent.continuation);
   if (agent.activeJobId != null) assertText(agent.activeJobId, "Agent active job ID");
   if (agent.latestJobId != null) assertText(agent.latestJobId, "Agent latest job ID");
+  if (agent.selectedModel != null) assertText(agent.selectedModel, "Agent selected model");
   if (agent.finalizedJobIds != null) {
     if (!Array.isArray(agent.finalizedJobIds) || agent.finalizedJobIds.length > FINALIZED_JOB_ID_LIMIT) {
       throw new Error("Agent finalized job IDs must be a bounded array.");
@@ -449,6 +450,7 @@ function publicAgent(agent) {
     path: agent.path,
     name: agent.name,
     description: agent.description,
+    selectedModel: agent.selectedModel ?? null,
     rootThreadId: agent.rootThreadId,
     workspaceRoot: agent.workspaceRoot,
     activeJobId: agent.activeJobId,
@@ -496,6 +498,9 @@ function recordFromInput(input, rootThreadId, workspaceRoot) {
     normalizedName: normalizedName(name),
     path: agentPath(name),
     description: input?.description == null ? null : assertText(input.description, "Agent description"),
+    selectedModel: input?.selectedModel == null
+      ? null
+      : assertText(input.selectedModel, "Agent selected model"),
     activeJobId: null,
     latestJobId: null,
     claudeSessionId: null,

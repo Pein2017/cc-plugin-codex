@@ -88,7 +88,7 @@ describe("Agent reconciliation retention and activation recovery", () => {
   it("projects a 101st terminal Agent fact before it can be pruned from the public retention view", () => {
     const { workspace, env } = activeFixture();
     const runtime = createAgentRuntime({ cwd: workspace, env });
-    const agent = runtime.store.createAgent({ task_name: "retention" });
+    const agent = runtime.store.createAgent({ task_name: "retention", selectedModel: "claude-sonnet-5" });
     const baseTime = Date.now() - 120_000;
     const newest = terminalJob(agent, "retained-job-100", new Date(baseTime + 100_000).toISOString());
     runtime.store.reserveActivation(agent.agentId, newest.id, { initial: true });
@@ -112,7 +112,10 @@ describe("Agent reconciliation retention and activation recovery", () => {
   it("releases only grace-expired missing reservations after restart and preserves the follow-up mailbox", () => {
     const { workspace, env } = activeFixture();
     const firstRuntime = createAgentRuntime({ cwd: workspace, env });
-    const initial = firstRuntime.store.createAgent({ task_name: "initial_gap" });
+    const initial = firstRuntime.store.createAgent({
+      task_name: "initial_gap",
+      selectedModel: "claude-sonnet-5",
+    });
     firstRuntime.store.reserveActivation(initial.agentId, "missing-initial", { initial: true });
     firstRuntime.reconcile();
     const pendingInitial = firstRuntime.store.readAgent(initial.agentId);
@@ -124,7 +127,10 @@ describe("Agent reconciliation retention and activation recovery", () => {
     restarted.reconcile();
     assert.equal(restarted.store.readAgent(initial.agentId), null);
 
-    const followup = restarted.store.createAgent({ task_name: "followup_gap" });
+    const followup = restarted.store.createAgent({
+      task_name: "followup_gap",
+      selectedModel: "claude-sonnet-5",
+    });
     const completedJob = terminalJob(followup, "completed-before-gap", new Date().toISOString());
     restarted.store.reserveActivation(followup.agentId, completedJob.id, { initial: true });
     restarted.store.finalizeFromJob(completedJob);

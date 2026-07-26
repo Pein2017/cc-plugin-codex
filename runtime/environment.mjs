@@ -10,8 +10,12 @@ import { fileURLToPath } from "node:url";
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_ENV_FILE = path.join(PLUGIN_ROOT, "config", "runtime.env");
+const DEFAULT_CLAUDE_CONFIG_DIR = "/data/CoordExp/.claude";
 const SUPPORTED_KEYS = new Set([
+  "CLAUDE_NATIVE_CONFIG_DIR",
   "CLAUDE_CONFIG_DIR",
+  "CONDA_EXE",
+  "PATH",
   "http_proxy", "https_proxy", "all_proxy",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
   "no_proxy", "NO_PROXY",
@@ -71,6 +75,11 @@ function redactProxy(value) {
   }
 }
 
+function nonEmpty(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+}
+
 export function resolveRuntimeEnvironment(options = {}) {
   const inherited = { ...(options.env ?? process.env) };
   const codexHome = inherited.CODEX_HOME
@@ -89,6 +98,10 @@ export function resolveRuntimeEnvironment(options = {}) {
     ...inherited,
     ...(selectedEnv ? parseEnvFile(selectedEnv) : {}),
   };
+  const effectiveClaudeConfigDir = nonEmpty(env.CLAUDE_NATIVE_CONFIG_DIR)
+    ?? nonEmpty(env.CLAUDE_CONFIG_DIR)
+    ?? DEFAULT_CLAUDE_CONFIG_DIR;
+  env.CLAUDE_CONFIG_DIR = path.resolve(effectiveClaudeConfigDir);
   if (selectedEnv) env.CC_RUNTIME_ENV_FILE = selectedEnv;
 
   return {
@@ -107,4 +120,4 @@ export function resolveRuntimeEnvironment(options = {}) {
   };
 }
 
-export { DEFAULT_ENV_FILE, SUPPORTED_KEYS };
+export { DEFAULT_CLAUDE_CONFIG_DIR, DEFAULT_ENV_FILE, SUPPORTED_KEYS };

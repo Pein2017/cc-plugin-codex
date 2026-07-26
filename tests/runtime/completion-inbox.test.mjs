@@ -6,10 +6,12 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  acknowledgeAgentCompletionEvents,
   acknowledgeCompletionEvents,
   appendCompletionEvent,
   compactAcknowledgedCompletionEvents,
   deterministicCompletionEventId,
+  readUnreadAgentCompletionSummaries,
   readUnreadCompletionEvents,
   reconcileTerminalJobCompletion,
   resolveCompletionInboxFile,
@@ -135,6 +137,42 @@ describe("completion inbox", () => {
     const acknowledged = acknowledgeCompletionEvents(workspace, ownerRootId, delivered.events.map((event) => event.deliveryToken));
     assert.deepEqual(acknowledged, { acknowledgedThrough: 2, acknowledgedCount: 2, compactedCount: 0 });
     assert.equal(readUnreadCompletionEvents(workspace, ownerRootId).events.length, 0);
+  });
+
+  it("skips a legacy prefix for Agent delivery while acknowledgement advances its cursor", () => {
+    const { workspace, ownerRootId } = setup();
+    const legacy = appendCompletionEvent(workspace, ownerRootId, completion("legacy-one-shot", {
+      finalMessage: "legacy final output must remain internal",
+    })).event;
+    const linked = appendCompletionEvent(workspace, ownerRootId, completion("agent-completion", {
+      agentId: "agent-current",
+      finalMessage: "Claude final output must not enter the Agent summary",
+    })).event;
+
+    const delivered = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    assert.deepEqual(delivered.events, [{
+      agentId: "agent-current",
+      agentStatus: "completed",
+      terminalStatus: "completed",
+      summary: "Agent turn completed.",
+      deliveryToken: linked.deliveryToken,
+    }]);
+    assert.equal("finalMessage" in delivered.events[0], false);
+    assert.equal("resultPointer" in delivered.events[0], false);
+    assert.equal("resumability" in delivered.events[0], false);
+
+    const acknowledged = acknowledgeAgentCompletionEvents(
+      workspace,
+      ownerRootId,
+      [linked.deliveryToken]
+    );
+    assert.deepEqual(acknowledged, { acknowledgedThrough: 2, acknowledgedCount: 1, compactedCount: 0 });
+    const stored = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8"));
+    assert.deepEqual(stored.events.map((event) => [event.sequence, event.eventId]), [
+      [1, legacy.eventId],
+      [2, linked.eventId],
+    ]);
+    assert.deepEqual(readUnreadAgentCompletionSummaries(workspace, ownerRootId).events, []);
   });
 
   it("serializes concurrent appends without duplicate or missing sequences", async () => {

@@ -5,7 +5,7 @@ in headless stream-json mode. It owns durable orchestration only; Claude Code
 continues to own authentication, project configuration, memory, hooks,
 plugins, skills, MCP configuration, sessions, and tool execution.
 
-Version 0.2 makes a named Agent—not an internal job ID—the public object. A
+Version 0.3 makes a named Agent—not an internal job ID—the public object. A
 Claude turn is temporary. An Agent has a stable root-scoped identity, a native
 Claude session pointer when safe, a durable message queue, and nonresident
 history after its worker exits.
@@ -14,7 +14,10 @@ The runtime has no source or runtime dependency on Sendbird, upstream
 installers, Codex forwarding hooks, or a versioned plugin Cache. Codex caches a
 minimal descriptor/bootstrap for discovery, but that bootstrap fails closed
 unless it delegates to `CC_RUNTIME_CHECKOUT`. Executable runtime source always
-comes from this checkout.
+comes from the independent `/data/CoordExp/cc-plugin-codex` clone or one of its
+registered worktrees. `/data/CoordExp/external/cc-plugin-codex` is a read-only
+reference and is never a runtime, install, Git-object, remote, merge, or
+worktree dependency.
 
 The supported platform is Linux with Node.js 20.19 or newer. Any surviving
 macOS or native Windows defensive branches are best-effort only and are not a
@@ -23,10 +26,10 @@ compatibility or release guarantee.
 ## Public lifecycle
 
 `runtime/index.mjs` is the only model-facing lifecycle interface. Its complete
-v0.2 surface is:
+v0.3 surface is:
 
 ```text
-spawn_agent({ task_name, message, fork_turns: "none", description?, model?, reasoning_effort?, execution_profile? })
+spawn_agent({ task_name, message, fork_turns: "none", model, description?, reasoning_effort?, execution_profile? })
 send_message({ target, message })
 followup_task({ target, message })
 wait_agent({ timeout_ms?, acknowledge_tokens? })
@@ -45,15 +48,18 @@ $cc-for-pein:interrupt-agent
 $cc-for-pein:list-agents
 ```
 
-Successful `spawn-agent` calls report only the stable Agent path and current
-status by default. The complete structured receipt remains available when raw
-or debug output is explicitly requested.
+Successful `spawn-agent` calls report the selected model plus the stable Agent
+path and current status. `list-agents` reports only canonical name/status
+records, and `wait-agent` reports timeout/activity plus at most one bounded
+acknowledgement-bearing update. Neither default operation returns Claude's
+final output.
 
 The entire runtime model surface is pinned to two choices: Sonnet 5 maps to
-`claude-sonnet-5`, and Opus 5 maps to `claude-opus-5`. Opus 5 is the explicit
-default in both execution profiles. Fable, Haiku, older model IDs, and any
-other available Claude model fail before Claude launches. Model and reasoning
-effort remain separate arguments; `x-high` maps to effort value `xhigh`.
+`claude-sonnet-5`, and Opus 5 maps to `claude-opus-5`. Every initial spawn must
+select one explicitly; there is no default or fallback. Fable, Haiku, older
+model IDs, and any other available Claude model fail before Claude launches.
+Model and reasoning effort remain separate arguments; `x-high` maps to effort
+value `xhigh`. Follow-up turns inherit the Agent's selected model.
 
 Each fresh Agent session receives its durable Agent name through Claude's
 `--name` option. This preserves a useful Claude-side label and avoids the
@@ -81,13 +87,13 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.2 |
+| Surface | Codex Multi-Agent V2 | CC for Pein v0.3 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | Same six runtime names, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | Same core fields; only `fork_turns=none` is supported because Codex context cannot safely become Claude history |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
-| Wait | Untargeted mailbox | Untargeted root completion inbox with durable acknowledgement tokens |
+| Wait | Untargeted mailbox activity/timeout | Same concise shape plus at most one bounded durable acknowledgement update |
 | Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
 
 `list_agents` intentionally includes logical nonresident terminal history.
@@ -115,10 +121,12 @@ guarantees work: it delivers to an active turn, or starts one exact-session or
 receipt-proven safe-fresh turn and assigns queued entries in order.
 
 `wait_agent` reads the current root's durable completion mailbox. It may first
-acknowledge valid oldest-contiguous tokens returned by a previous wait, then
-returns the oldest unread activity. New activity remains unread until a later
-call echoes its tokens, so a lost host response safely redelivers. Repeated
-`list_agents` calls are read-only and preserve unread completion summaries.
+acknowledge a valid oldest Agent-linked token returned by a previous wait, then
+returns at most the oldest unread bounded summary. New activity remains unread
+until a later call echoes its token, so a lost host response safely redelivers.
+Legacy unowned events remain stored but cannot block Agent-linked delivery.
+Repeated `list_agents` calls are state-only and do not inspect or acknowledge
+the inbox. Stored Claude final output remains internal.
 
 Job receipts are bounded internal execution evidence. Agent identity, session
 binding, mailbox entries, and completion projection survive worker exit and
@@ -127,18 +135,16 @@ registry and inbox are rebuildable projections.
 
 ## Execution profiles
 
-`safe` is the default. It supplies the runtime's explicit sandbox and
-permission policy. `terminal-parity` adds only headless transport, lifecycle,
-and the plugin-wide exact model constraint: it does not implicitly override
-effort, settings, permissions, tools, MCP configuration, or system prompts.
-Given the same canonical working directory and environment, it loads the same
-Claude configuration as a direct Terminal session except that every turn is
-pinned to Sonnet 5 or Opus 5; its default is Opus 5.
+`terminal-parity` is the default. It selects the caller's explicit Sonnet or
+Opus model, sets `IS_SANDBOX=1`, and always launches Claude with
+`--dangerously-skip-permissions`. It otherwise leaves effort, settings, tools,
+MCP configuration, hooks, memories, skills, plugins, and prompts to the native
+Claude configuration unless the caller explicitly supplies an override.
 
-For explicitly unrestricted native authority, a caller may request
-`terminal-parity` plus `--dangerously-skip-permissions`. The runtime sets
-`IS_SANDBOX=1` for that Claude child and records the explicit override; it is
-never inferred by the plugin.
+`safe` remains an explicit opt-in profile. It supplies the runtime-owned
+sandbox, permission, and read-only tool policy while retaining the Agent's
+caller-selected model. This permission choice affects only the Claude child;
+the plugin does not change the parent Codex permission policy.
 
 ## Environment
 
@@ -153,6 +159,9 @@ Files are parsed as literal `KEY=VALUE`, never evaluated as shell code. Valid
 values such as `CONDA_EXE`, `PATH`, `CLAUDE_CONFIG_DIR`, lower- and upper-case
 proxy variables, and localhost bypasses reach the Claude child together.
 Receipts expose only selected non-secret fields and redact proxy credentials.
+The effective Claude configuration path is the first non-empty value of
+`CLAUDE_NATIVE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`, then
+`/data/CoordExp/.claude`.
 
 This checkout's project configuration is `/data/CoordExp/.codex/.env`. It
 selects `/data/CoordExp/.claude`, the local 9090 proxy, the existing Conda
@@ -163,14 +172,24 @@ environment, Claude binary, and this checkout through `CC_RUNTIME_CHECKOUT`.
 No compatibility aliases remain. Migrate calls by addressing the stable Agent,
 not an internal job ID:
 
-| Removed v0.1 surface | v0.2 canonical replacement |
+| Removed v0.1 surface | v0.3 canonical replacement |
 | --- | --- |
-| `run` / `start` | `spawn_agent` with `task_name`, `message`, and `fork_turns=none` |
+| `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit Sonnet 5 or Opus 5 model |
 | `steer <job>` | `send_message <target> <message>` |
 | `steer --follow-up <job>` / `followUp` | `followup_task <target> <message>` |
 | `status` / `result` | `list_agents` and untargeted `wait_agent` |
 | `interrupt <job>` | `interrupt_agent <target>` |
 | `cancel` | Removed; use `interrupt_agent` for graceful stop semantics |
+
+Agents created before v0.3 may not contain a persisted model selection. The
+runtime backfills it only when an exact supported model is proven by a retained
+receipt or the bounded tail of the Agent's Claude session artifact. A terminal
+Agent whose historical model is unsupported or cannot be proven remains
+visible with its history intact, but continuation is blocked; the runtime never
+substitutes Sonnet 5 or Opus 5. An active legacy turn without model evidence is
+left running and migration is deferred. If a previously unproven artifact later
+records an exact supported model, reconciliation restores exact-session
+continuation automatically.
 
 ## Local development and installation
 
@@ -185,11 +204,19 @@ npm run install:local
 
 The repository-local marketplace is `.agents/plugins/marketplace.json`; its
 plugin source is the intentionally small `plugins/cc-for-pein/` subtree.
-`npm run install:local` removes any prior `pein-local` snapshot, repoints that
-marketplace to this checkout, and installs the current plugin through Codex's
-own plugin manager. Restart or reload Codex afterward. Verify the installed
-snapshot has exactly the six v0.2 skills and every one delegates only to
-`CC_RUNTIME_CHECKOUT`.
+`npm run install:local` performs the one-time local-marketplace binding and may
+explicitly rebind a mismatched `pein-local` root to this independent clone. It
+does not remove the plugin. After that:
+
+- Runtime `.mjs` edits are checkout-hot through `CC_RUNTIME_CHECKOUT`; the next
+  lifecycle call uses them without any plugin action.
+- Skill, skill metadata, manifest, or bootstrap edits use
+  `npm run refresh:local`. It advances the manifest cachebuster, atomically
+  refreshes with `codex plugin add`, and fails closed if the marketplace root
+  drifted. Start a new Codex task to test newly discovered skill metadata.
+
+Verify the installed snapshot has exactly the six v0.3 skills and every one
+delegates only to `CC_RUNTIME_CHECKOUT`.
 
 ## Provenance
 

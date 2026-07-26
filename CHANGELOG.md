@@ -2,15 +2,29 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-26
+
 - Make `$cc-for-pein:spawn-agent` acknowledge successful starts with only the
-  Agent path and status by default; retain full runtime JSON for explicit raw or
-  debug requests and preserve actionable failure details.
+  selected model, Agent path, and status; preserve actionable failure details.
 - Pin the spawn skill's two supported model selections to
   `claude-sonnet-5` and `claude-opus-5`, document `low` through `max` effort
   values separately, reject every other model before launch, and forbid partial
-  model names or silent fallback after account rejection. Apply the Opus 5
-  default to both execution profiles and name fresh sessions to avoid the
-  observed auxiliary title-generation model call.
+  model names, implicit defaults, or silent fallback after account rejection.
+- Make Claude terminal parity the default execution profile with effective
+  native config resolution, `IS_SANDBOX=1`, and
+  `--dangerously-skip-permissions`; keep `safe` as explicit opt-in.
+- Align list/wait model-visible receipts with Codex Multi-Agent V2, retain at
+  most one bounded acknowledgement update, suppress final output, and prevent
+  legacy unowned events from starving current Agent delivery.
+- Make all six lifecycle skills model-visible. Separate checkout-hot runtime
+  edits from cachebuster-based atomic discovery refresh without destructive
+  plugin reinstall.
+- Declare the standalone Pein2017 clone as the sole runtime/Git/install owner;
+  the external upstream checkout is reference-only.
+- Migrate pre-v0.3 Agent model state only from exact retained receipt or Claude
+  session evidence, defer unproven active turns, and fail closed for terminal
+  unsupported or unproven history without substituting a supported model;
+  automatically recover when a located unproven artifact later proves support.
 
 ## 0.2.0 - 2026-07-25
 

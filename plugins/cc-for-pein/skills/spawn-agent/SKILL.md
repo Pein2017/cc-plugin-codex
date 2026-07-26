@@ -13,9 +13,10 @@ Use this skill to create a named Agent in the current Codex root. Resolve
 The bootstrap must delegate to `CC_RUNTIME_CHECKOUT` from the selected
 `.codex/.env`; never execute a runtime from the plugin Cache.
 
-Canonical arguments are `--task-name <name>`, `--fork-turns none`, and a
-message. Optional extensions are `--description <text>`, `--model <model>`,
-`--reasoning-effort <level>`, and `--execution-profile safe|terminal-parity`.
+Canonical arguments are `--task-name <name>`, `--fork-turns none`, an explicit
+`--model <model>`, and a message. Optional extensions are
+`--description <text>`, `--reasoning-effort <level>`, and
+`--execution-profile safe|terminal-parity`.
 
 Use model and effort as separate arguments. This plugin supports exactly two
 Claude models, pinned to the full model IDs verified against
@@ -29,8 +30,9 @@ the installed Claude Code 2.1.220 and active account:
 Do not select Fable, Haiku, or another Claude model through this skill. Treat an
 `Ops5` substring inside an Agent/task name as a label, not an implicit model
 request; apply the mapping only when the user uses it to select the model. If
-the user does not select a model, the runtime's explicit default is
-`claude-opus-5`, including under `terminal-parity`.
+the user does not select Sonnet or Opus, stop and ask them to choose; the
+runtime must reject a launch without `--model`, including under
+`terminal-parity`.
 
 The exact effort values are `low`, `medium`, `high`, `xhigh`, and `max`; map
 human wording such as “x-high” to `--reasoning-effort xhigh`. Never pass partial
@@ -46,8 +48,9 @@ model if Claude rejects the requested one.
   adoption is deferred to a future OpenSpec change.
 - Keep the complete runtime receipt available for targeting and later lifecycle
   operations, but do not print its raw JSON by default.
-- On successful spawn, present one concise sentence containing only the stable
-  Agent path and current status. Show the complete receipt only when the user
-  explicitly requests raw or debug output.
+- On successful spawn, present one concise sentence containing only the
+  selected model, stable Agent path, and current status. Do not include final
+  Claude output. Show the complete receipt only when the user explicitly
+  requests raw or debug output.
 - On failure or when recovery/action is required, report the actionable details
   instead of replacing them with a generic success acknowledgement.

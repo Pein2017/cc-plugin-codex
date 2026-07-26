@@ -754,21 +754,12 @@ export const EFFORT_ALIASES = {
 
 export const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
-export const DEFAULT_MODEL = "claude-opus-5";
-
 export const DEFAULT_EFFORT_BY_MODEL = new Map([
   ["opus", "xhigh"],
   ["claude-opus-5", "xhigh"],
   ["sonnet", "high"],
   ["claude-sonnet-5", "high"],
 ]);
-
-export function resolveDefaultModel(model) {
-  if (model == null || String(model).trim() === "") {
-    return DEFAULT_MODEL;
-  }
-  return resolveModel(model);
-}
 
 export function resolveDefaultEffort(model, effort) {
   if (effort != null && String(effort).trim() !== "") {

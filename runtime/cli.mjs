@@ -21,7 +21,7 @@ const PUBLIC_COMMANDS = new Set([
 function usage() {
   return [
     "Usage:",
-    "  node runtime/cli.mjs spawn_agent --task-name <name> --fork-turns none [options] <message>",
+    "  node runtime/cli.mjs spawn_agent --task-name <name> --fork-turns none --model <sonnet|opus> [options] <message>",
     "  node runtime/cli.mjs send_message <exact-target> <message>",
     "  node runtime/cli.mjs followup_task <exact-target> <message>",
     "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
@@ -109,7 +109,7 @@ async function spawnAgent(argv) {
     execution_profile: options["execution-profile"],
     write: Boolean(options.write),
     permission_mode: options["permission-mode"],
-    dangerously_skip_permissions: Boolean(options["dangerously-skip-permissions"]),
+    dangerously_skip_permissions: options["dangerously-skip-permissions"] ? true : undefined,
     allowed_tools: options["allowed-tools"],
   });
   output(receipt, options.json);
@@ -136,7 +136,6 @@ async function followupTask(argv) {
     valueOptions: [
       "target",
       "message",
-      "model",
       "reasoning-effort",
       "execution-profile",
       "permission-mode",
@@ -146,7 +145,6 @@ async function followupTask(argv) {
   });
   const receipt = await createClaudeRuntime(runtimeOptions(options)).followup_task({
     ...targetAndMessage(options, positionals),
-    model: options.model,
     reasoning_effort: options["reasoning-effort"],
     execution_profile: options["execution-profile"],
     write: options.write ? true : undefined,

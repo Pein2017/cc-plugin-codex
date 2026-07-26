@@ -139,6 +139,7 @@ function fixture(ownerRootId = "owner-1") {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CC_RUNTIME_HOME: runtimeHome,
+      CC_RUNTIME_ENV_FILE: envFile,
       CC_FAKE_INVOCATION_FILE: invocation,
     },
   };
@@ -182,7 +183,29 @@ function list(test, options = {}) {
 }
 
 function agent(test, target, options = {}) {
-  const selected = list(test, options).agents.find((item) =>
+  // Public list owns reconciliation; inspect the durable registry only after
+  // exercising that lifecycle boundary so the helper does not bypass it.
+  list(test, options);
+  const environment = options.env ?? test.env;
+  const workspaceHash = createHash("sha256")
+    .update(fs.realpathSync.native(test.workspace))
+    .digest("hex")
+    .slice(0, 16);
+  const rootHash = createHash("sha256")
+    .update(environment.CODEX_THREAD_ID)
+    .digest("hex")
+    .slice(0, 32);
+  const registryFile = path.join(
+    environment.CC_RUNTIME_HOME,
+    "state",
+    workspaceHash,
+    "agent-registry",
+    "roots",
+    rootHash,
+    "registry.json",
+  );
+  const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+  const selected = Object.values(registry.agents).find((item) =>
     [item.agentId, item.path, item.name].includes(target)
   );
   assert.ok(selected, `expected Agent ${target}`);
@@ -234,13 +257,14 @@ describe("canonical Agent runtime CLI", () => {
   it("exposes all six operations with flat exact targeting and duplicate-name rejection", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--json", "session=alpha delay=700",
+      "spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "sonnet", "--json", "session=alpha delay=700",
     ]);
     assert.equal(spawned.agent.path, "/root/alpha");
+    assert.equal(spawned.agent.selectedModel, "claude-sonnet-5");
     assert.equal(spawned.topology, "flat");
     assert.equal(spawned.residency, "ephemeral_turn");
     assert.throws(
-      () => run(test, ["spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--json", "duplicate"]),
+      () => run(test, ["spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "sonnet", "--json", "duplicate"]),
       /already belongs/
     );
     const selected = agent(test, "/root/alpha");
@@ -256,14 +280,14 @@ describe("canonical Agent runtime CLI", () => {
 
   it("keeps Agent roots isolated while operator all-agents remains explicit and read-only", () => {
     const test = fixture("root-a");
-    const alpha = run(test, ["spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--json", "session=alpha delay=50"]);
+    const alpha = run(test, ["spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "opus", "--json", "session=alpha delay=50"]);
     waitForAgent(test, alpha.agent.path, (value) => value.status === "completed");
     const foreignEnv = { ...test.env, CODEX_THREAD_ID: "root-b" };
     assert.deepEqual(list(test, { env: foreignEnv }).agents, []);
     const foreign = command(test, ["send_message", alpha.agent.path, "foreign", "--json"], { env: foreignEnv });
     assert.equal(foreign.status, 1);
     assert.match(foreign.stderr, /No Agent with that exact ID, path, or name/);
-    const beta = run(test, ["spawn_agent", "--task-name", "beta", "--fork-turns", "none", "--json", "session=beta delay=50"], { env: foreignEnv });
+    const beta = run(test, ["spawn_agent", "--task-name", "beta", "--fork-turns", "none", "--model", "sonnet", "--json", "session=beta delay=50"], { env: foreignEnv });
     waitForAgent(test, beta.agent.path, (value) => value.status === "completed", { env: foreignEnv });
 
     const operator = run(test, ["list-agents", "--all", "--json"], {
@@ -279,15 +303,15 @@ describe("canonical Agent runtime CLI", () => {
   it("runs two Agents concurrently and leaves their terminal histories nonresident", async () => {
     const test = fixture();
     const launches = await Promise.all([
-      runAsync(test, ["spawn_agent", "--task-name", "agent_a", "--fork-turns", "none", "--json", "session=a delay=500"]),
-      runAsync(test, ["spawn_agent", "--task-name", "agent_b", "--fork-turns", "none", "--json", "session=b delay=500"]),
+      runAsync(test, ["spawn_agent", "--task-name", "agent_a", "--fork-turns", "none", "--model", "sonnet", "--json", "session=a delay=500"]),
+      runAsync(test, ["spawn_agent", "--task-name", "agent_b", "--fork-turns", "none", "--model", "opus", "--json", "session=b delay=500"]),
     ]);
     assert.deepEqual(launches.map((entry) => entry.status).sort(), [0, 0]);
     const agents = launches.map((entry) => JSON.parse(entry.stdout).agent);
     for (const entry of agents) waitForAgent(test, entry.path, (value) => value.status === "completed");
     const listed = list(test);
     assert.equal(listed.agents.length, 2);
-    assert.ok(listed.agents.every((value) => value.resident === false && value.activeJobId === null));
+    assert.ok(listed.agents.every((value) => value.agent_status?.completed === null));
     assert.deepEqual(
       new Set(invocations(test).map((value) => value.sessionId)),
       new Set(["fake-session-a", "fake-session-b"])
@@ -297,7 +321,7 @@ describe("canonical Agent runtime CLI", () => {
   it("durably dispatches an active send_message and records acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "active", "--fork-turns", "none", "--json", "session=active delay=1000",
+      "spawn_agent", "--task-name", "active", "--fork-turns", "none", "--model", "sonnet", "--json", "session=active delay=1000",
     ]);
     const started = waitForJob(test, spawned.turn.jobId, (value) => value.status === "running" && Boolean(value.pid));
     assert.equal(started.agentId, spawned.agent.agentId);
@@ -305,14 +329,14 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(sent.delivery, "dispatched_active");
     assert.equal(sent.turn.jobId, spawned.turn.jobId);
     const finished = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
-    assert.ok(finished.mailbox.acknowledgedCount >= 1);
-    assert.equal(finished.mailbox.dispatchedCount, 0);
+    assert.ok(finished.mailbox.messages.filter((message) => message.state === "acknowledged").length >= 1);
+    assert.equal(finished.mailbox.messages.some((message) => message.state === "dispatched"), false);
   });
 
   it("queues an idle message and assigns it to an exact-session follow-up", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "resume", "--fork-turns", "none", "--json", "session=resume delay=60",
+      "spawn_agent", "--task-name", "resume", "--fork-turns", "none", "--model", "opus", "--json", "session=resume delay=60",
     ]);
     const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     assert.equal(terminal.continuation.mode, "exact_session");
@@ -321,7 +345,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(queued.delivery, "queued_no_turn");
     assert.equal(queued.turn, null);
     const beforeFollowup = agent(test, terminal.path);
-    assert.equal(beforeFollowup.mailbox.queuedCount, 1);
+    assert.equal(beforeFollowup.mailbox.messages.filter((message) => message.state === "queued").length, 1);
 
     const followup = run(test, ["followup_task", terminal.path, "session=resume follow-up", "--json"]);
     assert.equal(followup.activated, true);
@@ -332,6 +356,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(recorded[0].args[recorded[0].args.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(recorded[0].args[recorded[0].args.indexOf("--name") + 1], "resume");
     assert.equal(recorded[1].args.includes("--resume"), true);
+    assert.equal(recorded[1].args[recorded[1].args.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(recorded[1].args.includes("--name"), false);
     assert.equal(recorded[1].args[recorded[1].args.indexOf("--resume") + 1], "fake-session-resume");
     assert.match(recorded[1].prompt, /queued before follow-up/);
@@ -341,31 +366,37 @@ describe("canonical Agent runtime CLI", () => {
   it("keeps list and wait completion delivery unread until a later acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "delivery", "--fork-turns", "none", "--json", "session=delivery delay=60",
+      "spawn_agent", "--task-name", "delivery", "--fork-turns", "none", "--model", "sonnet", "--json", "session=delivery delay=60",
     ]);
     waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     const firstList = list(test);
     const secondList = list(test);
-    const firstEvent = firstList.agents[0].unreadCompletions[0];
-    assert.ok(firstEvent.deliveryToken);
-    assert.equal(secondList.agents[0].unreadCompletions[0].eventId, firstEvent.eventId);
-    assert.equal(secondList.completionInbox.acknowledgedThrough, firstList.completionInbox.acknowledgedThrough);
+    assert.deepEqual(firstList, secondList);
+    assert.deepEqual(firstList.agents, [{
+      agent_name: spawned.agent.path,
+      agent_status: { completed: null },
+    }]);
+    assert.equal(JSON.stringify(firstList).includes("completionInbox"), false);
 
     const firstWait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
     assert.equal(firstWait.timedOut, false);
-    assert.equal(firstWait.completionInbox.events[0].eventId, firstEvent.eventId);
+    assert.equal(firstWait.update.agent_name, spawned.agent.path);
+    assert.ok(firstWait.update.delivery_token);
+    assert.equal(JSON.stringify(firstWait).includes("completed:session=delivery"), false);
+    const redelivered = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.deepEqual(redelivered, firstWait);
     const secondWait = run(test, [
-      "wait_agent", "--timeout-ms", "0", "--acknowledge-tokens", firstEvent.deliveryToken, "--json",
+      "wait_agent", "--timeout-ms", "0", "--acknowledge-tokens", firstWait.update.delivery_token, "--json",
     ]);
-    assert.equal(secondWait.acknowledgement.acknowledgedCount, 1);
-    assert.equal(secondWait.completionInbox.events.length, 0);
-    assert.equal(list(test).agents[0].unreadCompletions.length, 0);
+    assert.equal(secondWait.timedOut, true);
+    assert.equal(secondWait.update, undefined);
+    assert.deepEqual(list(test), firstList);
   });
 
   it("interrupts only a running Agent turn and keeps the logical Agent record", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "interruptible", "--fork-turns", "none", "--json", "session=interrupt delay=5000",
+      "spawn_agent", "--task-name", "interruptible", "--fork-turns", "none", "--model", "opus", "--json", "session=interrupt delay=5000",
     ]);
     waitForJob(test, spawned.turn.jobId, (value) => value.status === "running" && Boolean(value.pid));
     const receipt = run(test, ["interrupt_agent", spawned.agent.path, "--json"], { timeout: 12_000 });
@@ -417,6 +448,12 @@ describe("canonical Agent runtime CLI", () => {
     ]);
     assert.equal(unsupportedModel.status, 1);
     assert.match(unsupportedModel.stderr, /Unsupported Claude model/);
+
+    const missingModel = command(test, [
+      "spawn_agent", "--task-name", "missing_model", "--fork-turns", "none", "--json", "must fail before Claude starts",
+    ]);
+    assert.equal(missingModel.status, 1);
+    assert.match(missingModel.stderr, /requires an explicit model/);
     assert.deepEqual(list(test).agents, []);
     assert.deepEqual(invocations(test), []);
   });
@@ -424,8 +461,8 @@ describe("canonical Agent runtime CLI", () => {
   it("preserves terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "parity", "--fork-turns", "none", "--execution-profile", "terminal-parity",
-      "--write", "--dangerously-skip-permissions", "--json", "session=parity delay=60",
+      "spawn_agent", "--task-name", "parity", "--fork-turns", "none", "--model", "opus",
+      "--json", "session=parity delay=60",
     ]);
     waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     const invocation = invocations(test)[0];
@@ -452,7 +489,7 @@ describe("canonical Agent runtime CLI", () => {
     fs.writeFileSync(path.join(fakeCache, "runtime", "cli.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(poisonMarker)}, "bad");\n`);
     const delegated = command(test, ["list_agents", "--json"], { program: fakeBootstrap });
     assert.equal(delegated.status, 0, delegated.stderr || delegated.stdout);
-    assert.equal(JSON.parse(delegated.stdout).rootThreadId, "owner-1");
+    assert.deepEqual(JSON.parse(delegated.stdout), list(test));
     assert.equal(fs.existsSync(poisonMarker), false);
   });
 });

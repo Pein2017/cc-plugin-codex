@@ -1,6 +1,6 @@
 ---
 name: list-agents
-description: 'List durable CC Agents in the current Codex root, including nonresident terminal history and unread completion summaries.'
+description: 'List durable CC Agents in the current Codex root, including nonresident terminal history.'
 ---
 
 # List Agents
@@ -17,9 +17,10 @@ Supported canonical arguments: `[--path-prefix </root/prefix>]`.
 - The Agent topology is flat: `/root/<task_name>`. `path_prefix` filters only
   this read-only listing; it is not a mutation target.
 - Every current-root logical Agent is listed even after its Claude worker has
-  exited. Completion summaries remain unread and repeatable until a later
-  `$cc-for-pein:wait-agent` acknowledges their delivery tokens.
+  exited. Completion delivery is handled only by `$cc-for-pein:wait-agent`.
 - Cross-root `--all` is intentionally absent. It is a redacted read-only
   operator diagnostic, never a model-facing operation.
 - Terminal-session adoption is deferred and is not represented by this list.
-- Present the runtime receipt exactly as returned.
+- Present only the useful Agent names and statuses. Do not echo raw JSON,
+  delivery tokens, or final Claude output unless the user explicitly requests
+  raw/debug detail.

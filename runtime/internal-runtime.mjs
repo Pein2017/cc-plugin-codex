@@ -54,7 +54,8 @@ import { configureRuntimePaths, samePath } from "./paths.mjs";
 import { renderTaskResult } from "./render.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 import {
-  acknowledgeCompletionEvents,
+  acknowledgeAgentCompletionEvents,
+  readUnreadAgentCompletionSummaries,
   readUnreadCompletionEvents,
 } from "./completion-inbox.mjs";
 
@@ -731,7 +732,7 @@ class ClaudeRuntime {
 
   async wait(jobId, options = {}) {
     const ownerRootId = this.assertOwnerRoot();
-    const requestedTimeout = options.timeoutMs == null ? 240_000 : Number(options.timeoutMs);
+    const requestedTimeout = options.timeoutMs == null ? 30_000 : Number(options.timeoutMs);
     if (!Number.isFinite(requestedTimeout) || requestedTimeout < 0) {
       throw new Error("wait timeoutMs must be a non-negative finite number.");
     }
@@ -741,11 +742,11 @@ class ClaudeRuntime {
       ? options.acknowledgeTokens
       : [];
     const acknowledgement = acknowledgeTokens.length > 0
-      ? acknowledgeCompletionEvents(this.cwd, ownerRootId, acknowledgeTokens)
+      ? acknowledgeAgentCompletionEvents(this.cwd, ownerRootId, acknowledgeTokens)
       : { acknowledgedCount: 0, acknowledgedThrough: null, compactedCount: 0 };
     const deadline = Date.now() + timeoutMs;
     let job = jobId ? this.status(jobId) : null;
-    let inbox = readUnreadCompletionEvents(this.cwd, ownerRootId);
+    let inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
     while (
       inbox.events.length === 0 &&
       (!job || ACTIVE_JOB_STATUSES.has(job.status)) &&
@@ -753,14 +754,18 @@ class ClaudeRuntime {
     ) {
       await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
       job = jobId ? this.status(jobId) : null;
-      inbox = readUnreadCompletionEvents(this.cwd, ownerRootId);
+      inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
     }
+    const waitTimedOut = inbox.events.length === 0 && (!job || ACTIVE_JOB_STATUSES.has(job.status));
     return {
-      job,
-      completionInbox: inbox,
+      // The public Agent runtime intentionally does not expose the internal
+      // acknowledgement receipt; it only needs the next delivery token.
+      update: inbox.events[0] ?? null,
       acknowledgement,
-      waitTimedOut: inbox.events.length === 0 && (!job || ACTIVE_JOB_STATUSES.has(job.status)),
-      timeoutMs,
+      waitTimedOut,
+      message: waitTimedOut
+        ? "Timed out waiting for CC Agent activity."
+        : "CC Agent activity is available.",
     };
   }
 }

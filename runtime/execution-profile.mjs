@@ -11,14 +11,14 @@ import {
   cleanupSandboxSettings,
   createSandboxSettings,
   resolveDefaultEffort,
-  resolveDefaultModel,
   resolveEffort,
+  resolveModel,
 } from "./claude-headless-adapter.mjs";
 
 export const EXECUTION_PROFILES = new Set(["safe", "terminal-parity"]);
 
 export function normalizeProfileName(value) {
-  const name = String(value ?? "safe").trim().toLowerCase();
+  const name = String(value ?? "terminal-parity").trim().toLowerCase();
   if (!EXECUTION_PROFILES.has(name)) {
     throw new Error(`Unknown execution profile ${value}. Use safe or terminal-parity.`);
   }
@@ -29,31 +29,31 @@ export function createExecutionProfile(options = {}) {
   const name = normalizeProfileName(options.profile);
   const inheritedEnv = options.env ?? process.env;
   const dangerouslySkipPermissions = Boolean(options.dangerouslySkipPermissions);
+  const requestedModel = String(options.model ?? "").trim();
+  if (!requestedModel) {
+    throw new Error("Claude execution requires an explicit Sonnet or Opus model.");
+  }
+  const model = resolveModel(requestedModel);
 
   if (dangerouslySkipPermissions && name !== "terminal-parity") {
     throw new Error(
       "--dangerously-skip-permissions requires --profile terminal-parity; safe must remain sandboxed."
     );
   }
-  if (dangerouslySkipPermissions && options.permissionMode) {
+  if (name === "terminal-parity" && options.permissionMode) {
     throw new Error(
       "--dangerously-skip-permissions cannot be combined with --permission-mode."
     );
   }
 
   if (name === "terminal-parity") {
-    const env = dangerouslySkipPermissions
-      ? { ...inheritedEnv, IS_SANDBOX: "1" }
-      : inheritedEnv;
+    const env = { ...inheritedEnv, IS_SANDBOX: "1" };
     const claudeOptions = {
       env,
-      model: resolveDefaultModel(options.model),
+      model,
+      dangerouslySkipPermissions: true,
     };
     if (options.effort) claudeOptions.effort = resolveEffort(options.effort);
-    if (options.permissionMode) claudeOptions.permissionMode = options.permissionMode;
-    if (dangerouslySkipPermissions) {
-      claudeOptions.dangerouslySkipPermissions = true;
-    }
     if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
       claudeOptions.allowedTools = options.allowedTools;
     }
@@ -70,7 +70,6 @@ export function createExecutionProfile(options = {}) {
   }
 
   const env = inheritedEnv;
-  const model = resolveDefaultModel(options.model);
   const defaultEffort = resolveDefaultEffort(model, options.effort);
   const effort = defaultEffort ? resolveEffort(defaultEffort) : undefined;
   const sandboxMode = options.write ? "workspace-write" : "read-only";

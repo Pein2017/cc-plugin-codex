@@ -55,6 +55,25 @@ describe("runtime environment", () => {
     assert.equal(result.env.CUSTOM_FLAG, "kept");
   });
 
+  it("normalizes native Claude config precedence and ignores empty overrides", () => {
+    const { root, codexHome } = fixture();
+    const configured = path.join(root, "configured-claude");
+    const native = path.join(root, "native-claude");
+    const envFile = path.join(codexHome, ".env");
+    fs.writeFileSync(envFile, [
+      `CLAUDE_CONFIG_DIR=${configured}`,
+      `CLAUDE_NATIVE_CONFIG_DIR=${native}`,
+      "",
+    ].join("\n"));
+    const preferred = resolveRuntimeEnvironment({ cwd: root, env: { CODEX_HOME: codexHome } });
+    assert.equal(preferred.env.CLAUDE_CONFIG_DIR, native);
+    assert.equal(preferred.receipt.claudeConfigDir, native);
+
+    fs.writeFileSync(envFile, `CLAUDE_NATIVE_CONFIG_DIR=\nCLAUDE_CONFIG_DIR=${configured}\n`);
+    const fallback = resolveRuntimeEnvironment({ cwd: root, env: { CODEX_HOME: codexHome } });
+    assert.equal(fallback.env.CLAUDE_CONFIG_DIR, configured);
+  });
+
   it("rejects shell syntax instead of executing it", () => {
     const { root } = fixture();
     const explicit = path.join(root, "bad.env");

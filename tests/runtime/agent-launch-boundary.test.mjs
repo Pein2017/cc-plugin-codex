@@ -56,6 +56,25 @@ function waitMs(milliseconds) {
 }
 
 describe("Agent durable launch boundary", () => {
+  it("rejects a missing model before readiness or Agent reservation", async () => {
+    const { runtime } = setup();
+    let readinessCalled = false;
+    runtime.jobs.assertReady = () => {
+      readinessCalled = true;
+      return readiness(runtime);
+    };
+    await assert.rejects(
+      runtime.spawnAgent({
+        task_name: "missing_model",
+        message: "must not launch",
+        fork_turns: "none",
+      }),
+      /requires an explicit model/
+    );
+    assert.equal(readinessCalled, false);
+    assert.equal(runtime.store.listAgents().length, 0);
+  });
+
   it("keeps slow readiness outside activation, then attaches a prepared fact before worker launch", async () => {
     const { runtime, workspace } = setup();
     const events = /** @type {string[]} */ ([]);
@@ -101,6 +120,7 @@ describe("Agent durable launch boundary", () => {
       task_name: "boundary",
       message: "launch after readiness",
       fork_turns: "none",
+      model: "sonnet",
     });
 
     assert.equal(result.turn.jobId, observedJobId);
@@ -125,6 +145,7 @@ describe("Agent durable launch boundary", () => {
         task_name: "prepare_race",
         message: "initial prompt",
         fork_turns: "none",
+        model: "opus",
       }),
       /injected prepare failure/
     );

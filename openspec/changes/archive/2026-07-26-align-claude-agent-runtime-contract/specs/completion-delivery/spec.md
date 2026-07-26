@@ -1,42 +1,23 @@
-# completion-delivery Specification
-
-## Purpose
-
-Define durable, bounded, at-least-once completion delivery across inactive Codex turns without a resident forwarding process.
-## Requirements
-### Requirement: Every terminal job emits one durable completion event
-The runtime SHALL create exactly one root-owned, Agent-linked completion event when an Agent's internal job first reaches `completed`, `interrupted`, or `failed`; the event SHALL map internal `failed` to Agent `errored` and retain the hardened bounded `finalMessage`, `truncated`, `detailedResultAvailable`, and `claudeSessionIdAvailable` fields.
-
-#### Scenario: Worker publishes terminal state
-- **WHEN** a non-terminal internal job first commits completed, interrupted, or failed state
-- **THEN** an idempotently keyed completion event identifies both the internal job and stable Agent and uses the defined Agent-status mapping
-
-#### Scenario: Reconciliation sees an event after a crash
-- **WHEN** a terminal Agent turn exists without its deterministic completion event
-- **THEN** reconciliation appends the missing Agent-linked event once without duplicating an existing event
-
-#### Scenario: Final output exceeds the completion bound
-- **WHEN** an Agent turn's final output is larger than 64 KiB in UTF-8
-- **THEN** the event retains a valid bounded prefix, marks it truncated, and points the caller to detailed result availability
+## MODIFIED Requirements
 
 ### Requirement: Completion events use two-phase at-least-once delivery
 Each owner root SHALL have a monotonic completion sequence and an atomic cursor for the highest contiguously acknowledged Agent-linked event. A model-facing wait SHALL return at most the oldest unread Agent-linked summary with an opaque delivery token and SHALL NOT acknowledge that update in the same response-producing call. Stored final output SHALL remain internal and absent from the default projection.
 
 #### Scenario: Next Codex turn checks unread completions
-- **WHEN** the same owner root reads its completion inbox after a background job finishes
+- **WHEN** the same owner root waits after a background Agent finishes
 - **THEN** the runtime returns one bounded status/summary update and its delivery token without returning final output
 
 #### Scenario: Later call confirms contiguous delivery
-- **WHEN** a later wait echoes valid delivery tokens for the oldest unread contiguous prefix
+- **WHEN** a later wait echoes the valid token for the oldest previously returned Agent update
 - **THEN** the cursor advances atomically through that update and any skipped legacy prefix
 
 #### Scenario: Runtime crashes after producing a response
-- **WHEN** the response does not reach Codex and no later call echoes its tokens
+- **WHEN** the response does not reach Codex and no later call echoes its token
 - **THEN** the cursor remains unchanged and the same bounded update is delivered again
 
-#### Scenario: Acknowledgement skips an older event
+#### Scenario: Acknowledgement skips an older Agent event
 - **WHEN** an echoed token does not identify the oldest unread Agent-linked update
-- **THEN** the runtime rejects the acknowledgement without advancing past unseen events
+- **THEN** the runtime rejects the acknowledgement without advancing past it
 
 ### Requirement: Waiting is bounded and durable
 `wait_agent` SHALL first process valid `acknowledge_tokens` from a prior response, then report the oldest already-unread Agent-linked summary or wait for the next current-root Agent activity up to `timeout_ms`. Every newly returned update SHALL remain unread until its token is echoed in a later wait. `list_agents` SHALL not participate in completion delivery.
@@ -55,14 +36,7 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 
 #### Scenario: Wait times out
 - **WHEN** no current-root Agent produces activity before the deadline
-- **THEN** wait returns a timeout receipt without changing Agent state or acknowledging future events
-
-### Requirement: Proactive wakeup is not a local-runtime dependency
-The local runtime SHALL NOT require a resident forwarding agent, background terminal, or unsupported host callback to preserve completion delivery.
-
-#### Scenario: Codex task is inactive when Claude completes
-- **WHEN** no Codex model turn is running at completion time
-- **THEN** the durable unread event remains available for the next turn without keeping Claude resident
+- **THEN** wait returns a Codex-like timeout receipt without changing Agent state or acknowledging future events
 
 ### Requirement: Unread completion survives normal job pruning
 Unread Agent completion summary metadata SHALL remain available if its detailed internal job receipt later exceeds the normal job-retention limit. Final output availability and result pointers SHALL remain internal details and SHALL NOT appear in default `list_agents` or `wait_agent` output.
@@ -70,6 +44,8 @@ Unread Agent completion summary metadata SHALL remain available if its detailed 
 #### Scenario: Old unread job exceeds 100-job retention
 - **WHEN** cleanup prunes the detailed job record before the owner acknowledges its Agent completion
 - **THEN** `wait_agent` still exposes a self-contained bounded summary and token without claiming that final output is model-visible
+
+## ADDED Requirements
 
 ### Requirement: Legacy unowned completions cannot block Agent delivery
 Completion records with no durable Agent identity SHALL remain stored as quarantined legacy evidence but SHALL be skipped by model-facing Agent delivery and acknowledgement-prefix selection.

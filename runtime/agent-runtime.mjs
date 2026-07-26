@@ -5,9 +5,11 @@
  * translate stable Agent operations into ephemeral internal Claude jobs.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { createAgentStore } from "./agent-store.mjs";
 import { resolveModel } from "./claude-headless-adapter.mjs";
-import { readUnreadCompletionEvents } from "./completion-inbox.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
@@ -23,6 +25,7 @@ const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "ca
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
 const ACTIVATION_RECOVERY_GRACE_MS = 2_000;
 const TASK_NAME_PATTERN = /^[a-z0-9_]+$/;
+const CLAUDE_SESSION_MODEL_SCAN_BYTES = 4 * 1024 * 1024;
 
 function assertObject(value, label) {
   if (value == null) return {};
@@ -70,8 +73,185 @@ function internalOptions(input, fallback = {}) {
   };
 }
 
-function publicCompletionForAgent(event, agentId) {
-  return event.agentId === agentId;
+function requiredSpawnModel(input) {
+  const requested = optionalText(input.model);
+  if (!requested) {
+    throw new Error(
+      "spawn_agent requires an explicit model: sonnet/claude-sonnet-5 or opus/claude-opus-5."
+    );
+  }
+  return resolveModel(requested);
+}
+
+function normalizedObservedModel(value) {
+  const model = optionalText(value);
+  return model ? model.replace(/\[[^\]]+\]$/, "") : null;
+}
+
+function observedModelFromJob(job) {
+  return normalizedObservedModel(
+    job?.result?.runtimeReceipt?.model ??
+    job?.runtimeReceipt?.model ??
+    job?.result?.model ??
+    job?.model
+  );
+}
+
+function explicitRequestModel(job) {
+  const requested = normalizedObservedModel(job?.request?.model);
+  return requested?.startsWith("claude-") ? requested : null;
+}
+
+function findClaudeSessionArtifact(claudeConfigDir, sessionId) {
+  const target = `${optionalText(sessionId)}.jsonl`;
+  const projects = path.join(String(claudeConfigDir ?? ""), "projects");
+  if (target === "null.jsonl" || !fs.existsSync(projects)) return null;
+  const pending = [projects];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isFile() && entry.name === target) return candidate;
+      if (entry.isDirectory()) pending.push(candidate);
+    }
+  }
+  return null;
+}
+
+function claudeSessionArtifactKey(claudeConfigDir, sessionId) {
+  return `${String(claudeConfigDir ?? "")}\0${String(sessionId ?? "")}`;
+}
+
+function expectedClaudeSessionArtifact(agent) {
+  if (!agent.claudeConfigDir || !agent.claudeSessionId || !agent.workspaceRoot) return null;
+  const projectDirectory = String(agent.workspaceRoot).replace(/[^a-zA-Z0-9]/g, "-");
+  return path.join(
+    agent.claudeConfigDir,
+    "projects",
+    projectDirectory,
+    `${agent.claudeSessionId}.jsonl`,
+  );
+}
+
+function findClaudeSessionArtifacts(agents, jobs) {
+  const artifacts = new Map();
+  const wantedByProjects = new Map();
+  for (const agent of agents) {
+    if (agent.selectedModel || !agent.claudeSessionId ||
+        agent.continuation?.evidence?.reason === "legacy_agent_model_unsupported") continue;
+    const latestJob = jobs.find((job) => job.id === agent.latestJobId) ?? null;
+    if (observedModelFromJob(latestJob) || explicitRequestModel(latestJob)) continue;
+    const key = claudeSessionArtifactKey(agent.claudeConfigDir, agent.claudeSessionId);
+    const directCandidates = [
+      agent.continuation?.evidence?.modelArtifactPath,
+      expectedClaudeSessionArtifact(agent),
+    ].filter(Boolean);
+    const directArtifact = directCandidates.find((candidate) => fs.existsSync(candidate));
+    if (directArtifact) {
+      artifacts.set(key, directArtifact);
+      continue;
+    }
+    if ([
+      "legacy_agent_model_pending",
+      "legacy_agent_model_unproven",
+    ].includes(agent.continuation?.evidence?.reason)) continue;
+    const projects = path.join(String(agent.claudeConfigDir ?? ""), "projects");
+    const target = `${agent.claudeSessionId}.jsonl`;
+    const wanted = wantedByProjects.get(projects) ?? new Map();
+    wanted.set(target, claudeSessionArtifactKey(agent.claudeConfigDir, agent.claudeSessionId));
+    wantedByProjects.set(projects, wanted);
+  }
+  for (const [projects, wanted] of wantedByProjects) {
+    if (!fs.existsSync(projects)) continue;
+    const pending = [projects];
+    while (pending.length > 0 && wanted.size > 0) {
+      const directory = pending.pop();
+      let entries;
+      try {
+        entries = fs.readdirSync(directory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const candidate = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          pending.push(candidate);
+          continue;
+        }
+        const key = wanted.get(entry.name);
+        if (entry.isFile() && key) {
+          artifacts.set(key, candidate);
+          wanted.delete(entry.name);
+        }
+      }
+    }
+  }
+  return artifacts;
+}
+
+function observedModelFromClaudeArtifact(claudeConfigDir, sessionId, artifacts = null) {
+  const artifact = artifacts == null
+    ? findClaudeSessionArtifact(claudeConfigDir, sessionId)
+    : artifacts.get(claudeSessionArtifactKey(claudeConfigDir, sessionId)) ?? null;
+  if (!artifact) return null;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(artifact, "r");
+    const size = fs.fstatSync(descriptor).size;
+    const length = Math.min(size, CLAUDE_SESSION_MODEL_SCAN_BYTES);
+    const buffer = Buffer.alloc(length);
+    fs.readSync(descriptor, buffer, 0, length, size - length);
+    const lines = buffer.toString("utf8").split(/\r?\n/);
+    if (size > length) lines.shift();
+    for (const line of lines.reverse()) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        const model = normalizedObservedModel(
+          event?.message?.model ?? event?.model ?? event?.data?.model ?? event?.event?.model
+        );
+        if (model) return model;
+      } catch {
+        // Ignore malformed or partial JSONL lines while scanning bounded tail evidence.
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    if (descriptor != null) fs.closeSync(descriptor);
+  }
+  return null;
+}
+
+function canonicalAgentStatus(agent) {
+  switch (agent.status) {
+    case "pending_init":
+    case "running":
+    case "interrupted":
+      return agent.status;
+    case "completed":
+      return { completed: null };
+    case "errored":
+      return { errored: "Claude Agent execution failed." };
+    default:
+      return { errored: "Claude Agent entered an unknown lifecycle state." };
+  }
+}
+
+function publicCompletionUpdate(summary, agents) {
+  const agent = agents.find((candidate) => candidate.agentId === summary.agentId);
+  return {
+    agent_name: agent?.path ?? summary.agentId,
+    agent_status: agent ? canonicalAgentStatus(agent) : { errored: "Claude Agent record is unavailable." },
+    summary: summary.summary,
+    delivery_token: summary.deliveryToken,
+  };
 }
 
 function sleep(ms) {
@@ -133,6 +313,98 @@ class AgentRuntime {
       job.ownerRootId === this.ownerRootId &&
       ((typeof job.agentId === "string" && job.agentId) || activeJobIds.has(job.id))
     );
+  }
+
+  migrateLegacySelectedModel(agent, jobs, sessionArtifacts = null) {
+    if (agent.selectedModel ||
+        agent.continuation?.evidence?.reason === "legacy_agent_model_unsupported") return;
+    const latestJob = jobs.find((job) => job.id === agent.latestJobId) ?? null;
+    const observed = observedModelFromJob(latestJob)
+      ?? observedModelFromClaudeArtifact(agent.claudeConfigDir, agent.claudeSessionId, sessionArtifacts);
+    const candidate = observed ?? explicitRequestModel(latestJob);
+    if (candidate) {
+      try {
+        const selectedModel = resolveModel(candidate);
+        this.store.updateAgent(agent.agentId, (current) => {
+          if (current.selectedModel) return current;
+          const migrationReason = current.continuation?.evidence?.reason;
+          if (!["legacy_agent_model_pending", "legacy_agent_model_unproven"].includes(migrationReason)) {
+            return { ...current, selectedModel };
+          }
+          const priorEvidence = { ...current.continuation.evidence };
+          delete priorEvidence.reason;
+          delete priorEvidence.modelMigrationBlockedAt;
+          delete priorEvidence.modelMigrationDeferredAt;
+          return {
+            ...current,
+            selectedModel,
+            continuation: {
+              mode: migrationReason === "legacy_agent_model_unproven"
+                ? (current.claudeSessionId ? "exact_session" : "none")
+                : current.continuation.mode,
+              evidence: {
+                ...priorEvidence,
+                reason: "legacy_agent_model_migrated",
+                observedModel: candidate,
+                modelMigrationRecoveredAt: new Date().toISOString(),
+              },
+            },
+          };
+        });
+        return;
+      } catch {
+        if (agent.continuation.mode === "blocked") return;
+        this.store.updateAgent(agent.agentId, (current) => ({
+          ...current,
+          continuation: {
+            mode: "blocked",
+            evidence: {
+              ...(current.continuation?.evidence ?? {}),
+              reason: "legacy_agent_model_unsupported",
+              observedModel: candidate,
+              modelMigrationBlockedAt: new Date().toISOString(),
+            },
+          },
+        }));
+        return;
+      }
+    }
+    if (agent.activeJobId || !TERMINAL_AGENT_STATUSES.has(agent.status)) {
+      if (agent.continuation?.evidence?.reason === "legacy_agent_model_pending") return;
+      const modelArtifactPath = sessionArtifacts?.get(
+        claudeSessionArtifactKey(agent.claudeConfigDir, agent.claudeSessionId),
+      ) ?? expectedClaudeSessionArtifact(agent);
+      this.store.updateAgent(agent.agentId, (current) => ({
+        ...current,
+        continuation: {
+          ...current.continuation,
+          evidence: {
+            ...(current.continuation?.evidence ?? {}),
+            reason: "legacy_agent_model_pending",
+            modelMigrationDeferredAt: new Date().toISOString(),
+            ...(modelArtifactPath ? { modelArtifactPath } : {}),
+          },
+        },
+      }));
+      return;
+    }
+    if (agent.continuation?.evidence?.reason === "legacy_agent_model_unproven") return;
+    if (!agent.claudeSessionId || agent.continuation.mode === "blocked") return;
+    const modelArtifactPath = sessionArtifacts?.get(
+      claudeSessionArtifactKey(agent.claudeConfigDir, agent.claudeSessionId),
+    ) ?? expectedClaudeSessionArtifact(agent);
+    this.store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      continuation: {
+        mode: "blocked",
+        evidence: {
+          ...(current.continuation?.evidence ?? {}),
+          reason: "legacy_agent_model_unproven",
+          modelMigrationBlockedAt: new Date().toISOString(),
+          ...(modelArtifactPath && fs.existsSync(modelArtifactPath) ? { modelArtifactPath } : {}),
+        },
+      },
+    }));
   }
 
   recoverMissingActivation(agent, jobs, now = Date.now(), options = {}) {
@@ -289,6 +561,11 @@ class AgentRuntime {
         // pass may refresh the pruning marker if this job still exists.
       }
     }
+    const agentsBeforeMigration = this.store.listAgents();
+    const sessionArtifacts = findClaudeSessionArtifacts(agentsBeforeMigration, jobs);
+    for (const agent of agentsBeforeMigration) {
+      this.migrateLegacySelectedModel(agent, jobs, sessionArtifacts);
+    }
     for (const agent of this.store.listAgents()) {
       const jobId = agent.activeJobId ?? agent.latestJobId;
       const job = jobId ? jobs.find((candidate) => candidate.id === jobId) : null;
@@ -393,17 +670,24 @@ class AgentRuntime {
         "spawn_agent requires fork_turns=none; Codex context inheritance cannot be reproduced as a native Claude session."
       );
     }
+    // Validate the caller-owned model decision before readiness checks or any
+    // durable Agent reservation. There is no implicit or fallback model.
+    const model = requiredSpawnModel(input);
 
     this.reconcile();
     // CLI availability/auth can each take seconds. Do not create a durable
     // active Agent reservation until that external preflight has succeeded.
     const readinessReceipt = this.jobs.assertReady();
-    const agent = this.store.createAgent({ task_name: taskName, description: input.description });
+    const agent = this.store.createAgent({
+      task_name: taskName,
+      description: input.description,
+      selectedModel: model,
+    });
     const jobId = generateJobId("cc-agent");
     let prepared;
     try {
       prepared = this.jobs.prepareStart(message, {
-        ...internalOptions(input),
+        ...internalOptions({ ...input, model }),
         readinessReceipt,
         jobId,
         agentId: agent.agentId,
@@ -476,6 +760,9 @@ class AgentRuntime {
     const input = assertObject(inputValue, "send_message input");
     this.reconcile();
     const agent = this.store.resolveTarget(assertText(input.target, "send_message target"));
+    if (agent.continuation.mode === "blocked") {
+      throw new Error(`Agent ${agent.path} cannot accept messages: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+    }
     const queued = this.store.enqueueMessage(agent.agentId, assertText(input.message, "send_message message"), {
       kind: "send_message",
     });
@@ -520,8 +807,14 @@ class AgentRuntime {
 
   async followupTask(inputValue) {
     const input = assertObject(inputValue, "followup_task input");
+    if (input.model != null) {
+      throw new Error("followup_task inherits the Agent's selected model and does not accept a model override.");
+    }
     this.reconcile();
     let agent = this.store.resolveTarget(assertText(input.target, "followup_task target"));
+    if (agent.continuation.mode === "blocked") {
+      throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+    }
     const queued = this.store.enqueueMessage(
       agent.agentId,
       assertText(input.message, "followup_task message"),
@@ -557,10 +850,6 @@ class AgentRuntime {
       this.reconcile();
       agent = this.store.resolveTarget(agent.agentId);
     }
-
-    if (agent.continuation.mode === "blocked") {
-      throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
-    }
     // Keep slow Claude CLI/auth preflight outside the active-reservation
     // interval. A concurrent follow-up then sees an idle Agent until a winner
     // is genuinely ready to publish its local job receipt.
@@ -582,7 +871,10 @@ class AgentRuntime {
     const prepared = this.jobs.prepareStart(
       assertText(input.message, "followup_task message"),
       {
-        ...internalOptions(input, latestJob?.request ?? {}),
+        ...internalOptions(input, {
+          ...(latestJob?.request ?? {}),
+          model: latestJob?.request?.model ?? agent.selectedModel,
+        }),
         readinessReceipt,
         jobId,
         agentId: agent.agentId,
@@ -673,7 +965,7 @@ class AgentRuntime {
 
   async waitAgent(inputValue = {}) {
     const input = assertObject(inputValue, "wait_agent input");
-    const timeout = input.timeout_ms == null ? 240_000 : Number(input.timeout_ms);
+    const timeout = input.timeout_ms == null ? 30_000 : Number(input.timeout_ms);
     if (!Number.isFinite(timeout) || timeout < 0) throw new Error("wait_agent timeout_ms must be non-negative.");
     const acknowledgeTokens = Array.isArray(input.acknowledge_tokens)
       ? input.acknowledge_tokens
@@ -682,15 +974,14 @@ class AgentRuntime {
       timeoutMs: timeout,
       acknowledgeTokens,
     });
-    const reconciliation = this.reconcile();
-    return {
-      timeoutMs: timeout,
+    this.reconcile();
+    const agents = this.store.listAgents();
+    const receipt = {
+      message: waited.message,
       timedOut: waited.waitTimedOut,
-      acknowledgement: waited.acknowledgement,
-      completionInbox: waited.completionInbox,
-      agents: this.store.listAgents(),
-      reconciliation,
     };
+    if (waited.update) receipt.update = publicCompletionUpdate(waited.update, agents);
+    return receipt;
   }
 
   async interruptAgent(inputValue) {
@@ -714,20 +1005,13 @@ class AgentRuntime {
   listAgents(inputValue = {}) {
     const input = assertObject(inputValue, "list_agents input");
     if (input.all != null) throw new Error("list_agents does not expose cross-root all.");
-    const reconciliation = this.reconcile();
-    const inbox = readUnreadCompletionEvents(this.cwd, this.ownerRootId);
+    this.reconcile();
     const agents = this.store.listAgents({ pathPrefix: optionalText(input.path_prefix) }).map((agent) => ({
-      ...agent,
-      resident: Boolean(agent.activeJobId),
-      unreadCompletions: inbox.events.filter((event) => publicCompletionForAgent(event, agent.agentId)),
+      agent_name: agent.path,
+      agent_status: canonicalAgentStatus(agent),
     }));
     return {
-      rootThreadId: this.ownerRootId,
-      topology: "flat",
       agents,
-      completionInbox: inbox,
-      reconciliation,
-      storageProtection: this.store.getProtection(),
     };
   }
 }

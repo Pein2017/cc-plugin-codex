@@ -14,31 +14,22 @@ The runtime SHALL execute Claude Code with print mode, stream-json input and out
 - **THEN** the initial prompt is written through stdin and stream events are parsed into bounded runtime receipts
 
 ### Requirement: Safe execution profile applies explicit safeguards
-The default safe profile SHALL apply the runtime-owned sandbox, permission policy, and model or effort defaults, and SHALL restrict tools for read-only work unless the caller supplies an explicit allowed-tool set.
+The explicit opt-in safe profile SHALL apply the runtime-owned sandbox and permission policy and SHALL restrict tools for read-only work unless the caller supplies an explicit allowed-tool set. It SHALL still require the caller-selected supported model inherited from the Agent request.
 
 #### Scenario: Read-only safe task starts
 - **WHEN** a caller starts a safe task without write access or explicit allowed tools
-- **THEN** Claude receives the read-only sandbox settings and bounded read-only tool policy
+- **THEN** Claude receives the read-only sandbox settings, bounded read-only tool policy, and caller-selected supported model
 
-### Requirement: Terminal-parity profile avoids implicit Claude policy overrides
-The terminal-parity profile SHALL inherit the selected environment and Claude
-configuration while enforcing the plugin-wide exact model constraint. It SHALL
-explicitly use either `claude-sonnet-5` or `claude-opus-5`, defaulting to Opus
-5 when the caller omits a model, and SHALL NOT implicitly override effort,
-settings, permissions, tools, MCP configuration, or prompts. Explicit caller
-overrides SHALL be passed through and recorded.
+### Requirement: Default terminal-parity profile launches Claude with full access
+The default terminal-parity profile SHALL inherit Claude settings, hooks, memories, skills, plugins, MCP configuration, tools, and prompts while requiring the explicit supported model from `spawn_agent`. Before launching Claude it SHALL set the effective `CLAUDE_CONFIG_DIR`, set `IS_SANDBOX=1`, and pass `--dangerously-skip-permissions`. It SHALL NOT add model fallback, effort, settings, tool, MCP, or prompt overrides that the caller did not request.
 
-#### Scenario: Terminal-parity uses no explicit overrides
-- **WHEN** a terminal-parity task starts without model, effort, permission, or
-  tool overrides
-- **THEN** the runtime adds only transport and lifecycle requirements plus the
-  exact `claude-opus-5` default and reports no other Claude policy override
+#### Scenario: Default full-access Agent starts
+- **WHEN** `spawn_agent` supplies a supported model and omits an execution profile
+- **THEN** Claude receives the selected config directory, `IS_SANDBOX=1`, `--dangerously-skip-permissions`, and the explicit model without other implicit Claude policy overrides
 
-#### Scenario: Unrestricted permission is explicitly requested
-- **WHEN** a terminal-parity caller explicitly requests dangerous permission bypass
-- **THEN** the runtime sets `IS_SANDBOX=1`, passes
-  `--dangerously-skip-permissions`, pins the selected supported model, and
-  records the overrides
+#### Scenario: Native Claude customizations are configured
+- **WHEN** the selected Claude config enables hooks, Serena MCP, memories, plugins, or skills
+- **THEN** terminal-parity leaves those native configuration sources enabled rather than replacing them with runtime-owned settings
 
 ### Requirement: Initial Agent sessions have an explicit Claude display name
 The runtime SHALL pass the durable Agent name through Claude's `--name` option
@@ -57,7 +48,15 @@ session identity without renaming it.
   argument
 
 ### Requirement: Dangerous permission bypass is constrained
-Dangerous permission bypass SHALL be accepted only with terminal-parity and SHALL NOT be combined with an explicit permission mode.
+The default terminal-parity profile SHALL always use dangerous permission bypass and SHALL NOT combine it with an explicit permission mode. The safe profile SHALL reject dangerous permission bypass.
+
+#### Scenario: Default terminal-parity Agent starts
+- **WHEN** a caller starts an Agent without selecting an execution profile
+- **THEN** the runtime selects terminal-parity and applies dangerous permission bypass
+
+#### Scenario: Explicit permission mode conflicts with terminal parity
+- **WHEN** a terminal-parity caller supplies an explicit permission mode
+- **THEN** the runtime rejects the request before launching Claude
 
 #### Scenario: Dangerous bypass is requested in safe mode
 - **WHEN** a caller combines dangerous permission bypass with the safe profile

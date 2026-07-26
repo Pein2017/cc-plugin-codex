@@ -15,37 +15,52 @@ afterEach(() => {
 });
 
 describe("execution profiles", () => {
-  it("pins terminal-parity to the plugin model default without other implicit overrides", () => {
+  it("defaults to full-access terminal parity while keeping model and effort explicit", () => {
     const profile = createExecutionProfile({
-      profile: "terminal-parity",
+      model: "sonnet",
       write: true,
       env: { CLAUDE_CONFIG_DIR: "/project/.claude" },
     });
-    assert.deepEqual(Object.keys(profile.claudeOptions), ["env", "model"]);
-    assert.equal(profile.claudeOptions.model, "claude-opus-5");
-    assert.deepEqual(profile.receipt.addedOverrides, ["model"]);
+    assert.equal(profile.name, "terminal-parity");
+    assert.deepEqual(Object.keys(profile.claudeOptions), ["env", "model", "dangerouslySkipPermissions"]);
+    assert.equal(profile.claudeOptions.model, "claude-sonnet-5");
+    assert.equal(profile.claudeOptions.effort, undefined);
+    assert.equal(profile.claudeOptions.env.IS_SANDBOX, "1");
+    assert.deepEqual(profile.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
     assert.equal(profile.receipt.inheritedClaudeConfiguration, true);
+    assert.throws(
+      () => createExecutionProfile({ profile: "terminal-parity", env: {} }),
+      /explicit Sonnet or Opus model/
+    );
     assert.throws(
       () => createExecutionProfile({ profile: "terminal-parity", model: "haiku", env: {} }),
       /Unsupported Claude model/
     );
   });
 
-  it("records caller-explicit headless permission overrides", () => {
+  it("preserves caller-explicit tool selection but rejects permission-mode conflicts", () => {
     const profile = createExecutionProfile({
       profile: "terminal-parity",
-      permissionMode: "auto",
+      model: "opus",
       allowedTools: ["mcp__serena__get_symbols_overview"],
       env: {},
     });
-    assert.equal(profile.claudeOptions.permissionMode, "auto");
     assert.deepEqual(profile.claudeOptions.allowedTools, ["mcp__serena__get_symbols_overview"]);
-    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "model", "permissionMode"]);
+    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "dangerouslySkipPermissions", "model"]);
+    assert.throws(
+      () => createExecutionProfile({
+        profile: "terminal-parity",
+        model: "opus",
+        permissionMode: "auto",
+      }),
+      /cannot be combined/
+    );
   });
 
   it("models the explicit unrestricted native launcher without weakening safe", () => {
     const profile = createExecutionProfile({
       profile: "terminal-parity",
+      model: "opus",
       dangerouslySkipPermissions: true,
       env: { CLAUDE_CONFIG_DIR: "/project/.claude", IS_SANDBOX: "0" },
     });
@@ -53,12 +68,13 @@ describe("execution profiles", () => {
     assert.equal(profile.claudeOptions.env.IS_SANDBOX, "1");
     assert.deepEqual(profile.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
     assert.throws(
-      () => createExecutionProfile({ profile: "safe", dangerouslySkipPermissions: true }),
+      () => createExecutionProfile({ profile: "safe", model: "opus", dangerouslySkipPermissions: true }),
       /safe must remain sandboxed/
     );
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
+        model: "opus",
         dangerouslySkipPermissions: true,
         permissionMode: "auto",
       }),
@@ -70,7 +86,7 @@ describe("execution profiles", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-profile-"));
     roots.push(root);
     process.env.CC_RUNTIME_HOME = root;
-    const profile = createExecutionProfile({ profile: "safe", write: false, env: {} });
+    const profile = createExecutionProfile({ profile: "safe", model: "sonnet", write: false, env: {} });
     assert.equal(profile.claudeOptions.permissionMode, "dontAsk");
     assert.ok(profile.claudeOptions.allowedTools.includes("Read"));
     assert.ok(fs.existsSync(profile.claudeOptions.settingsFile));

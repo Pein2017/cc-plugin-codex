@@ -20,4 +20,6 @@ Supported canonical arguments: `[--timeout-ms <ms>]`
   response. Newly returned completion events remain unread until their tokens
   are echoed later, enabling crash-safe redelivery.
 - A quiet mailbox returns an honest timeout without changing any Agent.
-- Present the runtime receipt exactly as returned.
+- Report only activity or timeout, plus one concise update when activity is
+  available. Do not reproduce raw JSON or an Agent's final Claude output unless
+  the user explicitly requests raw/debug detail.
