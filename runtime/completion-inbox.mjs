@@ -553,13 +553,20 @@ function assertSameCompletionIdentity(existing, normalized, ownerRootId) {
   }
 }
 
-function immutableExistingCompletionResult(inbox, existing, normalized, ownerRootId, options) {
+function snapshotExistingCompletionResult(inbox, existing, normalized, ownerRootId, options) {
   assertSameCompletionIdentity(existing, normalized, ownerRootId);
+  if (sameCompletionFact(existing, normalized)) {
+    return {
+      appended: false,
+      corrected: false,
+      event: publicEvent(existing),
+      sequence: existing.sequence,
+    };
+  }
   const immutable = Boolean(existing.firstDeliveredAt) ||
     existing.sequence <= inbox.acknowledgedThrough;
   if (!immutable) return null;
-  const factDiffers = options.reconcileExisting === true &&
-    !sameCompletionFact(existing, normalized);
+  const factDiffers = options.reconcileExisting === true;
   return {
     appended: false,
     corrected: false,
@@ -583,7 +590,7 @@ export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}
     (event) => event.eventId === normalized.eventId
   );
   if (snapshotExisting) {
-    const settled = immutableExistingCompletionResult(
+    const settled = snapshotExistingCompletionResult(
       snapshot,
       snapshotExisting,
       normalized,

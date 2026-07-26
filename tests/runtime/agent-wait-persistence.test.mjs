@@ -10,6 +10,7 @@ import {
   acknowledgeAgentCompletionEvents,
   readUnreadAgentCompletionSummaries,
   reconcileTerminalJobCompletion,
+  resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
 import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 
@@ -156,6 +157,117 @@ async function waitForFiles(filePaths) {
 }
 
 describe("Agent wait persistence", () => {
+  it("reconciles an identical unfrozen completion without persistence mutation", async () => {
+    const { workspace, ownerRootId } = setup("identical-unfrozen");
+    const job = terminalJob(
+      workspace,
+      ownerRootId,
+      "agent-identical-unfrozen",
+      "cc-identical-unfrozen"
+    );
+    reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const before = fs.readFileSync(inboxFile, "utf8");
+
+    const observed = await observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
+    );
+
+    assert.equal(observed.result.reconciled, false);
+    assert.equal(observed.result.reason, "already-present");
+    assert.deepEqual(observed.counts, zeroPersistenceIo);
+    assert.equal(fs.readFileSync(inboxFile, "utf8"), before);
+  });
+
+  it("retains durable append and mutable-correction paths", async () => {
+    const { workspace, ownerRootId } = setup("durable-repairs");
+    const job = terminalJob(
+      workspace,
+      ownerRootId,
+      "agent-durable-repairs",
+      "cc-durable-repairs"
+    );
+
+    const appended = await observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
+    );
+    assert.equal(appended.result.reconciled, true);
+    assert.equal(appended.result.reason, "appended");
+    assert.equal(appended.counts.renameSync, 1);
+    assert.ok(appended.counts.linkSync > 0);
+    assert.ok(appended.counts.fsyncSync > 0);
+
+    const corrected = await observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, {
+        ...job,
+        completionSummary: "corrected completion fact",
+        result: { ...job.result, rawOutput: "corrected result" },
+      })
+    );
+    assert.equal(corrected.result.reconciled, true);
+    assert.equal(corrected.result.reason, "corrected_unacknowledged_event");
+    assert.equal(corrected.counts.renameSync, 1);
+    assert.ok(corrected.counts.linkSync > 0);
+    assert.ok(corrected.counts.fsyncSync > 0);
+  });
+
+  it("lists a settled Agent with an identical unread completion without persistence mutation", async () => {
+    const { runtime, workspace, ownerRootId } = setup("list-unread-agent");
+    const created = runtime.store.createAgent({
+      task_name: "list_unread_agent",
+      selectedModel: "claude-haiku-4-5",
+    });
+    runtime.store.updateAgent(created.agentId, (agent) => ({
+      ...agent,
+      status: "completed",
+      latestJobId: "cc-list-unread-agent",
+      lastTerminalJobId: "cc-list-unread-agent",
+      finalizedJobIds: ["cc-list-unread-agent"],
+    }));
+    const job = terminalJob(
+      workspace,
+      ownerRootId,
+      created.agentId,
+      "cc-list-unread-agent",
+      { agentProjectionReconciledAt: "2026-07-26T00:00:01.000Z" }
+    );
+    writeJobFile(workspace, job.id, job);
+    reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const before = fs.readFileSync(inboxFile, "utf8");
+
+    const observed = await observePersistenceIo(() => runtime.listAgents());
+
+    assert.deepEqual(observed.result, {
+      agents: [{
+        agent_name: created.path,
+        agent_status: { completed: null },
+      }],
+    });
+    assert.deepEqual(observed.counts, zeroPersistenceIo);
+    assert.equal(fs.readFileSync(inboxFile, "utf8"), before);
+  });
+
+  it("lists across identical quarantined legacy completion evidence without persistence mutation", async () => {
+    const { runtime, workspace, ownerRootId } = setup("list-legacy");
+    const job = terminalJob(
+      workspace,
+      ownerRootId,
+      null,
+      "cc-list-legacy"
+    );
+    writeJobFile(workspace, job.id, job);
+    reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const before = fs.readFileSync(inboxFile, "utf8");
+
+    const observed = await observePersistenceIo(() => runtime.listAgents());
+
+    assert.deepEqual(observed.result, { agents: [] });
+    assert.deepEqual(observed.counts, zeroPersistenceIo);
+    assert.equal(fs.readFileSync(inboxFile, "utf8"), before);
+  });
+
   it("performs no persistence mutation for a fully settled terminal Agent", async () => {
     const { runtime, workspace, ownerRootId } = setup("settled");
     const created = runtime.store.createAgent({

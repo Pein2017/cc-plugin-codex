@@ -129,7 +129,7 @@ function readFromFreshProcess(workspace, ownerRootId, runtimeHome) {
 }
 
 describe("completion inbox", () => {
-  it("keeps immutable reconciliation lock-free while serializing unfrozen duplicates", () => {
+  it("keeps identical reconciliation lock-free while serializing mutable corrections", () => {
     const { workspace, ownerRootId } = setup();
     const job = {
       id: "immutable-reconciliation",
@@ -148,12 +148,24 @@ describe("completion inbox", () => {
     const unfrozenDuplicate = observePersistenceIo(
       () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
     );
-    assert.ok(unfrozenDuplicate.counts.lockLinks > 0);
-    assert.ok(unfrozenDuplicate.counts.fsync > 0);
+    assert.deepEqual(unfrozenDuplicate.counts, { fsync: 0, lockLinks: 0 });
+
+    const correctedJob = {
+      ...job,
+      completionSummary: "corrected before delivery",
+      result: { rawOutput: "corrected public handoff" },
+    };
+    const mutableCorrection = observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, correctedJob)
+    );
+    assert.ok(mutableCorrection.counts.lockLinks > 0);
+    assert.ok(mutableCorrection.counts.fsync > 0);
+    assert.equal(mutableCorrection.result.reason, "corrected_unacknowledged_event");
+    assert.equal(mutableCorrection.result.event.deliveryToken, initial.deliveryToken);
 
     readUnreadAgentCompletionSummaries(workspace, ownerRootId);
     const frozenDuplicate = observePersistenceIo(
-      () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, correctedJob)
     );
     assert.deepEqual(frozenDuplicate.counts, { fsync: 0, lockLinks: 0 });
     assert.equal(frozenDuplicate.result.event.deliveryToken, initial.deliveryToken);
@@ -185,6 +197,71 @@ describe("completion inbox", () => {
       }, { reconcileExisting: true }),
       /identity collision/
     );
+  });
+
+  it("does not overwrite a correction committed after an identical snapshot read", () => {
+    const { workspace, ownerRootId } = setup();
+    const factA = completion("snapshot-correction-race", {
+      agentId: "agent-snapshot-correction-race",
+      summary: "snapshot fact A",
+      finalMessage: "public fact A",
+    });
+    const factB = {
+      ...factA,
+      summary: "corrected fact B",
+      finalMessage: "public fact B",
+    };
+    const initial = appendCompletionEvent(workspace, ownerRootId, factA).event;
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const originalReadFileSync = fs.readFileSync;
+    let correction = null;
+    let injected = false;
+    fs.readFileSync = (filePath, ...args) => {
+      const snapshot = originalReadFileSync(filePath, ...args);
+      if (!injected && path.resolve(String(filePath)) === inboxFile) {
+        injected = true;
+        correction = appendCompletionEvent(
+          workspace,
+          ownerRootId,
+          factB,
+          { reconcileExisting: true }
+        );
+      }
+      return snapshot;
+    };
+    let staleReceipt;
+    try {
+      staleReceipt = appendCompletionEvent(
+        workspace,
+        ownerRootId,
+        factA,
+        { reconcileExisting: true }
+      );
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+    }
+
+    assert.equal(injected, true);
+    assert.equal(staleReceipt.event.summary, "snapshot fact A");
+    assert.equal(correction?.corrected, true);
+    assert.equal(correction?.event.sequence, initial.sequence);
+    assert.equal(correction?.event.deliveryToken, initial.deliveryToken);
+
+    const durable = readUnreadCompletionEvents(workspace, ownerRootId).events[0];
+    assert.equal(durable.summary, "corrected fact B");
+    assert.equal(durable.finalMessage, "public fact B");
+    assert.equal(durable.sequence, initial.sequence);
+    assert.equal(durable.deliveryToken, initial.deliveryToken);
+    assert.deepEqual(readUnreadAgentCompletionSummaries(workspace, ownerRootId).events, [{
+      kind: "completion",
+      agentId: factA.agentId,
+      agentStatus: "completed",
+      terminalStatus: "completed",
+      summary: "Agent turn completed.",
+      completionMessage: "public fact B",
+      completionMessageTruncated: false,
+      deliveryToken: initial.deliveryToken,
+    }]);
   });
 
   it("keeps quiet observation and frozen redelivery free of locks and fsync", () => {
