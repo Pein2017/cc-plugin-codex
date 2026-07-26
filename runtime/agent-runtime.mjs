@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
 import { resolveModel } from "./claude-headless-adapter.mjs";
+import { validateExecutionProfileOptions } from "./execution-profile.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
@@ -66,12 +67,24 @@ function internalOptions(input, fallback = {}) {
   return {
     write: input.write ?? fallback.write,
     profile: input.execution_profile ?? fallback.profile,
-    model: requestedModel ? resolveModel(requestedModel) : requestedModel,
+    model: requestedModel,
     effort: input.reasoning_effort ?? fallback.effort,
     permissionMode: input.permission_mode ?? fallback.permissionMode,
     dangerouslySkipPermissions:
       input.dangerously_skip_permissions ?? fallback.dangerouslySkipPermissions,
     allowedTools: normalizeAllowedTools(input.allowed_tools ?? fallback.allowedTools),
+  };
+}
+
+function validatedInternalOptions(input, fallback = {}) {
+  const options = internalOptions(input, fallback);
+  const validated = validateExecutionProfileOptions(options);
+  return {
+    ...options,
+    profile: validated.name,
+    model: validated.model,
+    effort: validated.effort,
+    dangerouslySkipPermissions: validated.dangerouslySkipPermissions,
   };
 }
 
@@ -82,7 +95,7 @@ function requiredSpawnModel(input) {
       "spawn_agent requires an explicit model: sonnet/claude-sonnet-5, opus/claude-opus-5, or test-only haiku/claude-haiku-4-5."
     );
   }
-  return resolveModel(requested);
+  return requested;
 }
 
 function normalizedObservedModel(value) {
@@ -298,28 +311,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isUnattachedPreClaudeActivation(job) {
-  return job?.activationPrepared === true &&
-    job.activationAttached !== true &&
-    job.preClaudeLaunch === true;
+function isPreClaudeActivation(job) {
+  return job?.preClaudeLaunch === true;
 }
 
-function isTerminalUnboundPreparedActivation(job, jobId) {
-  return job?.id === jobId &&
-    isUnattachedPreClaudeActivation(job) &&
-    !job.agentId &&
-    TERMINAL_JOB_STATUSES.has(job.status);
+function isTerminalPreClaudeActivation(job) {
+  return isPreClaudeActivation(job) && TERMINAL_JOB_STATUSES.has(job?.status);
 }
 
-function requeueUnboundPreClaudeMailboxMessage(message, jobId) {
+function requeuePreClaudeMailboxMessage(message, jobId) {
   if (
     message.assignedJobId !== jobId ||
     !["assigned", "dispatched"].includes(message.state)
   ) {
     return message;
   }
-  // This job never attached to the Agent, so any historical dispatch receipt
-  // is an unsafe pre-launch artifact, not proof that Claude consumed input.
+  // The durable child boundary was never crossed, so any historical dispatch
+  // receipt is a pre-launch artifact, not proof that Claude consumed input.
   // Remove it before making the message eligible for the next winning turn.
   const { receipt, ...withoutReceipt } = message;
   return {
@@ -484,7 +492,7 @@ class AgentRuntime {
           mailbox: {
             ...current.mailbox,
             messages: current.mailbox.messages.map((message) =>
-              requeueUnboundPreClaudeMailboxMessage(message, jobId)
+              requeuePreClaudeMailboxMessage(message, jobId)
             ),
           },
         }));
@@ -521,7 +529,7 @@ class AgentRuntime {
           ...current.mailbox,
           messages: current.mailbox.messages.map((message) =>
             terminatedPreparedJob
-              ? requeueUnboundPreClaudeMailboxMessage(message, jobId)
+              ? requeuePreClaudeMailboxMessage(message, jobId)
               : message.state === "assigned" && message.assignedJobId === jobId
                 ? {
                     ...message,
@@ -591,8 +599,46 @@ class AgentRuntime {
     const reconciliationStartedAt = Date.now();
     const jobs = this.rootJobs();
     const jobsById = new Map(jobs.map((job) => [job.id, job]));
-    const receipts = this.store.reconcileFromJobs(jobs);
-    for (const receipt of receipts) {
+    const diagnosticReceipts = [];
+    const agentsByActiveJob = new Map(
+      this.store.listAgents()
+        .filter((agent) => agent.activeJobId)
+        .map((agent) => [agent.activeJobId, agent])
+    );
+    for (const job of jobs) {
+      if (!isTerminalPreClaudeActivation(job) || job.agentProjectionReconciledAt) continue;
+      const target = job.agentId ?? agentsByActiveJob.get(job.id)?.agentId ?? null;
+      if (!target) continue;
+      try {
+        const recovery = this.store.recoverPreClaudeActivation(target, job.id);
+        if (!recovery.recovered) {
+          diagnosticReceipts.push({
+            jobId: job.id,
+            reconciled: false,
+            reason: recovery.reason ?? "pre_claude_recovery_deferred",
+          });
+          continue;
+        }
+        markAgentProjectionReconciled(this.cwd, job.id);
+        diagnosticReceipts.push({
+          jobId: job.id,
+          reconciled: true,
+          reason: "pre_claude_activation_recovered",
+          agent: recovery.agent,
+        });
+      } catch (error) {
+        diagnosticReceipts.push({
+          jobId: job.id,
+          reconciled: false,
+          reason: "pre_claude_recovery_failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const ordinaryJobs = jobs.filter((job) => !isTerminalPreClaudeActivation(job));
+    const ordinaryReceipts = this.store.reconcileFromJobs(ordinaryJobs);
+    const receipts = [...diagnosticReceipts, ...ordinaryReceipts];
+    for (const receipt of ordinaryReceipts) {
       if (!receipt.jobId) continue;
       const projectionMarkerMissing = !jobsById.get(receipt.jobId)?.agentProjectionReconciledAt;
       if (!receipt.reconciled && !(receipt.reason === "already_finalized" && projectionMarkerMissing)) {
@@ -617,14 +663,10 @@ class AgentRuntime {
         this.recoverMissingActivation(agent, jobs, reconciliationStartedAt);
         continue;
       }
-      if (isTerminalUnboundPreparedActivation(job, agent.activeJobId)) {
-        // A prepared fact is deliberately unbound until after activation wins.
-        // If its launcher dies before attach, it proves that no Claude turn
-        // exists to project. Roll back only the Agent reservation; do not
-        // let this generic terminal diagnostic finalize the Agent.
-        this.recoverMissingActivation(agent, jobs, reconciliationStartedAt, {
-          terminatedPreparedJobId: job.id,
-        });
+      if (isTerminalPreClaudeActivation(job)) {
+        // Dedicated recovery runs before generic projection. If it could not
+        // complete, retain the receipt and make no session, mailbox, or
+        // completion mutation in this pass.
         continue;
       }
       const sessionId = resultSessionId(job);
@@ -666,7 +708,10 @@ class AgentRuntime {
     return receipts;
   }
 
-  rollbackActivation(agentId, jobId, previous, { initial = false } = {}) {
+  rollbackActivation(agentId, jobId, previous, {
+    initial = false,
+    removableMessageId = null,
+  } = {}) {
     try {
       this.store.updateAgent(agentId, (agent) => ({
         ...agent,
@@ -677,7 +722,7 @@ class AgentRuntime {
           ...agent.mailbox,
           messages: agent.mailbox.messages.map((message) =>
             initial
-              ? requeueUnboundPreClaudeMailboxMessage(message, jobId)
+              ? requeuePreClaudeMailboxMessage(message, jobId)
               : message.assignedJobId === jobId && message.state === "assigned"
               ? {
                   ...message,
@@ -693,7 +738,7 @@ class AgentRuntime {
       // An initial activation that failed before its turn was established may
       // have received sender messages. Let the store delete only an empty
       // pending-init record; queued messages are the durable reason to keep it.
-      if (initial) this.store.rollbackReservation(agentId);
+      if (initial) this.store.rollbackReservation(agentId, { removableMessageId });
     } catch {
       // A durable job may already exist. Later reconciliation is authoritative.
     }
@@ -716,7 +761,9 @@ class AgentRuntime {
     }
     // Validate the caller-owned model decision before readiness checks or any
     // durable Agent reservation. There is no implicit or fallback model.
-    const model = requiredSpawnModel(input);
+    const requestedModel = requiredSpawnModel(input);
+    const executionOptions = validatedInternalOptions({ ...input, model: requestedModel });
+    const model = executionOptions.model;
 
     this.reconcile();
     // CLI availability/auth can each take seconds. Do not create a durable
@@ -726,12 +773,14 @@ class AgentRuntime {
       task_name: taskName,
       description: input.description,
       selectedModel: model,
+      initialMessage: message,
     });
+    const initialMessage = this.store.listMessages(agent.agentId)[0];
     const jobId = generateJobId("cc-agent");
     let prepared;
     try {
       prepared = this.jobs.prepareStart(message, {
-        ...internalOptions({ ...input, model }),
+        ...executionOptions,
         readinessReceipt,
         jobId,
         agentId: agent.agentId,
@@ -741,18 +790,24 @@ class AgentRuntime {
     } catch (error) {
       // A sender may have reached this newly-created Agent while local job
       // preparation was failing. The store removes only an empty reservation.
-      this.store.rollbackReservation(agent.agentId);
+      this.store.rollbackReservation(agent.agentId, {
+        removableMessageId: initialMessage?.messageId,
+      });
       throw error;
     }
     const activation = this.store.reserveActivation(agent.agentId, jobId, { initial: true });
     if (!activation.reserved) {
       this.jobs.abortPreparedStart(prepared);
-      this.store.rollbackReservation(agent.agentId);
+      this.store.rollbackReservation(agent.agentId, {
+        removableMessageId: initialMessage?.messageId,
+      });
       throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
     }
     try {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
-      const turn = await this.jobs.launchPreparedStart(attached, message);
+      const assigned = activation.assignedMessages;
+      const turn = await this.jobs.launchPreparedStart(attached, messageText(assigned));
+      this.markInitialPromptMessages(agent.agentId, jobId, assigned);
       return {
         agent: this.store.resolveTarget(agent.agentId),
         turn,
@@ -761,7 +816,10 @@ class AgentRuntime {
       };
     } catch (error) {
       this.jobs.abortPreparedStart(prepared);
-      this.rollbackActivation(agent.agentId, jobId, agent, { initial: true });
+      this.rollbackActivation(agent.agentId, jobId, agent, {
+        initial: true,
+        removableMessageId: initialMessage?.messageId,
+      });
       throw error;
     }
   }
@@ -777,7 +835,7 @@ class AgentRuntime {
       this.requeueAssignedMessage(agent.agentId, mailboxMessage.messageId, activeJobId);
       return { delivered: false, reason: "queued_no_turn" };
     }
-    if (isUnattachedPreClaudeActivation(activeJob)) {
+    if (isPreClaudeActivation(activeJob)) {
       return { delivered: false, reason: "activation_pending", jobId: activeJobId };
     }
     if (mailboxMessage.deliveryIntent === "initial_prompt") {
@@ -841,12 +899,22 @@ class AgentRuntime {
   }
 
   markInitialPromptMessages(agentId, jobId, messages) {
+    let marked = 0;
     for (const message of messages) {
-      this.store.markMessageDispatched(agentId, message.messageId, {
-        jobId,
-        receipt: { delivery: "initial_prompt" },
-      });
+      try {
+        const receipt = this.store.markMessageDispatched(agentId, message.messageId, {
+          jobId,
+          receipt: { delivery: "initial_prompt" },
+        });
+        if (receipt.changed || receipt.message?.state === "dispatched") marked += 1;
+      } catch {
+        // Once the detached worker is launched, its durable job receipt owns
+        // recovery. Leaving an entry assigned with initial_prompt intent is
+        // safe: active delivery will not steer it, and terminal reconciliation
+        // will finish its dispatch/acknowledgement projection.
+      }
     }
+    return marked;
   }
 
   async followupTask(inputValue) {
@@ -854,8 +922,27 @@ class AgentRuntime {
     if (input.model != null) {
       throw new Error("followup_task inherits the Agent's selected model and does not accept a model override.");
     }
-    this.reconcile();
+    // Resolve and validate against a read-only snapshot before reconciliation:
+    // invalid caller options must not repair an unrelated terminal receipt,
+    // publish completion, or otherwise mutate durable state before rejection.
     let agent = this.store.resolveTarget(assertText(input.target, "followup_task target"));
+    if (agent.continuation.mode === "blocked") {
+      throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+    }
+    const validationJobId = agent.activeJobId ?? agent.latestJobId;
+    const validationLatestJob = validationJobId
+      ? readJobFile(this.cwd, validationJobId)
+      : null;
+    // Validate before enqueueing even if the current active turn may win a
+    // delivery race: should that turn become terminal during delivery, this
+    // same call is allowed to activate the queued message and must not leave
+    // invalid execution options behind as durable mailbox state.
+    const executionOptions = validatedInternalOptions(input, {
+      ...(validationLatestJob?.request ?? {}),
+      model: validationLatestJob?.request?.model ?? agent.selectedModel,
+    });
+    this.reconcile();
+    agent = this.store.resolveTarget(agent.agentId);
     if (agent.continuation.mode === "blocked") {
       throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
     }
@@ -900,9 +987,7 @@ class AgentRuntime {
     const readinessReceipt = this.jobs.assertReady();
     const jobId = generateJobId("cc-agent");
     const previous = agent;
-    const latestJob = agent.latestJobId
-      ? readJobFile(this.cwd, agent.latestJobId)
-      : null;
+    const latestJob = validationLatestJob;
     const resumeSessionId = agent.continuation.mode === "exact_session"
       ? agent.claudeSessionId
       : null;
@@ -915,10 +1000,7 @@ class AgentRuntime {
     const prepared = this.jobs.prepareStart(
       assertText(input.message, "followup_task message"),
       {
-        ...internalOptions(input, {
-          ...(latestJob?.request ?? {}),
-          model: latestJob?.request?.model ?? agent.selectedModel,
-        }),
+        ...executionOptions,
         readinessReceipt,
         jobId,
         agentId: agent.agentId,

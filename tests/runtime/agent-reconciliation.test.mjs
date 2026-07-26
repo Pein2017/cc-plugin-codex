@@ -11,7 +11,14 @@ import {
   readUnreadAgentCompletionSummaries,
   reconcileTerminalJobCompletion,
 } from "../../runtime/completion-inbox.mjs";
-import { cleanupOldJobs, readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
+import {
+  cleanupOldJobs,
+  readJobFile,
+  releaseSessionLease,
+  reserveSessionLease,
+  transitionJob,
+  writeJobFile,
+} from "../../runtime/job-store.mjs";
 
 const sourceRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 let fixture;
@@ -36,7 +43,7 @@ function setup() {
     CODEX_THREAD_ID: "root-agent-reconciliation",
     CC_RUNTIME_HOME: runtimeHome,
   };
-  return { workspace, env };
+  return { workspace, env, claudeConfigDir };
 }
 
 before(() => {
@@ -187,5 +194,78 @@ describe("Agent reconciliation retention and activation recovery", () => {
     assert.equal(recovered.activeJobId, null);
     assert.equal(recovered.continuation.mode, "exact_session");
     assert.equal(afterSecondRestart.store.listMessages(followup.agentId, { state: "queued" }).length, 1);
+  });
+
+  it("preserves an exact-session pointer and releases its lease after pre-Claude recovery", () => {
+    const { workspace, env, claudeConfigDir } = activeFixture();
+    const runtime = createAgentRuntime({ cwd: workspace, env });
+    const agent = runtime.store.createAgent({
+      task_name: "exact_session_pre_claude",
+      selectedModel: "claude-sonnet-5",
+    });
+    const completed = terminalJob(agent, "exact-session-completed", new Date().toISOString());
+    runtime.store.reserveActivation(agent.agentId, completed.id, { initial: true });
+    runtime.store.bindSession(agent.agentId, completed.threadId, {
+      jobId: completed.id,
+      claudeConfigDir,
+    });
+    runtime.store.finalizeFromJob(completed);
+    runtime.store.enqueueMessage(agent.agentId, "resume the exact session", { kind: "followup_task" });
+
+    const jobId = "exact-session-pre-claude";
+    const activation = runtime.store.reserveActivation(agent.agentId, jobId);
+    const lease = reserveSessionLease(workspace, claudeConfigDir, completed.threadId, jobId);
+    const timestamp = new Date().toISOString();
+    writeJobFile(workspace, jobId, {
+      id: jobId,
+      workspaceRoot: workspace,
+      ownerRootId: agent.rootThreadId,
+      agentId: agent.agentId,
+      status: "queued",
+      phase: "queued",
+      activationAttached: true,
+      preClaudeLaunch: true,
+      safeFreshRetry: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      sessionLease: {
+        configIdentity: lease.configIdentity,
+        sessionId: lease.sessionId,
+      },
+    });
+    const terminal = transitionJob(workspace, jobId, ["queued"], "failed", {
+      phase: "activation_prepared_launcher_lost",
+      completedAt: new Date().toISOString(),
+      workerPid: null,
+      workerPidIdentity: null,
+      pid: null,
+      pidIdentity: null,
+    });
+    assert.equal(terminal.transitioned, true);
+    assert.equal(terminal.job.residencyReceipt.sessionLeaseReleased, true);
+
+    runtime.reconcile();
+    const recovered = runtime.store.resolveTarget(agent.agentId);
+    assert.equal(recovered.activeJobId, null);
+    assert.equal(recovered.latestJobId, completed.id);
+    assert.equal(recovered.status, "completed");
+    assert.equal(recovered.claudeSessionId, completed.threadId);
+    assert.equal(recovered.continuation.mode, "exact_session");
+    assert.deepEqual(
+      runtime.store.listMessages(agent.agentId).map((message) => message.state),
+      activation.assignedMessages.map(() => "queued")
+    );
+
+    const nextLease = reserveSessionLease(
+      workspace,
+      claudeConfigDir,
+      completed.threadId,
+      "exact-session-next-turn"
+    );
+    assert.equal(nextLease.sessionId, completed.threadId);
+    assert.equal(
+      releaseSessionLease(nextLease.configIdentity, nextLease.sessionId, "exact-session-next-turn"),
+      true
+    );
   });
 });

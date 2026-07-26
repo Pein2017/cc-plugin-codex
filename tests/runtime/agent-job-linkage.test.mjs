@@ -191,4 +191,42 @@ describe("Agent-linked internal job receipts", () => {
     const storedInbox = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8"));
     assert.ok(storedInbox.events.some((event) => event.jobId === "pending-projection-000"));
   });
+
+  it("prunes pre-Claude diagnostics only after Agent recovery is projected", () => {
+    const { workspace, ownerRootId, agentId } = setup();
+    const baseTime = Date.now() - 120_000;
+    for (let index = 0; index <= 100; index += 1) {
+      const id = `pre-claude-diagnostic-${String(index).padStart(3, "0")}`;
+      const createdAt = new Date(baseTime + index * 1_000).toISOString();
+      writeJobFile(workspace, id, {
+        id,
+        workspaceRoot: workspace,
+        ownerRootId,
+        agentId,
+        status: "failed",
+        phase: "activation_prepared_launcher_lost",
+        activationAttached: true,
+        preClaudeLaunch: true,
+        safeFreshRetry: true,
+        createdAt,
+        updatedAt: createdAt,
+        completedAt: createdAt,
+        ...(index === 0 ? {} : { agentProjectionReconciledAt: createdAt }),
+      });
+    }
+
+    cleanupOldJobs(workspace);
+    const oldestId = "pre-claude-diagnostic-000";
+    const unrecovered = readJobFile(workspace, oldestId);
+    assert.ok(unrecovered, "an unrecovered attached diagnostic must stay durable");
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+
+    writeJobFile(workspace, oldestId, {
+      ...unrecovered,
+      agentProjectionReconciledAt: new Date().toISOString(),
+    });
+    cleanupOldJobs(workspace);
+    assert.equal(readJobFile(workspace, oldestId), null);
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+  });
 });

@@ -329,12 +329,24 @@ export async function runClaudeTaskSession({
       replayUserMessages: true,
       includeHookEvents: true,
       resumeSessionId: resumeSessionId ?? undefined,
-      onSpawn: (processReceipt) => {
+      onSpawn: async (processReceipt) => {
+        const accepted = onSpawn
+          ? await onSpawn(processReceipt)
+          : true;
+        if (accepted !== true) {
+          return false;
+        }
         currentProcessReceipt = processReceipt;
-        onSpawn?.(processReceipt);
-        patchSupervisorJob(workspaceRoot, jobId, {
-          phase: "running_attempt",
-        });
+        try {
+          patchSupervisorJob(workspaceRoot, jobId, {
+            phase: "running_attempt",
+          });
+        } catch {
+          // Child acceptance is already durable in the runner CAS. A best-
+          // effort phase label must not turn that accepted boundary into a
+          // false rejection or suppress the prompt after the marker cleared.
+        }
+        return true;
       },
       onProgress: handleAttemptProgress,
       pollInput: async () =>

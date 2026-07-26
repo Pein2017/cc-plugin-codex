@@ -16,7 +16,10 @@ import {
   getClaudeAvailability,
   interruptClaudeProcess,
 } from "./claude-headless-adapter.mjs";
-import { createExecutionProfile, normalizeProfileName } from "./execution-profile.mjs";
+import {
+  createExecutionProfile,
+  validateExecutionProfileOptions,
+} from "./execution-profile.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { runClaudeTaskSession } from "./job-supervisor.mjs";
 import {
@@ -336,7 +339,19 @@ class ClaudeRuntime {
     if (!prompt && !resumeSessionId) {
       throw new Error("start requires a task or an explicit Claude session to resume.");
     }
-    const profile = normalizeProfileName(options.profile);
+    // Keep this validation ahead of readiness and all durable job writes. The
+    // public lifecycle validates first for caller-facing failure semantics;
+    // preparation repeats it so internal callers cannot bypass that boundary.
+    const executionProfile = validateExecutionProfileOptions({
+      profile: options.profile,
+      write: options.write,
+      model: options.model,
+      effort: options.effort,
+      permissionMode: options.permissionMode,
+      dangerouslySkipPermissions: options.dangerouslySkipPermissions,
+      allowedTools: options.allowedTools,
+    });
+    const profile = executionProfile.name;
     // Agent orchestration validates this potentially slow CLI/auth check
     // before it publishes an active Agent reservation. Reuse that exact,
     // scope-bound receipt here so the small reservation-to-job window contains
@@ -375,10 +390,10 @@ class ClaudeRuntime {
         prompt: prompt || "Continue where you left off.",
         write: Boolean(options.write),
         profile,
-        model: options.model ?? null,
-        effort: options.effort ?? null,
+        model: executionProfile.model,
+        effort: executionProfile.effort ?? null,
         permissionMode: options.permissionMode ?? null,
-        dangerouslySkipPermissions: Boolean(options.dangerouslySkipPermissions),
+        dangerouslySkipPermissions: executionProfile.dangerouslySkipPermissions,
         allowedTools: normalizeAllowedTools(options.allowedTools),
         sessionName: String(options.sessionName ?? "").trim() || null,
         resumeSessionId,
@@ -471,8 +486,6 @@ class ClaudeRuntime {
         summary: summaryOf(prompt),
         phase: "queued",
         activationPrepared: false,
-        preClaudeLaunch: false,
-        safeFreshRetry: false,
         ...(sessionLease ? {
           sessionLease: {
             configIdentity: sessionLease.configIdentity,

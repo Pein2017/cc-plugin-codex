@@ -1,12 +1,78 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, it } from "node:test";
 
 import {
   StreamParser,
   buildArgs,
   classifyClaudeFailure,
   encodeStreamUserMessage,
+  runClaudeTurn,
 } from "../../runtime/claude-headless-adapter.mjs";
+
+const temporaryRoots = [];
+
+afterEach(() => {
+  while (temporaryRoots.length) {
+    fs.rmSync(temporaryRoots.pop(), { recursive: true, force: true });
+  }
+});
+
+function fakeClaude(root) {
+  const bin = path.join(root, "fake-claude");
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const fs = require("node:fs");
+const inputFile = process.env.CC_TEST_INPUT_FILE;
+const acceptedFile = process.env.CC_TEST_ACCEPTED_FILE;
+const observedFile = process.env.CC_TEST_OBSERVED_FILE;
+const terminatedFile = process.env.CC_TEST_TERMINATED_FILE;
+let finished = false;
+process.stdin.on("data", (chunk) => {
+  fs.appendFileSync(inputFile, chunk);
+  if (finished) return;
+  finished = true;
+  fs.writeFileSync(observedFile, JSON.stringify({ accepted: fs.existsSync(acceptedFile) }));
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "fake-session" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "fake-session", result: "ok" }) + "\\n", () => process.exit(0));
+});
+process.on("SIGTERM", () => {
+  fs.writeFileSync(terminatedFile, "terminated");
+  process.exit(0);
+});
+setInterval(() => {}, 1_000);
+`, "utf8");
+  fs.chmodSync(bin, 0o755);
+  return bin;
+}
+
+function turnFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-adapter-launch-"));
+  temporaryRoots.push(root);
+  return {
+    root,
+    bin: fakeClaude(root),
+    inputFile: path.join(root, "stdin.log"),
+    acceptedFile: path.join(root, "accepted"),
+    observedFile: path.join(root, "observed.json"),
+    terminatedFile: path.join(root, "terminated"),
+  };
+}
+
+function fixtureEnv(fixture) {
+  return {
+    ...process.env,
+    CC_TEST_INPUT_FILE: fixture.inputFile,
+    CC_TEST_ACCEPTED_FILE: fixture.acceptedFile,
+    CC_TEST_OBSERVED_FILE: fixture.observedFile,
+    CC_TEST_TERMINATED_FILE: fixture.terminatedFile,
+  };
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 describe("Claude headless adapter", () => {
   it("builds the native bidirectional stream-json transport", () => {
@@ -180,4 +246,66 @@ describe("Claude headless adapter", () => {
     assert.equal(explicitBudget.kind, "fatal");
     assert.equal(explicitBudget.resumable, false);
   });
+
+  it("accepts the durable child receipt before delivering the initial prompt", async () => {
+    const fixture = turnFixture();
+    let promptExistedAtAcceptance = null;
+
+    const result = await runClaudeTurn(fixture.root, "guarded prompt", {
+      claudeBin: fixture.bin,
+      env: fixtureEnv(fixture),
+      inputFormat: "stream-json",
+      onSpawn: () => {
+        promptExistedAtAcceptance = fs.existsSync(fixture.inputFile);
+        fs.writeFileSync(fixture.acceptedFile, "accepted");
+        return true;
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(promptExistedAtAcceptance, false);
+    assert.equal(fs.readFileSync(fixture.inputFile, "utf8").includes("guarded prompt"), true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(fixture.observedFile, "utf8")), { accepted: true });
+  });
+
+  for (const scenario of [
+    {
+      name: "is rejected",
+      onSpawn: async () => {
+        await delay(25);
+        return false;
+      },
+      options: {},
+    },
+    {
+      name: "throws",
+      onSpawn: async () => {
+        await delay(25);
+        throw new Error("persistence failed");
+      },
+      options: {},
+    },
+    {
+      name: "has no process identity",
+      onSpawn: () => true,
+      options: { getProcessIdentity: () => null },
+    },
+  ]) {
+    it(`writes no prompt and terminates the child when durable acceptance ${scenario.name}`, async () => {
+      const fixture = turnFixture();
+
+      const result = await runClaudeTurn(fixture.root, "must never reach stdin", {
+        claudeBin: fixture.bin,
+        env: fixtureEnv(fixture),
+        inputFormat: "stream-json",
+        onSpawn: scenario.onSpawn,
+        ...scenario.options,
+      });
+
+      assert.equal(result.status, "failed");
+      assert.equal(fs.existsSync(fixture.inputFile), false);
+      const observedTermination = fs.existsSync(fixture.terminatedFile) || result.signal === "SIGTERM";
+      assert.equal(observedTermination, true);
+    });
+  }
 });

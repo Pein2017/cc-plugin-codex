@@ -136,6 +136,45 @@ describe("Agent durable store", () => {
     assert.equal(afterRestart.listMessages(agent.path, { state: "assigned" })[0].assignedJobId, "job-mailbox-2");
   });
 
+  it("owns the spawn prompt as mailbox sequence one and preserves raced messages during rollback", () => {
+    const { store } = setup();
+    const disposable = store.createAgent({
+      task_name: "initial_disposable",
+      initialMessage: "perform the first task",
+    });
+    const disposableMessages = store.listMessages(disposable.agentId);
+    assert.equal(disposableMessages.length, 1);
+    assert.equal(disposableMessages[0].sequence, 1);
+    assert.equal(disposableMessages[0].kind, "spawn_agent");
+    assert.equal(disposableMessages[0].text, "perform the first task");
+    assert.equal(disposableMessages[0].state, "queued");
+    assert.equal(store.rollbackReservation(disposable.agentId, {
+      removableMessageId: disposableMessages[0].messageId,
+    }).rolledBack, true);
+    assert.equal(store.readAgent(disposable.agentId), null);
+
+    const retained = store.createAgent({
+      task_name: "initial_race",
+      initialMessage: "perform the original task",
+    });
+    const initial = store.listMessages(retained.agentId)[0];
+    store.enqueueMessage(retained.agentId, "raced sender message", { kind: "send_message" });
+    const rollback = store.rollbackReservation(retained.agentId, {
+      removableMessageId: initial.messageId,
+    });
+    assert.equal(rollback.rolledBack, false);
+    assert.equal(rollback.reason, "queued_messages_present");
+    const preserved = store.listMessages(retained.agentId);
+    assert.deepEqual(preserved.map((message) => message.sequence), [1, 2]);
+    assert.deepEqual(preserved.map((message) => message.text), [
+      "perform the original task",
+      "raced sender message",
+    ]);
+    const activation = store.reserveActivation(retained.agentId, "job-initial-race", { initial: true });
+    assert.deepEqual(activation.assignedMessages.map((message) => message.sequence), [1, 2]);
+    assert.ok(activation.assignedMessages.every((message) => message.deliveryIntent === "initial_prompt"));
+  });
+
   it("serializes concurrent mailbox enqueue without missing or duplicate messages", async () => {
     const { workspace, claudeConfigDir, ownerRootId, store } = setup();
     const agent = store.createAgent({ task_name: "concurrent" });
@@ -239,5 +278,44 @@ describe("Agent durable store", () => {
     const afterReplay = store.readAgent(agent.path);
     assert.equal(afterReplay.latestJobId, secondJob.id);
     assert.equal(afterReplay.latestCompletionSequence, 2);
+  });
+
+  it("recovers only old pre-Claude mailbox ownership after an Agent has advanced", () => {
+    const { store } = setup();
+    const agent = store.createAgent({
+      task_name: "pre_claude_monotonic",
+      initialMessage: "first durable prompt",
+    });
+    const first = store.reserveActivation(agent.agentId, "job-pre-claude-old", { initial: true });
+    store.markMessageDispatched(agent.agentId, first.assignedMessages[0].messageId, {
+      jobId: "job-pre-claude-old",
+      receipt: { delivery: "initial_prompt" },
+    });
+    store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      activeJobId: "job-newer-turn",
+      latestJobId: "job-newer-turn",
+      status: "running",
+      continuation: {
+        mode: "exact_session",
+        evidence: { reason: "newer_turn", sessionId: "claude-newer-session" },
+      },
+    }));
+
+    const recovered = store.recoverPreClaudeActivation(agent.agentId, "job-pre-claude-old");
+    assert.equal(recovered.recovered, true);
+    assert.equal(recovered.reason, "stale_messages_requeued");
+    assert.equal(recovered.agent.activeJobId, "job-newer-turn");
+    assert.equal(recovered.agent.latestJobId, "job-newer-turn");
+    assert.equal(recovered.agent.status, "running");
+    assert.equal(recovered.agent.continuation.evidence.reason, "newer_turn");
+    const message = store.listMessages(agent.agentId)[0];
+    assert.equal(message.state, "queued");
+    assert.equal(message.assignedJobId, null);
+    assert.equal("receipt" in message, false);
+
+    const repeated = store.recoverPreClaudeActivation(agent.agentId, "job-pre-claude-old");
+    assert.equal(repeated.reason, "agent_already_advanced");
+    assert.deepEqual(store.listMessages(agent.agentId), [message]);
   });
 });

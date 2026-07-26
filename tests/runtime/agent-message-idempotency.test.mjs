@@ -79,7 +79,10 @@ function activeJob({ workspace, ownerRootId, agentId, id, steering }) {
 }
 
 function makeTerminalAgent(runtime, taskName) {
-  const created = runtime.store.createAgent({ task_name: taskName });
+  const created = runtime.store.createAgent({
+    task_name: taskName,
+    selectedModel: "claude-sonnet-5",
+  });
   runtime.store.updateAgent(created.agentId, (agent) => ({ ...agent, status: "completed" }));
   return runtime.store.resolveTarget(created.agentId);
 }
@@ -307,6 +310,72 @@ describe("Agent message delivery idempotency", () => {
       message.acknowledgedAt == null &&
       !("receipt" in message)
     ));
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+  });
+
+  it("recovers an attached terminal pre-Claude diagnostic without acknowledging or completing it", () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = makeTerminalAgent(runtime, "attached_pre_claude_crash");
+    const prior = runtime.store.resolveTarget(agent.agentId);
+    const queued = runtime.store.enqueueMessage(agent.agentId, "message Claude never received", {
+      kind: "followup_task",
+    });
+    const jobId = "job-attached-pre-claude-crash";
+    const activation = runtime.store.reserveActivation(agent.agentId, jobId);
+    assert.equal(activation.reserved, true);
+    runtime.store.markMessageDispatched(agent.agentId, queued.message.messageId, {
+      jobId,
+      receipt: { delivery: "initial_prompt" },
+    });
+    const timestamp = new Date().toISOString();
+    writeJobFile(workspace, jobId, {
+      id: jobId,
+      workspaceRoot: workspace,
+      ownerRootId,
+      agentId: agent.agentId,
+      status: "queued",
+      phase: "activation_prepared",
+      activationPrepared: true,
+      activationAttached: true,
+      preClaudeLaunch: true,
+      safeFreshRetry: true,
+      acceptingSteering: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    const terminal = transitionJob(workspace, jobId, ["queued"], "failed", {
+      phase: "activation_prepared_launcher_lost",
+      completedAt: new Date().toISOString(),
+      workerPid: null,
+      workerPidIdentity: null,
+      pid: null,
+      pidIdentity: null,
+    });
+    assert.equal(terminal.transitioned, true);
+    assert.equal(terminal.completion, undefined);
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+
+    runtime.reconcile();
+    const firstRecovered = runtime.store.resolveTarget(agent.agentId);
+    const firstMessage = runtime.store.listMessages(agent.agentId)[0];
+    const firstJob = readJobFile(workspace, jobId);
+    assert.equal(firstRecovered.activeJobId, null);
+    assert.equal(firstRecovered.latestJobId, prior.latestJobId);
+    assert.equal(firstRecovered.status, prior.status);
+    assert.deepEqual(firstRecovered.continuation, prior.continuation);
+    assert.equal(firstMessage.messageId, queued.message.messageId);
+    assert.equal(firstMessage.state, "queued");
+    assert.equal(firstMessage.assignedJobId, null);
+    assert.equal("receipt" in firstMessage, false);
+    assert.ok(firstJob.agentProjectionReconciledAt);
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+
+    runtime.reconcile();
+    const twiceRecovered = runtime.store.resolveTarget(agent.agentId);
+    const twiceMessages = runtime.store.listMessages(agent.agentId);
+    assert.deepEqual(twiceRecovered, firstRecovered);
+    assert.deepEqual(twiceMessages, [firstMessage]);
     assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
   });
 });

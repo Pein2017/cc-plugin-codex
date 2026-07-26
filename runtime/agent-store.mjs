@@ -489,9 +489,30 @@ function continuation(mode, evidence) {
 function recordFromInput(input, rootThreadId, workspaceRoot) {
   const name = displayName(input?.taskName ?? input?.task_name ?? input?.name);
   const timestamp = nowIso();
+  const agentId = generatedAgentId();
+  const initialMessageText = input?.initialMessage == null
+    ? null
+    : assertText(input.initialMessage, "Agent initial message");
+  const initialMessages = initialMessageText == null
+    ? []
+    : [{
+        version: AGENT_MAILBOX_VERSION,
+        messageId: generatedMessageId(agentId, 1),
+        agentId,
+        sequence: 1,
+        text: initialMessageText,
+        kind: "spawn_agent",
+        state: "queued",
+        assignedJobId: null,
+        queuedAt: timestamp,
+        assignedAt: null,
+        deliveryIntent: null,
+        dispatchedAt: null,
+        acknowledgedAt: null,
+      }];
   return {
     version: AGENT_RECORD_VERSION,
-    agentId: generatedAgentId(),
+    agentId,
     rootThreadId,
     workspaceRoot,
     name,
@@ -512,8 +533,8 @@ function recordFromInput(input, rootThreadId, workspaceRoot) {
     finalizedJobIds: [],
     mailbox: {
       version: AGENT_MAILBOX_VERSION,
-      nextSequence: 1,
-      messages: [],
+      nextSequence: initialMessages.length + 1,
+      messages: initialMessages,
     },
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -693,7 +714,18 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
       if (agent.status !== "pending_init" || agent.activeJobId || agent.latestJobId || agent.claudeSessionId) {
         return { registry, write: false, rolledBack: false, reason: "agent_already_launched" };
       }
-      if (agent.mailbox.messages.length > 0 && options.dropQueuedMessages !== true) {
+      const removableMessageId = options.removableMessageId == null
+        ? null
+        : assertText(options.removableMessageId, "Agent removable message ID");
+      const soleRemovableMessage = agent.mailbox.messages.length === 1 &&
+        removableMessageId != null &&
+        agent.mailbox.messages[0].messageId === removableMessageId &&
+        agent.mailbox.messages[0].state === "queued";
+      if (
+        agent.mailbox.messages.length > 0 &&
+        !soleRemovableMessage &&
+        options.dropQueuedMessages !== true
+      ) {
         return { registry, write: false, rolledBack: false, reason: "queued_messages_present" };
       }
       const agents = { ...registry.agents };
@@ -743,6 +775,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
           activationKind: options.initial === true ? "initial" : "followup",
           activationReservedAt,
           activationPreviousStatus: current.status,
+          activationPreviousContinuation: clone(current.continuation),
         }),
       }, (messages) => messages.map((message) => assignedById.get(message.messageId) ?? message));
       return {
@@ -1023,6 +1056,16 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
     for (const job of jobs) {
       if (!job?.agentId || !TERMINAL_JOB_STATUSES.has(job.status)) continue;
       if (job.ownerRootId && job.ownerRootId !== root) continue;
+      if (job.preClaudeLaunch === true) {
+        const agent = readAgent(job.agentId);
+        receipts.push({
+          jobId: job.id,
+          reconciled: false,
+          reason: "pre_claude_diagnostic",
+          agent,
+        });
+        continue;
+      }
       if (job.agentProjectionReconciledAt) {
         receipts.push({
           jobId: job.id,
@@ -1046,6 +1089,94 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
     return receipts;
   }
 
+  function recoverPreClaudeActivation(target, jobId) {
+    const id = normalizeJobId(jobId);
+    const result = withRegistry(workspace, root, (registry) => {
+      const current = internalAgent(registry, target);
+      const ownsActivation = current.activeJobId === id;
+      const evidence = current.continuation?.evidence ?? {};
+      const priorContinuation = evidence.activationPreviousContinuation;
+      const priorStatus = evidence.activationPreviousStatus;
+      let messagesChanged = false;
+      const messages = current.mailbox.messages.map((message) => {
+        if (
+          message.assignedJobId !== id ||
+          !["assigned", "dispatched", "acknowledged"].includes(message.state)
+        ) {
+          return message;
+        }
+        messagesChanged = true;
+        const { receipt, ...withoutReceipt } = message;
+        return {
+          ...withoutReceipt,
+          state: "queued",
+          assignedJobId: null,
+          assignedAt: null,
+          deliveryIntent: null,
+          dispatchedAt: null,
+          acknowledgedAt: null,
+        };
+      });
+      if (!ownsActivation && !messagesChanged) {
+        return {
+          registry,
+          write: false,
+          recovered: true,
+          reason: "agent_already_advanced",
+          agent: current,
+        };
+      }
+      let restoredContinuation = current.continuation;
+      if (ownsActivation) {
+        if (priorContinuation) {
+          restoredContinuation = validateContinuation(priorContinuation);
+        } else {
+          // Older prepared receipts predate the explicit snapshot but copied
+          // the prior continuation evidence before appending activation
+          // metadata. Strip only those metadata keys to recover that state.
+          const legacyPrior = clone(current.continuation);
+          for (const key of [
+            "activationJobId",
+            "activationKind",
+            "activationReservedAt",
+            "activationPreviousStatus",
+            "activationPreviousContinuation",
+          ]) {
+            delete legacyPrior.evidence[key];
+          }
+          restoredContinuation = validateContinuation(legacyPrior);
+        }
+      }
+      const restoredStatus = ownsActivation && AGENT_STATUSES.has(priorStatus)
+        ? priorStatus
+        : current.status;
+      const agent = {
+        ...current,
+        ...(ownsActivation ? {
+          activeJobId: null,
+          status: restoredStatus,
+          continuation: restoredContinuation,
+        } : {}),
+        mailbox: {
+          ...current.mailbox,
+          messages,
+        },
+        updatedAt: nowIso(),
+      };
+      return {
+        registry: { ...registry, agents: { ...registry.agents, [agent.agentId]: agent } },
+        recovered: true,
+        reason: ownsActivation ? "activation_restored" : "stale_messages_requeued",
+        agent,
+      };
+    });
+    return {
+      recovered: Boolean(result.recovered),
+      reason: result.reason ?? null,
+      agent: publicAgent(result.agent),
+    };
+  }
+
   return Object.freeze({
     createAgent,
     readAgent,
@@ -1061,6 +1192,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
     acknowledgeMessage,
     bindSession,
     reconcileFromJobs,
+    recoverPreClaudeActivation,
     rollbackReservation,
     resolveTarget,
     readSessionBinding,

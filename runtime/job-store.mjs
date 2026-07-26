@@ -561,11 +561,8 @@ function ownerRootIdOf(job) {
       : null;
 }
 
-function isUnboundPreClaudePreparedJob(job) {
-  return job?.activationPrepared === true &&
-    job.activationAttached !== true &&
-    job.preClaudeLaunch === true &&
-    !job.agentId;
+function isPreClaudeJob(job) {
+  return job?.preClaudeLaunch === true;
 }
 
 /**
@@ -582,6 +579,7 @@ function isUnboundPreClaudePreparedJob(job) {
  */
 function prepareTerminalAgentSessionBinding(cwd, job) {
   if (!job?.agentId || !TERMINAL_JOB_STATUSES.has(job.status)) return job;
+  if (isPreClaudeJob(job)) return job;
   const ownerRootId = ownerRootIdOf(job);
   const sessionId = exactSessionIdOf(job);
   if (!ownerRootId || !sessionId) return job;
@@ -676,10 +674,10 @@ export function reconcileCompletionEvents(cwd, jobs = readAllJobs(cwd)) {
     const job = jobs[index];
     if (!TERMINAL_JOB_STATUSES.has(job.status)) continue;
     // A pre-Claude activation fact belongs to the launcher, not yet to an
-    // Agent turn. Its terminal outcome is useful diagnostics only; emitting a
-    // root completion here would claim a task result for work that never
-    // attached to (or invoked) Claude.
-    if (isUnboundPreClaudePreparedJob(job)) continue;
+    // Agent turn. It may already be attached to an Agent, but it has not
+    // crossed the durable Claude-child boundary. Publishing a root completion
+    // would therefore claim a task result for work Claude never received.
+    if (isPreClaudeJob(job)) continue;
     const prepared = prepareTerminalAgentSessionBinding(cwd, job);
     jobs[index] = prepared;
     const ownerRootId = ownerRootIdOf(prepared);
@@ -1328,7 +1326,7 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
       residencyReceipt,
     };
     const ownerRootId = ownerRootIdOf(outcome.job);
-    if (ownerRootId && !isUnboundPreClaudePreparedJob(outcome.job)) {
+    if (ownerRootId && !isPreClaudeJob(outcome.job)) {
       try {
         const completion = reconcileTerminalJobCompletion(cwd, ownerRootId, outcome.job);
         outcome.completion = completion;
@@ -1382,18 +1380,21 @@ export function cleanupOldJobs(cwd) {
   for (const job of toRemove) {
     const ownerRootId = ownerRootIdOf(job);
     const completion = completionByJobId.get(job.id);
+    const preClaudeDiagnostic = isPreClaudeJob(job);
     // Keep an Agent-linked terminal fact until its event has been durably
     // reconciled.  Legacy unowned job diagnostics keep their historical
     // cleanup behavior; a modern Agent job can never be safely detached from
     // its root-owned completion projection.
-    const completionReady = ownerRootId
+    const completionReady = preClaudeDiagnostic
+      ? true
+      : ownerRootId
       ? Boolean(completion?.event)
       : !job.agentId;
     const agentProjectionReady = !job.agentId || Boolean(job.agentProjectionReconciledAt);
     if (!completionReady || !agentProjectionReady) {
       continue;
     }
-    if (ownerRootId) {
+    if (ownerRootId && !preClaudeDiagnostic) {
       try { markCompletionDetailedResultUnavailable(cwd, ownerRootId, job.id); } catch {}
     }
     const jobFile = resolveJobFile(cwd, job.id);

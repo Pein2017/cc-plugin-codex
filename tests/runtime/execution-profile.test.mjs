@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import { createExecutionProfile } from "../../runtime/execution-profile.mjs";
+import {
+  createExecutionProfile,
+  validateExecutionProfileOptions,
+} from "../../runtime/execution-profile.mjs";
 
 const previousRuntimeHome = process.env.CC_RUNTIME_HOME;
 const roots = [];
@@ -15,6 +18,26 @@ afterEach(() => {
 });
 
 describe("execution profiles", () => {
+  it("validates a complete profile without creating runtime sandbox state", () => {
+    assert.deepEqual(
+      validateExecutionProfileOptions({ profile: "safe", model: "sonnet", write: false }),
+      {
+        name: "safe",
+        model: "claude-sonnet-5",
+        effort: "high",
+        dangerouslySkipPermissions: false,
+      },
+    );
+    assert.throws(
+      () => validateExecutionProfileOptions({
+        profile: "terminal-parity",
+        model: "opus",
+        permissionMode: "auto",
+      }),
+      /cannot be combined/,
+    );
+  });
+
   it("defaults to full-access terminal parity while keeping model and effort explicit", () => {
     const profile = createExecutionProfile({
       model: "sonnet",

@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { getProcessIdentity, terminateProcessTree } from "./process-control.mjs";
+import { getProcessIdentity } from "./process-control.mjs";
 import { nowIso, ensureStateDir, patchJob, readJobFile, resolveJobLogFile, writeJobFile, cleanupOldJobs, transitionJob } from "./job-store.mjs";
 
 export { nowIso };
@@ -347,9 +347,12 @@ export async function runTrackedJob(job, runner, options = {}) {
     );
   }
 
-  // onSpawn callback: persist Claude child PID/identity at spawn time
-  // Guarded by status check — only write if job is still running (cancel may have won)
+  // The adapter must await this callback before it sends any stdin bytes. This
+  // CAS is therefore the durable launch boundary, not merely observability.
   const onSpawn = ({ pid, pidIdentity }) => {
+    if (!Number.isFinite(pid) || !String(pidIdentity ?? "").trim()) {
+      return false;
+    }
     const transition = transitionJob(
       job.workspaceRoot,
       job.id,
@@ -358,13 +361,17 @@ export async function runTrackedJob(job, runner, options = {}) {
       {
         pid,
         pidIdentity,
+        preClaudeLaunch: false,
+        safeFreshRetry: false,
       }
     );
     if (!transition.transitioned) {
-      // Job already left running state (cancel won the race) — kill the child immediately
-      try { terminateProcessTree(pid, pidIdentity); } catch {}
-      return;
+      // The adapter owns the just-spawned process handle and terminates an
+      // unaccepted child. Keeping that action there covers every rejection
+      // path, including callback failures before this runner is involved.
+      return false;
     }
+    return true;
   };
 
   try {

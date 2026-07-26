@@ -10,6 +10,7 @@ import {
   runTrackedJob,
 } from "../../runtime/job-runner.mjs";
 import { readJobFile, transitionJob, writeJobFile } from "../../runtime/job-store.mjs";
+import { getProcessIdentity } from "../../runtime/process-control.mjs";
 
 const priorHome = process.env.CC_RUNTIME_HOME;
 const roots = [];
@@ -153,5 +154,53 @@ describe("tracked worker ownership", () => {
     rejectRunner(new Error("late failure"));
     await assert.rejects(running, /late failure/);
     assert.equal(readJobFile(workspace, job.id).status, "cancelled");
+  });
+
+  it("accepts a Claude child only by atomically recording identity and clearing the pre-Claude marker", async () => {
+    const { workspace, job } = setup();
+    writeJobFile(workspace, job.id, {
+      ...readJobFile(workspace, job.id),
+      preClaudeLaunch: true,
+      safeFreshRetry: true,
+    });
+    let acceptance = null;
+
+    await runTrackedJob(job, async (onSpawn) => {
+      acceptance = onSpawn({
+        pid: process.pid,
+        pidIdentity: getProcessIdentity(process.pid),
+      });
+      const stored = readJobFile(workspace, job.id);
+      assert.equal(acceptance, true);
+      assert.equal(stored.preClaudeLaunch, false);
+      assert.equal(stored.safeFreshRetry, false);
+      assert.equal(stored.pid, process.pid);
+      assert.equal(stored.pidIdentity, getProcessIdentity(process.pid));
+      return completedExecution();
+    });
+
+    assert.equal(acceptance, true);
+  });
+
+  it("rejects an identity-less child receipt without clearing the pre-Claude marker", async () => {
+    const { workspace, job } = setup();
+    writeJobFile(workspace, job.id, {
+      ...readJobFile(workspace, job.id),
+      preClaudeLaunch: true,
+      safeFreshRetry: true,
+    });
+    let acceptance = null;
+
+    await runTrackedJob(job, async (onSpawn) => {
+      acceptance = onSpawn({ pid: process.pid, pidIdentity: null });
+      const stored = readJobFile(workspace, job.id);
+      assert.equal(acceptance, false);
+      assert.equal(stored.preClaudeLaunch, true);
+      assert.equal(stored.safeFreshRetry, true);
+      assert.equal(stored.pid, null);
+      return completedExecution();
+    });
+
+    assert.equal(acceptance, false);
   });
 });

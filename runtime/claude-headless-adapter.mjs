@@ -1008,30 +1008,63 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
       }
     };
 
-    // Keeping prompts out of argv avoids Windows' command-line length limit.
-    try {
-      if (streamingInput) {
-        proc.stdin.write(encodeStreamUserMessage(prompt), "utf8");
-      } else {
-        stdinClosed = true;
-        proc.stdin.end(String(prompt ?? ""), "utf8");
-      }
-    } catch (error) {
-      stdinError = error;
-      proc.stdin.destroy();
-    }
-
     let pidIdentity = null;
+    const getProcessIdentityImpl = options.getProcessIdentity ?? getProcessIdentity;
     try {
-      pidIdentity = getProcessIdentity(proc.pid);
+      pidIdentity = getProcessIdentityImpl(proc.pid);
     } catch {
-      // Best-effort — may fail on some platforms
+      // A process identity is mandatory for the launch boundary. The child is
+      // terminated below without sending any task input.
     }
 
-    // Notify caller of child PID at spawn time (before execution completes)
-    if (options.onSpawn) {
-      options.onSpawn({ pid: proc.pid, pidIdentity });
-    }
+    const hasValidReceipt = Number.isFinite(proc.pid) &&
+      Boolean(String(pidIdentity ?? "").trim());
+
+    const terminateUnacceptedChild = () => {
+      let terminated = false;
+      if (hasValidReceipt) {
+        try {
+          const terminate = options.terminateProcessTree ?? terminateProcessTree;
+          terminated = terminate(proc.pid, pidIdentity)?.delivered === true;
+        } catch {
+          // The direct child handle below is safe while this adapter still
+          // owns the newly-spawned process and provides a best-effort fallback.
+        }
+      }
+      if (!terminated && !proc.killed) {
+        try { proc.kill("SIGTERM"); } catch {}
+      }
+    };
+
+    const rejectChildBeforeInput = (error) => {
+      stdinError = error instanceof Error ? error : new Error(String(error));
+      terminateUnacceptedChild();
+      if (!proc.stdin.destroyed) {
+        try { proc.stdin.destroy(); } catch {}
+      }
+    };
+
+    const acceptChildBeforeInput = async () => {
+      if (!hasValidReceipt) {
+        rejectChildBeforeInput(
+          new Error("Claude child launch requires a valid PID identity before prompt delivery.")
+        );
+        return false;
+      }
+      try {
+        const accepted = options.onSpawn
+          ? await options.onSpawn({ pid: proc.pid, pidIdentity })
+          : true;
+        if (accepted !== true) {
+          rejectChildBeforeInput(new Error("Claude child launch was not durably accepted."));
+          return false;
+        }
+        return true;
+      } catch (error) {
+        rejectChildBeforeInput(error);
+        return false;
+      }
+    };
 
     proc.stderr.setEncoding("utf8");
     proc.stderr.on("data", (chunk) => {
@@ -1073,16 +1106,6 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
         }
       }
     });
-
-    if (streamingInput && options.pollInput) {
-      const pollIntervalMs = Math.max(25, Number(options.inputPollIntervalMs) || 200);
-      inputTimer = setInterval(() => {
-        void pumpInput().catch((error) => {
-          stdinError = error;
-          closeInput();
-        });
-      }, pollIntervalMs);
-    }
 
     proc.on("close", (code, signal) => {
       if (settled) return;
@@ -1157,6 +1180,35 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
         resumable: false,
       });
     });
+
+    // Keeping prompts out of argv avoids Windows' command-line length limit.
+    // More importantly, no stdin write or input-pump timer may begin before
+    // the runner durably accepts this exact child receipt.
+    void (async () => {
+      if (!await acceptChildBeforeInput() || settled) return;
+      try {
+        if (streamingInput) {
+          proc.stdin.write(encodeStreamUserMessage(prompt), "utf8");
+        } else {
+          stdinClosed = true;
+          proc.stdin.end(String(prompt ?? ""), "utf8");
+        }
+      } catch (error) {
+        stdinError = error;
+        proc.stdin.destroy();
+        return;
+      }
+
+      if (streamingInput && options.pollInput) {
+        const pollIntervalMs = Math.max(25, Number(options.inputPollIntervalMs) || 200);
+        inputTimer = setInterval(() => {
+          void pumpInput().catch((error) => {
+            stdinError = error;
+            closeInput();
+          });
+        }, pollIntervalMs);
+      }
+    })();
 
     // Unref only for background workers — foreground callers need the process to keep Node alive
     if (options.background) {

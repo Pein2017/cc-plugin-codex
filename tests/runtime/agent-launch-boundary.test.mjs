@@ -5,7 +5,13 @@ import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
-import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
+import { readUnreadCompletionEvents } from "../../runtime/completion-inbox.mjs";
+import {
+  listStoredJobs,
+  readJobFile,
+  resolveJobFile,
+  writeJobFile,
+} from "../../runtime/job-store.mjs";
 
 const roots = /** @type {string[]} */ ([]);
 const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-launch-runtime-home-"));
@@ -75,6 +81,194 @@ describe("Agent durable launch boundary", () => {
     assert.equal(runtime.store.listAgents().length, 0);
   });
 
+  it("rejects invalid complete spawn profiles before readiness or durable state", async () => {
+    const cases = [
+      {
+        name: "effort",
+        input: { reasoning_effort: "not-an-effort" },
+        error: /Unsupported effort/,
+      },
+      {
+        name: "profile",
+        input: { execution_profile: "unknown-profile" },
+        error: /Unknown execution profile/,
+      },
+      {
+        name: "safe dangerous permissions",
+        input: { execution_profile: "safe", dangerously_skip_permissions: true },
+        error: /safe must remain sandboxed/,
+      },
+      {
+        name: "terminal parity permission mode",
+        input: { permission_mode: "auto" },
+        error: /cannot be combined/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { runtime, workspace } = setup();
+      let readinessCalled = false;
+      runtime.jobs.assertReady = () => {
+        readinessCalled = true;
+        return readiness(runtime);
+      };
+
+      await assert.rejects(
+        runtime.spawnAgent({
+          task_name: `invalid_${testCase.name.replace(/[^a-z]+/g, "_")}`,
+          message: "must not persist",
+          fork_turns: "none",
+          model: "sonnet",
+          ...testCase.input,
+        }),
+        testCase.error,
+        testCase.name,
+      );
+
+      assert.equal(readinessCalled, false, `${testCase.name}: readiness`);
+      assert.equal(runtime.store.listAgents().length, 0, `${testCase.name}: Agent registry`);
+      assert.deepEqual(listStoredJobs(workspace), [], `${testCase.name}: job store`);
+    }
+  });
+
+  it("rejects invalid activating follow-up profiles before mailbox or job mutation", async () => {
+    const cases = [
+      { input: { reasoning_effort: "not-an-effort" }, error: /Unsupported effort/ },
+      { input: { execution_profile: "unknown-profile" }, error: /Unknown execution profile/ },
+      {
+        input: { execution_profile: "safe", dangerously_skip_permissions: true },
+        error: /safe must remain sandboxed/,
+      },
+      { input: { permission_mode: "auto" }, error: /cannot be combined/ },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const { runtime, workspace } = setup();
+      const agent = runtime.store.createAgent({
+        task_name: `terminal_invalid_${index}`,
+        selectedModel: "claude-sonnet-5",
+      });
+      runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
+      let readinessCalled = false;
+      runtime.jobs.assertReady = () => {
+        readinessCalled = true;
+        return readiness(runtime);
+      };
+
+      await assert.rejects(
+        runtime.followupTask({
+          target: agent.agentId,
+          message: "must not append",
+          ...testCase.input,
+        }),
+        testCase.error,
+      );
+
+      assert.equal(readinessCalled, false, `case ${index}: readiness`);
+      assert.deepEqual(runtime.store.listMessages(agent.agentId), [], `case ${index}: mailbox`);
+      assert.deepEqual(listStoredJobs(workspace), [], `case ${index}: job store`);
+    }
+  });
+
+  it("rejects an invalid active-turn follow-up before mailbox or steering mutation", async () => {
+    const { runtime, workspace } = setup();
+    const agent = runtime.store.createAgent({
+      task_name: "active_invalid_followup",
+      selectedModel: "claude-sonnet-5",
+    });
+    const jobId = "active-invalid-followup-job";
+    runtime.store.reserveActivation(agent.agentId, jobId, { initial: true });
+    const timestamp = new Date().toISOString();
+    writeJobFile(workspace, jobId, {
+      id: jobId,
+      workspaceRoot: workspace,
+      ownerRootId: agent.rootThreadId,
+      agentId: agent.agentId,
+      status: "running",
+      phase: "running_attempt",
+      preClaudeLaunch: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      request: { model: "claude-sonnet-5", profile: "terminal-parity" },
+    });
+    const jobBefore = fs.readFileSync(resolveJobFile(workspace, jobId), "utf8");
+
+    await assert.rejects(
+      runtime.followupTask({
+        target: agent.agentId,
+        message: "must not become steering",
+        reasoning_effort: "not-an-effort",
+      }),
+      /Unsupported effort/
+    );
+
+    assert.deepEqual(runtime.store.listMessages(agent.agentId), []);
+    const stored = readJobFile(workspace, jobId);
+    assert.equal(stored.steering, undefined);
+    const jobAfter = fs.readFileSync(resolveJobFile(workspace, jobId), "utf8");
+    assert.equal(jobAfter, jobBefore);
+  });
+
+  it("rejects invalid follow-up options before reconciling an unprojected terminal receipt", async () => {
+    const { runtime, workspace } = setup();
+    const agent = runtime.store.createAgent({
+      task_name: "invalid_before_reconcile",
+      selectedModel: "claude-sonnet-5",
+    });
+    const jobId = "invalid-before-reconcile-job";
+    runtime.store.reserveActivation(agent.agentId, jobId, { initial: true });
+    const timestamp = new Date().toISOString();
+    writeJobFile(workspace, jobId, {
+      id: jobId,
+      workspaceRoot: workspace,
+      ownerRootId: agent.rootThreadId,
+      agentId: agent.agentId,
+      status: "completed",
+      phase: "done",
+      preClaudeLaunch: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: timestamp,
+      request: { model: "claude-sonnet-5", profile: "terminal-parity" },
+      recoverability: {
+        resumable: false,
+        mode: "blocked",
+        exactSessionId: null,
+        reason: "fixture terminal",
+      },
+    });
+    const agentBefore = runtime.store.resolveTarget(agent.agentId);
+    const jobBefore = fs.readFileSync(resolveJobFile(workspace, jobId), "utf8");
+    const inboxBefore = readUnreadCompletionEvents(workspace, agent.rootThreadId);
+
+    await assert.rejects(
+      runtime.followupTask({
+        target: agent.agentId,
+        message: "must not trigger reconciliation",
+        reasoning_effort: "not-an-effort",
+      }),
+      /Unsupported effort/
+    );
+
+    assert.deepEqual(runtime.store.resolveTarget(agent.agentId), agentBefore);
+    assert.deepEqual(runtime.store.listMessages(agent.agentId), []);
+    assert.equal(fs.readFileSync(resolveJobFile(workspace, jobId), "utf8"), jobBefore);
+    assert.deepEqual(readUnreadCompletionEvents(workspace, agent.rootThreadId), inboxBefore);
+  });
+
+  it("defensively validates complete profiles before preparing a job receipt", () => {
+    const { runtime, workspace } = setup();
+    assert.throws(
+      () => runtime.jobs.prepareStart("must not prepare", {
+        model: "sonnet",
+        effort: "not-an-effort",
+        readinessReceipt: readiness(runtime),
+      }),
+      /Unsupported effort/,
+    );
+    assert.deepEqual(listStoredJobs(workspace), []);
+  });
+
   it("keeps slow readiness outside activation, then attaches a prepared fact before worker launch", async () => {
     const { runtime, workspace } = setup();
     const events = /** @type {string[]} */ ([]);
@@ -98,6 +292,9 @@ describe("Agent durable launch boundary", () => {
         assert.equal(prepared.agentId, undefined);
         assert.equal(prepared.phase, "activation_prepared");
         assert.equal(prepared.workerPid, process.pid);
+        baseStore.enqueueMessage(target, "message racing initial reservation", {
+          kind: "send_message",
+        });
         events.push("reserve");
         return baseStore.reserveActivation(target, jobId, options);
       },
@@ -110,7 +307,7 @@ describe("Agent durable launch boundary", () => {
       const attached = readJobFile(workspace, prepared.jobId);
       assert.equal(attached.agentId, prepared.agentId);
       assert.equal(attached.phase, "activation_prepared");
-      assert.equal(task, "launch after readiness");
+      assert.equal(task, "launch after readiness\n\nmessage racing initial reservation");
       events.push("launch");
       observedJobId = prepared.jobId;
       return { jobId: prepared.jobId, agentId: prepared.agentId, status: "queued" };
@@ -126,6 +323,17 @@ describe("Agent durable launch boundary", () => {
     assert.equal(result.turn.jobId, observedJobId);
     assert.deepEqual(events, ["ready:start", "ready:end", "reserve", "attach", "launch"]);
     assert.equal(readJobFile(workspace, observedJobId).agentId, result.agent.agentId);
+    const messages = runtime.store.listMessages(result.agent.agentId);
+    assert.deepEqual(messages.map((message) => message.sequence), [1, 2]);
+    assert.deepEqual(messages.map((message) => message.text), [
+      "launch after readiness",
+      "message racing initial reservation",
+    ]);
+    assert.ok(messages.every((message) =>
+      message.state === "dispatched" &&
+      message.assignedJobId === observedJobId &&
+      message.receipt?.delivery === "initial_prompt"
+    ));
     assert.equal(runtime.jobs.abortPreparedStart({ jobId: observedJobId }), true);
   });
 
@@ -154,9 +362,12 @@ describe("Agent durable launch boundary", () => {
     assert.equal(agent.status, "pending_init");
     assert.equal(agent.activeJobId, null);
     const messages = runtime.store.listMessages(agent.agentId);
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].state, "queued");
-    assert.equal(messages[0].text, "message during prepare");
+    assert.equal(messages.length, 2);
+    assert.deepEqual(messages.map((message) => message.text), [
+      "initial prompt",
+      "message during prepare",
+    ]);
+    assert.ok(messages.every((message) => message.state === "queued"));
   });
 
   it("keeps a losing prepared record unbound and prevents it from projecting onto the Agent", () => {
@@ -167,6 +378,7 @@ describe("Agent durable launch boundary", () => {
       readinessReceipt: readiness(runtime),
       jobId: "prepared-loser",
       agentId: agent.agentId,
+      model: "sonnet",
     });
     const stored = readJobFile(workspace, prepared.jobId);
     assert.ok(stored);
@@ -193,6 +405,7 @@ describe("Agent durable launch boundary", () => {
       readinessReceipt: readiness(runtime),
       jobId: "prepared-crash-window",
       agentId: agent.agentId,
+      model: "sonnet",
     });
     const reservation = runtime.store.reserveActivation(agent.agentId, prepared.jobId);
     assert.equal(reservation.reserved, true);
@@ -222,7 +435,10 @@ describe("Agent durable launch boundary", () => {
       workerPid: null,
       workerPidIdentity: null,
     });
-    assert.deepEqual(runtime.reconcile(), []);
+    const recovery = runtime.reconcile();
+    assert.equal(recovery.length, 1);
+    assert.equal(recovery[0].jobId, prepared.jobId);
+    assert.equal(recovery[0].reason, "pre_claude_activation_recovered");
     const recovered = runtime.store.readAgent(agent.agentId);
     assert.ok(recovered);
     assert.equal(recovered.status, "completed");
@@ -232,11 +448,15 @@ describe("Agent durable launch boundary", () => {
 
   it("preserves pending initial messages after a pre-attach crash and reactivates them as an initial turn", async () => {
     const { runtime, workspace } = setup();
-    const agent = runtime.store.createAgent({ task_name: "initial_crash" });
+    const agent = runtime.store.createAgent({
+      task_name: "initial_crash",
+      selectedModel: "claude-sonnet-5",
+    });
     const prepared = runtime.jobs.prepareStart("initial prompt", {
       readinessReceipt: readiness(runtime),
       jobId: "prepared-initial-crash",
       agentId: agent.agentId,
+      model: "sonnet",
     });
     const activation = runtime.store.reserveActivation(agent.agentId, prepared.jobId, { initial: true });
     assert.equal(activation.reserved, true);
@@ -256,7 +476,10 @@ describe("Agent durable launch boundary", () => {
       workerPid: null,
       workerPidIdentity: null,
     });
-    assert.deepEqual(runtime.reconcile(), []);
+    const recovery = runtime.reconcile();
+    assert.equal(recovery.length, 1);
+    assert.equal(recovery[0].jobId, prepared.jobId);
+    assert.equal(recovery[0].reason, "pre_claude_activation_recovered");
 
     const recovered = runtime.store.readAgent(agent.agentId);
     assert.ok(recovered);

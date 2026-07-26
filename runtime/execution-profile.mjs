@@ -25,9 +25,14 @@ export function normalizeProfileName(value) {
   return name;
 }
 
-export function createExecutionProfile(options = {}) {
+/**
+ * Validate every caller-owned execution option without creating temporary
+ * sandbox state. Public Agent activation and durable job preparation share
+ * this pure seam so invalid options cannot become an asynchronous worker
+ * failure after state has already been persisted.
+ */
+export function validateExecutionProfileOptions(options = {}) {
   const name = normalizeProfileName(options.profile);
-  const inheritedEnv = options.env ?? process.env;
   const dangerouslySkipPermissions = Boolean(options.dangerouslySkipPermissions);
   const requestedModel = String(options.model ?? "").trim();
   if (!requestedModel) {
@@ -46,6 +51,17 @@ export function createExecutionProfile(options = {}) {
     );
   }
 
+  const effort = name === "terminal-parity"
+    ? resolveEffort(options.effort)
+    : resolveEffort(resolveDefaultEffort(model, options.effort));
+  return { name, model, effort, dangerouslySkipPermissions };
+}
+
+export function createExecutionProfile(options = {}) {
+  const validated = validateExecutionProfileOptions(options);
+  const { name, model, effort } = validated;
+  const inheritedEnv = options.env ?? process.env;
+
   if (name === "terminal-parity") {
     const env = { ...inheritedEnv, IS_SANDBOX: "1" };
     const claudeOptions = {
@@ -53,7 +69,7 @@ export function createExecutionProfile(options = {}) {
       model,
       dangerouslySkipPermissions: true,
     };
-    if (options.effort) claudeOptions.effort = resolveEffort(options.effort);
+    if (effort) claudeOptions.effort = effort;
     if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
       claudeOptions.allowedTools = options.allowedTools;
     }
@@ -70,8 +86,6 @@ export function createExecutionProfile(options = {}) {
   }
 
   const env = inheritedEnv;
-  const defaultEffort = resolveDefaultEffort(model, options.effort);
-  const effort = defaultEffort ? resolveEffort(defaultEffort) : undefined;
   const sandboxMode = options.write ? "workspace-write" : "read-only";
   const settingsFile = createSandboxSettings(sandboxMode);
   const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;

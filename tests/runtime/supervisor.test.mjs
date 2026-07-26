@@ -271,4 +271,48 @@ describe("job supervisor", () => {
     assert.equal(result.steering.pendingCount, 0);
     assert.equal(result.steering.latestAcknowledgedSequence, 1);
   });
+
+  it("enters running_attempt only after the durable child receipt is accepted", async () => {
+    const { workspace } = setup();
+    let observedAcceptance = null;
+    let observedPhase = null;
+    const result = await runClaudeTaskSession({
+      workspaceRoot: workspace,
+      jobId: "cc-1",
+      cwd: workspace,
+      prompt: "task",
+      write: false,
+      onSpawn: () => false,
+      runAttempt: async (_cwd, _prompt, options) => {
+        observedAcceptance = await options.onSpawn({ pid: process.pid, pidIdentity: "fake" });
+        observedPhase = readJobFile(workspace, "cc-1").phase;
+        return completed();
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(observedAcceptance, false);
+    assert.equal(observedPhase, "starting_attempt");
+  });
+
+  it("records running_attempt after the durable child receipt is accepted", async () => {
+    const { workspace } = setup();
+    let observedAcceptance = null;
+    const result = await runClaudeTaskSession({
+      workspaceRoot: workspace,
+      jobId: "cc-1",
+      cwd: workspace,
+      prompt: "task",
+      write: false,
+      onSpawn: () => true,
+      runAttempt: async (_cwd, _prompt, options) => {
+        observedAcceptance = await options.onSpawn({ pid: process.pid, pidIdentity: "fake" });
+        assert.equal(readJobFile(workspace, "cc-1").phase, "running_attempt");
+        return completed();
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(observedAcceptance, true);
+  });
 });
