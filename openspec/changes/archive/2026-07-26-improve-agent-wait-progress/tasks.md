@@ -16,4 +16,4 @@
 - [x] 3.1 Run focused unit/integration tests and a fake stream-json smoke covering progress then completion
 - [x] 3.2 Run `npm run check` and OpenSpec validation
 - [x] 3.3 Make verification hermetic across CI-shaped and CC-bootstrap root environments and cover dead-owner lock recovery
-- [ ] 3.4 Bump the experimental plugin minor version, archive/sync the completed OpenSpec change, and refresh the checkout-owned local plugin installation
+- [x] 3.4 Bump the experimental plugin minor version, archive/sync the completed OpenSpec change, and refresh the checkout-owned local plugin installation

@@ -46,7 +46,7 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **WHEN** a current-root Agent publishes safe progress before any completion and before timeout
 - **THEN** wait returns one advisory progress update without changing completion acknowledgement state
 
-#### Scenario: Later wait acknowledges the prior completion
+#### Scenario: Later wait acknowledges the prior update
 - **WHEN** a later wait echoes the valid token for the oldest returned completion update
 - **THEN** the cursor advances before returning or waiting for subsequent Agent activity
 
