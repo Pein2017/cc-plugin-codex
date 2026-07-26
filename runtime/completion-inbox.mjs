@@ -668,7 +668,23 @@ export function readUnreadAgentCompletionSummaries(cwd, ownerRootId, options = {
   const owner = assertText(ownerRootId, "owner root ID");
   const requestedLimit = options.limit == null ? DEFAULT_AGENT_SUMMARY_BATCH_SIZE : options.limit;
   const limit = Math.min(assertPositiveInteger(requestedLimit, "Agent completion summary limit"), 100);
-  if (!readInbox(cwd, owner, false)) return { events: [] };
+  const snapshot = readInbox(cwd, owner, false);
+  if (!snapshot) return { events: [] };
+  const snapshotSelection = unreadAgentLinkedEvents(snapshot, limit);
+  if (snapshotSelection.length === 0) return { events: [] };
+  // Once first delivery freezes every selected payload, reconciliation cannot
+  // rewrite it. Snapshot redelivery is therefore observation-only. A racing
+  // acknowledgement may make this the final at-least-once duplicate, but it
+  // cannot change the token, payload, or monotonic durable cursor.
+  if (snapshotSelection.every((event) => event.firstDeliveredAt)) {
+    return {
+      events: snapshotSelection
+        .map(publicAgentCompletionSummary)
+        .filter(Boolean),
+    };
+  }
+  // An unfrozen selection still needs the original lock-and-reread path so
+  // exactly one durable public payload is established before first exposure.
   return withInboxLock(cwd, owner, (inbox, filePath) => {
     const selected = unreadAgentLinkedEvents(inbox, limit);
     const selectedIds = new Set(selected.map((event) => event.eventId));

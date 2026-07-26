@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep the 500 ms completion observation cadence while eliminating completion
+  inbox locks and fsyncs from quiet polls and already-frozen redelivery; retain
+  locked first-delivery freezing and acknowledgement semantics.
+
 ## 0.4.0 - 2026-07-26
 
 - Mark all six CC Agent skills and discovery descriptions as Experimental and

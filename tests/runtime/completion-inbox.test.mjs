@@ -48,6 +48,26 @@ function completion(jobId, overrides = {}) {
   };
 }
 
+function observePersistenceIo(operation) {
+  const originalFsyncSync = fs.fsyncSync;
+  const originalLinkSync = fs.linkSync;
+  const counts = { fsync: 0, lockLinks: 0 };
+  fs.fsyncSync = (...args) => {
+    counts.fsync += 1;
+    return originalFsyncSync(...args);
+  };
+  fs.linkSync = (...args) => {
+    counts.lockLinks += 1;
+    return originalLinkSync(...args);
+  };
+  try {
+    return { counts, result: operation() };
+  } finally {
+    fs.fsyncSync = originalFsyncSync;
+    fs.linkSync = originalLinkSync;
+  }
+}
+
 const completionInboxUrl = new URL("../../runtime/completion-inbox.mjs", import.meta.url).href;
 
 function runWriter(moduleUrl, workspace, ownerRootId, start, count, runtimeHome) {
@@ -109,6 +129,45 @@ function readFromFreshProcess(workspace, ownerRootId, runtimeHome) {
 }
 
 describe("completion inbox", () => {
+  it("keeps quiet observation and frozen redelivery free of locks and fsync", () => {
+    const { workspace, ownerRootId } = setup();
+    const appended = appendCompletionEvent(workspace, ownerRootId, completion("agent-observation", {
+      agentId: "agent-observation",
+      finalMessage: "immutable public handoff",
+    })).event;
+
+    const firstDelivery = observePersistenceIo(
+      () => readUnreadAgentCompletionSummaries(workspace, ownerRootId)
+    );
+    assert.ok(firstDelivery.counts.lockLinks > 0);
+    assert.ok(firstDelivery.counts.fsync > 0);
+    assert.equal(firstDelivery.result.events[0].deliveryToken, appended.deliveryToken);
+
+    const frozenRedelivery = observePersistenceIo(() => Array.from(
+      { length: 25 },
+      () => readUnreadAgentCompletionSummaries(workspace, ownerRootId)
+    ));
+    assert.deepEqual(frozenRedelivery.counts, { fsync: 0, lockLinks: 0 });
+    assert.ok(frozenRedelivery.result.every(
+      (receipt) => JSON.stringify(receipt) === JSON.stringify(firstDelivery.result)
+    ));
+
+    const acknowledgement = observePersistenceIo(() => acknowledgeAgentCompletionEvents(
+      workspace,
+      ownerRootId,
+      [appended.deliveryToken]
+    ));
+    assert.ok(acknowledgement.counts.lockLinks > 0);
+    assert.ok(acknowledgement.counts.fsync > 0);
+
+    const quietReads = observePersistenceIo(() => Array.from(
+      { length: 25 },
+      () => readUnreadAgentCompletionSummaries(workspace, ownerRootId)
+    ));
+    assert.deepEqual(quietReads.counts, { fsync: 0, lockLinks: 0 });
+    assert.ok(quietReads.result.every((receipt) => receipt.events.length === 0));
+  });
+
   it("survives restart and redelivers an unacknowledged completion", async () => {
     const { workspace, ownerRootId } = setup();
     const first = appendCompletionEvent(workspace, ownerRootId, completion("job-1"));
