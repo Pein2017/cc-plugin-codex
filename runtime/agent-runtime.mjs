@@ -79,7 +79,7 @@ function requiredSpawnModel(input) {
   const requested = optionalText(input.model);
   if (!requested) {
     throw new Error(
-      "spawn_agent requires an explicit model: sonnet/claude-sonnet-5 or opus/claude-opus-5."
+      "spawn_agent requires an explicit model: sonnet/claude-sonnet-5, opus/claude-opus-5, or test-only haiku/claude-haiku-4-5."
     );
   }
   return resolveModel(requested);
@@ -87,7 +87,11 @@ function requiredSpawnModel(input) {
 
 function normalizedObservedModel(value) {
   const model = optionalText(value);
-  return model ? model.replace(/\[[^\]]+\]$/, "") : null;
+  if (!model) return null;
+  const stripped = model.replace(/\[[^\]]+\]$/, "");
+  return /^claude-haiku-4-5-\d{8}$/.test(stripped)
+    ? "claude-haiku-4-5"
+    : stripped;
 }
 
 function observedModelFromJob(job) {
@@ -100,7 +104,7 @@ function observedModelFromJob(job) {
 }
 
 function explicitRequestModel(job) {
-  const requested = normalizedObservedModel(job?.request?.model);
+  const requested = optionalText(job?.request?.model)?.replace(/\[[^\]]+\]$/, "") ?? null;
   return requested?.startsWith("claude-") ? requested : null;
 }
 

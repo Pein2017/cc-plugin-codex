@@ -19,6 +19,10 @@
 - **WHEN** a later wait echoes the valid token for the oldest returned completion update
 - **THEN** the cursor advances before returning or waiting for subsequent Agent activity
 
+#### Scenario: Partial acknowledgement races a frozen batch snapshot
+- **WHEN** a diagnostic multi-event snapshot is returned while another waiter has already acknowledged only its leading token prefix
+- **THEN** a later acknowledgement treats that already-acknowledged prefix idempotently and advances only the exact oldest unread Agent-linked suffix without skipping an event
+
 #### Scenario: Wait times out
 - **WHEN** no current-root Agent produces new progress or completion activity before the deadline
 - **THEN** wait returns a timeout receipt without changing Agent state or acknowledging future events

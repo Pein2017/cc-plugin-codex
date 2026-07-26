@@ -259,6 +259,19 @@ function invocations(test) {
 }
 
 describe("canonical Agent runtime CLI", () => {
+  it("launches test-only Haiku with its canonical model and explicit low effort", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--task-name", "haiku_smoke", "--fork-turns", "none",
+      "--model", "haiku", "--reasoning-effort", "low", "--json", "session=haiku delay=40",
+    ]);
+    assert.equal(spawned.agent.selectedModel, "claude-haiku-4-5");
+    waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
+    const invocation = invocations(test)[0];
+    assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-haiku-4-5");
+    assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "low");
+  });
+
   it("exposes all six operations with flat exact targeting and duplicate-name rejection", () => {
     const test = fixture();
     const spawned = run(test, [
@@ -484,6 +497,18 @@ describe("canonical Agent runtime CLI", () => {
     ]);
     assert.equal(unsupportedModel.status, 1);
     assert.match(unsupportedModel.stderr, /Unsupported Claude model/);
+
+    for (const unsupported of ["haiku-4-5", "claude-haiku-4-5-20251001"]) {
+      const rejected = command(test, [
+        "spawn_agent",
+        "--task-name", `unsupported_${unsupported.replaceAll("-", "_")}`,
+        "--fork-turns", "none",
+        "--model", unsupported,
+        "--json", "dated or partial IDs are not public inputs",
+      ]);
+      assert.equal(rejected.status, 1);
+      assert.match(rejected.stderr, /Unsupported Claude model/);
+    }
 
     const missingModel = command(test, [
       "spawn_agent", "--task-name", "missing_model", "--fork-turns", "none", "--json", "must fail before Claude starts",

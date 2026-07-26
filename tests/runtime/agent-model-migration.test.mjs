@@ -63,6 +63,14 @@ describe("legacy Agent model migration", () => {
     assert.equal(migrated.continuation.mode, "exact_session");
   });
 
+  it("normalizes verified dated Haiku 4.5 artifact evidence to the canonical family", () => {
+    const { runtime, agent } = setup("claude-haiku-4-5-20251001");
+    runtime.reconcile();
+    const migrated = runtime.store.readAgent(agent.agentId);
+    assert.equal(migrated.selectedModel, "claude-haiku-4-5");
+    assert.equal(migrated.continuation.mode, "exact_session");
+  });
+
   it("blocks an unsupported historical model instead of substituting Opus 5", async () => {
     const { runtime, agent } = setup("claude-opus-4-7[1m]");
     runtime.reconcile();

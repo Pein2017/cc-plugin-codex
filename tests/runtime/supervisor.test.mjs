@@ -122,6 +122,31 @@ describe("job supervisor", () => {
     assert.match(result.warning, /refusing to replay/i);
   });
 
+  it("never reconnects an explicit subscription or usage-limit failure", async () => {
+    const { workspace } = setup();
+    let attempts = 0;
+    const result = await runClaudeTaskSession({
+      workspaceRoot: workspace,
+      jobId: "cc-1",
+      cwd: workspace,
+      prompt: "cheap smoke",
+      write: false,
+      retryPolicy: { maxReconnectAttempts: 3, baseDelayMs: 0, jitterRatio: 0 },
+      runAttempt: async () => {
+        attempts += 1;
+        return {
+          ...failed(),
+          stderr: "HTTP 429: You've hit your limit · resets tomorrow",
+          failureClass: "usage_or_subscription_limit",
+          failureReason: "You've hit your limit · resets tomorrow",
+        };
+      },
+    });
+    assert.equal(attempts, 1);
+    assert.equal(result.failureClass, "usage_or_subscription_limit");
+    assert.equal(result.recoveryAttempts, 0);
+  });
+
   it("rejects exact-session drift instead of accepting a different session", async () => {
     const { workspace } = setup();
     const result = await runClaudeTaskSession({

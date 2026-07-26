@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add canonical `claude-haiku-4-5` with explicit low effort as a test-only model
+  for Plugin smoke, hook, environment-parity, and integration checks; retain
+  Sonnet/Opus for general work and reject dated model IDs as public inputs.
+- Treat explicit Claude subscription, usage, allowance, credit, or quota
+  exhaustion as terminal and non-retrying, with no model fallback; keep generic
+  HTTP 429 recovery and caller-imposed maximum-budget failures distinct.
 - Keep the 500 ms completion observation cadence while eliminating completion
   inbox locks and fsyncs from quiet polls and already-frozen redelivery; retain
   locked first-delivery freezing and acknowledgement semantics.

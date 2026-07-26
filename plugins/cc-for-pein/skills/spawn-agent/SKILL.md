@@ -1,6 +1,6 @@
 ---
 name: spawn-agent
-description: 'Experimental: create a durable, root-scoped Claude Agent and start its first asynchronous turn. Requires a task name, message, explicit Sonnet/Opus model, and fork_turns=none.'
+description: 'Experimental: create a durable, root-scoped Claude Agent and start its first asynchronous turn. Requires a task name, message, explicit supported model, and fork_turns=none; Haiku is test-only.'
 ---
 
 # Spawn Claude Agent
@@ -22,19 +22,26 @@ Canonical arguments are `--task-name <name>`, `--fork-turns none`, an explicit
 `--description <text>`, `--reasoning-effort <level>`, and
 `--execution-profile safe|terminal-parity`.
 
-Use model and effort as separate arguments. This plugin supports exactly two
-Claude models, pinned to the full model IDs verified against
-the installed Claude Code 2.1.220 and active account:
+Use model and effort as separate arguments. This plugin supports exactly three
+Claude model selections, pinned to canonical model IDs verified against the
+installed Claude Code 2.1.220 and active account. Only Sonnet and Opus are for
+general work:
 
 - `Sonnet`, `Sonnet 5`, or model alias `sonnet` →
   `--model claude-sonnet-5`.
 - `Opus`, `Opus 5`, `Ops5` when used as a model selector, or model alias `opus`
   → `--model claude-opus-5`.
+- `Haiku` or model alias `haiku` → `--model claude-haiku-4-5` with
+  `--reasoning-effort low`. This model is **test-only**: use it for Plugin
+  smoke, hook, environment-parity, and integration witnesses. Do not use it
+  for architecture, research judgment, audits, or ordinary delegated work.
 
-Do not select Fable, Haiku, or another Claude model through this skill. Treat an
+Do not select Fable or another Claude model through this skill. Treat an
 `Ops5` substring inside an Agent/task name as a label, not an implicit model
 request; apply the mapping only when the user uses it to select the model. If
-the user does not select Sonnet or Opus, stop and ask them to choose; the
+the task is a real Plugin smoke, hook, environment, or integration check, select
+Haiku/low explicitly without spending Sonnet or Opus capacity. For other work,
+if the user does not select Sonnet or Opus, stop and ask them to choose. The
 runtime must reject a launch without `--model`, including under
 `terminal-parity`.
 
@@ -42,6 +49,14 @@ The exact effort values are `low`, `medium`, `high`, `xhigh`, and `max`; map
 human wording such as “x-high” to `--reasoning-effort xhigh`. Never pass partial
 names such as `opus-5` or `sonnet-5`, and never silently retry with a different
 model if Claude rejects the requested one.
+
+If a real CC test explicitly reports that the Claude subscription, usage,
+weekly/monthly allowance, credits, or quota is exhausted, stop all subsequent
+real Claude spawns and follow-ups in that testing workflow. Report the limit
+and continue only local code edits, fake-Claude fixtures, unit tests, and
+integration tests. Do not reconnect or fall back to another model. A generic
+transient HTTP 429 may use the runtime's bounded reconnect policy; a caller-set
+`--max-budget-usd` failure is not subscription exhaustion.
 
 - Require `fork_turns=none` explicitly. Context inheritance (`all` or a
   positive count) is unsupported and must fail rather than being put into a

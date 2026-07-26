@@ -16,5 +16,5 @@
 
 ## 4. Review and Release
 
-- [ ] 4.1 Obtain an independent Opus 5/xhigh release audit and disposition any blocking findings
-- [ ] 4.2 Sync/archive the completed OpenSpec change, refresh the local plugin snapshot, and push main through the 9090 proxy
+- [x] 4.1 Obtain an independent high-effort Codex release audit without further Claude quota use and disposition any blocking findings
+- [x] 4.2 Sync the delta spec to the stable contract and pass the final local release gate

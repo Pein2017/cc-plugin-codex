@@ -67,6 +67,7 @@ function transportText(result) {
 }
 
 function looksLikeTransportFailure(result) {
+  if (result?.failureClass === "usage_or_subscription_limit") return false;
   if (result?.failureClass === "transport_closed_resumable") return true;
   return /connection closed mid-response|socket (?:closed|reset|hang up)|\bECONNRESET\b|\bEPIPE\b|stream(?:ing)? (?:idle )?timeout|timed out while streaming|\bHTTP\s*(?:408|429|5\d\d)\b/i.test(
     transportText(result)

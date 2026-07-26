@@ -798,18 +798,32 @@ export function acknowledgeAgentCompletionEvents(cwd, ownerRootId, deliveryToken
   }
   const acknowledgedTail = options.acknowledgedTail ?? DEFAULT_ACKNOWLEDGED_TAIL;
   return withInboxLock(cwd, owner, (inbox, filePath) => {
-    const alreadyAcknowledged = inbox.events.filter(
-      (event) => event.sequence <= inbox.acknowledgedThrough
-    );
-    if (tokens.every((token) => alreadyAcknowledged.some((event) => event.deliveryToken === token))) {
+    const byToken = new Map(inbox.events.map((event) => [event.deliveryToken, event]));
+    const unreadSuffix = [];
+    let reachedUnread = false;
+    for (const token of tokens) {
+      const event = byToken.get(token);
+      if (!event?.agentId) {
+        throw new Error("Completion acknowledgement contains an unknown or non-Agent token.");
+      }
+      if (event.sequence <= inbox.acknowledgedThrough) {
+        if (reachedUnread) {
+          throw new Error("Completion acknowledgement tokens are out of durable order.");
+        }
+      } else {
+        reachedUnread = true;
+        unreadSuffix.push(token);
+      }
+    }
+    if (unreadSuffix.length === 0) {
       return {
         acknowledgedThrough: inbox.acknowledgedThrough,
         acknowledgedCount: 0,
         compactedCount: 0,
       };
     }
-    const expected = unreadAgentLinkedEvents(inbox, tokens.length);
-    if (expected.length !== tokens.length || expected.some((event, index) => event.deliveryToken !== tokens[index])) {
+    const expected = unreadAgentLinkedEvents(inbox, unreadSuffix.length);
+    if (expected.length !== unreadSuffix.length || expected.some((event, index) => event.deliveryToken !== unreadSuffix[index])) {
       throw new Error("Completion acknowledgement must cover the oldest unread Agent-linked token prefix.");
     }
     const advanced = {
@@ -822,7 +836,7 @@ export function acknowledgeAgentCompletionEvents(cwd, ownerRootId, deliveryToken
     writeInboxAtomic(filePath, updated);
     return {
       acknowledgedThrough: advanced.acknowledgedThrough,
-      acknowledgedCount: tokens.length,
+      acknowledgedCount: unreadSuffix.length,
       compactedCount: compacted.compactedCount,
     };
   });

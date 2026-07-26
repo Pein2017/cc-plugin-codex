@@ -126,16 +126,22 @@ describe("native plugin contract", () => {
     );
     assert.match(text, /Sonnet.*Sonnet 5[\s\S]*--model claude-sonnet-5/);
     assert.match(text, /Opus.*Opus 5.*Ops5[\s\S]*--model claude-opus-5/);
-    assert.match(text, /supports exactly two[\s\S]*Claude models/i);
+    assert.match(text, /Haiku[\s\S]*--model claude-haiku-4-5[\s\S]*--reasoning-effort low/i);
+    assert.match(text, /Haiku[\s\S]*test-only[\s\S]*smoke[\s\S]*hook[\s\S]*environment-parity[\s\S]*integration/i);
+    assert.match(text, /supports exactly three[\s\S]*Claude model selections/i);
+    assert.match(text, /Only Sonnet and Opus are for[\s\S]*general work/i);
     assert.match(text, /requires[\s\S]*explicit[\s\S]*--model/i);
-    assert.match(text, /does not select Sonnet or Opus[\s\S]*stop and ask/i);
+    assert.match(text, /For other work[\s\S]*does not select Sonnet or Opus[\s\S]*stop and ask/i);
     assert.match(text, /must reject a launch without `--model`/i);
     assert.doesNotMatch(text, /runtime's explicit default is/);
-    assert.doesNotMatch(text, /--model (?:fable|haiku)/);
+    assert.doesNotMatch(text, /--model fable/);
     assert.match(text, /low.*medium.*high.*xhigh.*max/s);
     assert.match(text, /Ops5.*Agent\/task name[\s\S]*not an implicit model/s);
     assert.match(text, /Never pass partial[\s\S]*`opus-5`[\s\S]*`sonnet-5`/);
     assert.match(text, /never silently retry with a different[\s\S]*model/i);
+    assert.match(text, /subscription[\s\S]*usage[\s\S]*weekly\/monthly[\s\S]*credits[\s\S]*quota[\s\S]*stop all subsequent[\s\S]*real Claude/i);
+    assert.match(text, /generic[\s\S]*HTTP 429[\s\S]*bounded reconnect/i);
+    assert.match(text, /--max-budget-usd[\s\S]*not subscription exhaustion/i);
   });
 
   it("keeps list and wait receipts concise by default", () => {

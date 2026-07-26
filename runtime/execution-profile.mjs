@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * One semantic owner for every Claude CLI override. `terminal-parity` inherits
- * the user's normal Claude envelope except for the plugin-wide two-model
+ * the user's normal Claude envelope except for the plugin-wide supported-model
  * constraint; `safe` also adds an explicit sandbox/tool policy suitable for
  * delegated work.
  */
@@ -31,7 +31,7 @@ export function createExecutionProfile(options = {}) {
   const dangerouslySkipPermissions = Boolean(options.dangerouslySkipPermissions);
   const requestedModel = String(options.model ?? "").trim();
   if (!requestedModel) {
-    throw new Error("Claude execution requires an explicit Sonnet or Opus model.");
+    throw new Error("Claude execution requires an explicit Sonnet, Opus, or test-only Haiku model.");
   }
   const model = resolveModel(requestedModel);
 

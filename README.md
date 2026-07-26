@@ -60,12 +60,22 @@ records. `wait-agent` reports at most one bounded update: either coalesced safe
 progress or an acknowledgement-bearing completion with a 4096-byte handoff for
 parent synthesis. It never returns the full Claude final output.
 
-The entire runtime model surface is pinned to two choices: Sonnet 5 maps to
-`claude-sonnet-5`, and Opus 5 maps to `claude-opus-5`. Every initial spawn must
-select one explicitly; there is no default or fallback. Fable, Haiku, older
-model IDs, and any other available Claude model fail before Claude launches.
-Model and reasoning effort remain separate arguments; `x-high` maps to effort
-value `xhigh`. Follow-up turns inherit the Agent's selected model.
+The runtime model surface is pinned to three choices: Sonnet 5 maps to
+`claude-sonnet-5`, Opus 5 maps to `claude-opus-5`, and test-only Haiku 4.5 maps
+to `claude-haiku-4-5`. Haiku/low is reserved for Plugin smoke, hook,
+environment-parity, and integration witnesses; normal delegation and
+decision-grade work remain Sonnet or Opus. Every initial spawn selects a model
+explicitly; there is no implicit model or fallback. Fable, older model IDs,
+dated backend snapshot IDs, and other available Claude models fail before
+Claude launches. Model and reasoning effort remain separate arguments;
+`x-high` maps to `xhigh`. Follow-up turns inherit the Agent's selected model.
+
+An explicit Claude subscription, usage, weekly/monthly allowance, credit, or
+quota exhaustion ends subsequent real CC tests in that workflow. The runtime
+does not reconnect or substitute another model, while local code work and
+fake-Claude tests may continue. Generic transient HTTP 429 remains eligible for
+bounded exact-session recovery, and a caller-imposed maximum budget is not an
+account-limit signal.
 
 Each fresh Agent session receives its durable Agent name through Claude's
 `--name` option. This preserves a useful Claude-side label and avoids the
@@ -162,8 +172,8 @@ registry and inbox are rebuildable projections.
 
 ## Execution profiles
 
-`terminal-parity` is the default. It selects the caller's explicit Sonnet or
-Opus model, sets `IS_SANDBOX=1`, and always launches Claude with
+`terminal-parity` is the default. It selects the caller's explicit supported
+model, sets `IS_SANDBOX=1`, and always launches Claude with
 `--dangerously-skip-permissions`. It otherwise leaves effort, settings, tools,
 MCP configuration, hooks, memories, skills, plugins, and prompts to the native
 Claude configuration unless the caller explicitly supplies an override.
@@ -201,7 +211,7 @@ not an internal job ID:
 
 | Removed v0.1 surface | v0.3 canonical replacement |
 | --- | --- |
-| `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit Sonnet 5 or Opus 5 model |
+| `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit supported model; Haiku is test-only |
 | `steer <job>` | `send_message <target> <message>` |
 | `steer --follow-up <job>` / `followUp` | `followup_task <target> <message>` |
 | `status` / `result` | `list_agents` and untargeted `wait_agent` |
@@ -213,7 +223,7 @@ runtime backfills it only when an exact supported model is proven by a retained
 receipt or the bounded tail of the Agent's Claude session artifact. A terminal
 Agent whose historical model is unsupported or cannot be proven remains
 visible with its history intact, but continuation is blocked; the runtime never
-substitutes Sonnet 5 or Opus 5. An active legacy turn without model evidence is
+substitutes Sonnet 5, Opus 5, or Haiku 4.5. An active legacy turn without model evidence is
 left running and migration is deferred. If a previously unproven artifact later
 records an exact supported model, reconciliation restores exact-session
 continuation automatically.

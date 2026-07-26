@@ -31,6 +31,8 @@ An mtime-only or existence-only probe was rejected because it would introduce ca
 
 If every selected event already has `firstDeliveredAt`, its public payload is immutable by contract. The reader can project that snapshot without locking or writing. A concurrent acknowledgement may make this response a final duplicate, but the token and payload were valid at snapshot time and two-phase delivery already permits at-least-once duplicates; the acknowledgement cursor never regresses.
 
+For a multi-event diagnostic batch, a racing acknowledgement may advance only an already-returned prefix while the snapshot still contains the whole frozen batch. A later acknowledgement of that snapshot therefore treats its already-acknowledged token prefix idempotently and validates only the remaining suffix against the oldest unread Agent-linked events. It still cannot skip an unread event or acknowledge tokens out of durable order.
+
 Taking a read lock for redelivery was rejected because the lock itself is implemented through a durable candidate record and recreates the fsync cost despite no state mutation.
 
 ### 3. Lock, reread, and freeze only an unexposed selection
@@ -45,6 +47,7 @@ Focused tests will instrument Node's filesystem `fsyncSync` boundary after fixtu
 
 - [A completion is appended just after a quiet snapshot] → It is observed on the next unchanged 500 ms poll; no larger latency bound is introduced.
 - [Acknowledgement races a snapshot-based redelivery] → At most one valid duplicate with the same frozen token/payload is returned; the durable acknowledgement cursor remains monotonic.
+- [Partial acknowledgement races a multi-event frozen snapshot] → Later acknowledgement accepts the already-acknowledged prefix idempotently and advances only the exact oldest unread suffix.
 - [A future mutation bypasses first-delivery immutability] → Keep reconciliation and correction rules unchanged and cover identical redelivery after attempted correction.
 - [Tests accidentally count fixture setup fsyncs] → Install the fsync counter only around the observation calls being asserted.
 

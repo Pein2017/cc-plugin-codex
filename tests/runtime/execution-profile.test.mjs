@@ -30,11 +30,27 @@ describe("execution profiles", () => {
     assert.equal(profile.receipt.inheritedClaudeConfiguration, true);
     assert.throws(
       () => createExecutionProfile({ profile: "terminal-parity", env: {} }),
-      /explicit Sonnet or Opus model/
+      /explicit Sonnet, Opus, or test-only Haiku model/
     );
-    assert.throws(
-      () => createExecutionProfile({ profile: "terminal-parity", model: "haiku", env: {} }),
-      /Unsupported Claude model/
+    const haiku = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "haiku",
+      env: {},
+    });
+    assert.equal(haiku.claudeOptions.model, "claude-haiku-4-5");
+    assert.equal(haiku.claudeOptions.effort, undefined);
+    assert.deepEqual(haiku.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
+
+    const explicitLowHaiku = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "haiku",
+      effort: "low",
+      env: {},
+    });
+    assert.equal(explicitLowHaiku.claudeOptions.effort, "low");
+    assert.deepEqual(
+      explicitLowHaiku.receipt.addedOverrides,
+      ["model", "dangerouslySkipPermissions", "effort"],
     );
   });
 

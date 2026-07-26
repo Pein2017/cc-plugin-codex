@@ -168,6 +168,121 @@ describe("completion inbox", () => {
     assert.ok(quietReads.result.every((receipt) => receipt.events.length === 0));
   });
 
+  it("locks a mixed frozen and unfrozen batch once, then redelivers it read-only", () => {
+    const { workspace, ownerRootId } = setup();
+    const first = appendCompletionEvent(workspace, ownerRootId, completion("mixed-first", {
+      agentId: "agent-mixed-first",
+      finalMessage: "first handoff",
+    })).event;
+    const second = appendCompletionEvent(workspace, ownerRootId, completion("mixed-second", {
+      agentId: "agent-mixed-second",
+      finalMessage: "second handoff",
+    })).event;
+
+    const frozenFirst = readUnreadAgentCompletionSummaries(
+      workspace,
+      ownerRootId,
+      { limit: 1 },
+    );
+    assert.deepEqual(frozenFirst.events.map((event) => event.deliveryToken), [first.deliveryToken]);
+
+    const mixed = observePersistenceIo(() => readUnreadAgentCompletionSummaries(
+      workspace,
+      ownerRootId,
+      { limit: 2 },
+    ));
+    assert.ok(mixed.counts.lockLinks > 0);
+    assert.ok(mixed.counts.fsync > 0);
+    assert.deepEqual(
+      mixed.result.events.map((event) => event.deliveryToken),
+      [first.deliveryToken, second.deliveryToken],
+    );
+
+    const redelivery = observePersistenceIo(() => readUnreadAgentCompletionSummaries(
+      workspace,
+      ownerRootId,
+      { limit: 2 },
+    ));
+    assert.deepEqual(redelivery.counts, { fsync: 0, lockLinks: 0 });
+    assert.deepEqual(redelivery.result, mixed.result);
+  });
+
+  it("permits only an immutable at-least-once duplicate when acknowledgement races snapshot redelivery", () => {
+    const { workspace, ownerRootId } = setup();
+    const appended = appendCompletionEvent(workspace, ownerRootId, completion("racing-ack", {
+      agentId: "agent-racing-ack",
+      finalMessage: "frozen handoff",
+    })).event;
+    const frozen = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const originalReadFileSync = fs.readFileSync;
+    let acknowledgementTriggered = false;
+    fs.readFileSync = (...args) => {
+      const snapshot = originalReadFileSync(...args);
+      if (!acknowledgementTriggered && path.resolve(String(args[0])) === path.resolve(inboxFile)) {
+        acknowledgementTriggered = true;
+        acknowledgeAgentCompletionEvents(workspace, ownerRootId, [appended.deliveryToken]);
+      }
+      return snapshot;
+    };
+    let raced;
+    try {
+      raced = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+    }
+
+    assert.equal(acknowledgementTriggered, true);
+    assert.deepEqual(raced, frozen);
+    assert.deepEqual(readUnreadAgentCompletionSummaries(workspace, ownerRootId), { events: [] });
+    const stored = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    assert.equal(stored.acknowledgedThrough, 1);
+  });
+
+  it("accepts an already-acknowledged prefix when partial acknowledgement races a frozen batch", () => {
+    const { workspace, ownerRootId } = setup();
+    const events = ["batch-first", "batch-second"].map((jobId) => appendCompletionEvent(
+      workspace,
+      ownerRootId,
+      completion(jobId, { agentId: `agent-${jobId}`, finalMessage: jobId }),
+    ).event);
+    const frozen = readUnreadAgentCompletionSummaries(workspace, ownerRootId, { limit: 2 });
+    assert.deepEqual(
+      frozen.events.map((event) => event.deliveryToken),
+      events.map((event) => event.deliveryToken),
+    );
+
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const originalReadFileSync = fs.readFileSync;
+    let partialAckTriggered = false;
+    fs.readFileSync = (...args) => {
+      const snapshot = originalReadFileSync(...args);
+      if (!partialAckTriggered && path.resolve(String(args[0])) === path.resolve(inboxFile)) {
+        partialAckTriggered = true;
+        acknowledgeAgentCompletionEvents(workspace, ownerRootId, [events[0].deliveryToken]);
+      }
+      return snapshot;
+    };
+    let raced;
+    try {
+      raced = readUnreadAgentCompletionSummaries(workspace, ownerRootId, { limit: 2 });
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+    }
+
+    assert.equal(partialAckTriggered, true);
+    assert.deepEqual(raced, frozen);
+    const acknowledged = acknowledgeAgentCompletionEvents(
+      workspace,
+      ownerRootId,
+      raced.events.map((event) => event.deliveryToken),
+    );
+    assert.equal(acknowledged.acknowledgedThrough, 2);
+    assert.equal(acknowledged.acknowledgedCount, 1);
+    assert.deepEqual(readUnreadAgentCompletionSummaries(workspace, ownerRootId), { events: [] });
+  });
+
   it("survives restart and redelivers an unacknowledged completion", async () => {
     const { workspace, ownerRootId } = setup();
     const first = appendCompletionEvent(workspace, ownerRootId, completion("job-1"));

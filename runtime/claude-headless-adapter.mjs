@@ -503,7 +503,29 @@ export function classifyClaudeFailure(result = {}) {
     return { kind: null, resumable: false, reason: null };
   }
 
-  const text = [result.finalMessage, result.stderr, result.warning]
+  const terminalEvents = Array.isArray(result.terminalEvents)
+    ? result.terminalEvents
+    : [];
+  const terminalFailureText = terminalEvents.flatMap((event) => {
+    const values = [];
+    if (typeof event?.error === "string") values.push(event.error);
+    if (Array.isArray(event?.errors)) {
+      for (const error of event.errors) {
+        if (typeof error === "string") values.push(error);
+        else if (typeof error?.message === "string") values.push(error.message);
+      }
+    }
+    if (event?.is_error === true && typeof event?.result === "string") {
+      values.push(event.result);
+    }
+    return values;
+  });
+  const text = [
+    result.finalMessage,
+    result.stderr,
+    result.warning,
+    ...terminalFailureText,
+  ]
     .filter(Boolean)
     .join("\n");
   if (/\b(authentication|not authenticated|unauthorized|forbidden|invalid api key|oauth|permission denied)\b/i.test(text)) {
@@ -511,6 +533,25 @@ export function classifyClaudeFailure(result = {}) {
   }
   if (/\b(context window|maximum context|prompt is too long|request (?:is )?invalid|invalid request|malformed request|unprocessable)\b/i.test(text)) {
     return { kind: "context_or_request_invalid", resumable: false, reason: text };
+  }
+
+  const callerBudgetLimit = /\b(?:maximum|max)\s+budget\b|error_max_budget_usd|--max-budget-usd/i.test(text);
+  const accountCapacityScope = "(?:subscription|quota|credits?|weekly|monthly|allowance|billing[- ]period)";
+  const exhaustionSignal = "(?:hit|reached|exceeded|exhausted|depleted|used[ -]up|no remaining|insufficient)";
+  const explicitAccountLimit = !callerBudgetLimit && (
+    new RegExp(`\\b${accountCapacityScope}\\b[^\\n]{0,100}\\b${exhaustionSignal}\\b`, "i").test(text) ||
+    new RegExp(`\\b${exhaustionSignal}\\b[^\\n]{0,100}\\b${accountCapacityScope}\\b`, "i").test(text) ||
+    /\busage\s+(?:limit|quota|allowance)\b[^\n]{0,60}\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b/i.test(text) ||
+    /\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b[^\n]{0,60}\busage\s+(?:limit|quota|allowance)\b/i.test(text) ||
+    /\b(?:insufficient|no|zero)\s+(?:remaining\s+)?credits?\b/i.test(text) ||
+    /\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:limit|quota)\b/i.test(text)
+  );
+  if (explicitAccountLimit) {
+    return {
+      kind: "usage_or_subscription_limit",
+      resumable: false,
+      reason: text,
+    };
   }
 
   const transportFailure = /connection closed mid-response|socket (?:closed|reset|hang up)|\bECONNRESET\b|\bEPIPE\b|stream(?:ing)? (?:idle )?timeout|timed out while streaming|\bHTTP\s*(?:408|429|5\d\d)\b/i.test(text);
@@ -522,9 +563,6 @@ export function classifyClaudeFailure(result = {}) {
     };
   }
 
-  const terminalEvents = Array.isArray(result.terminalEvents)
-    ? result.terminalEvents
-    : [];
   const lastTerminal = terminalEvents.at(-1);
   if (
     (lastTerminal?.subtype === "error_during_execution" &&
@@ -745,6 +783,8 @@ export const MODEL_ALIASES = new Map([
   ["claude-opus-5", "claude-opus-5"],
   ["sonnet", "claude-sonnet-5"],
   ["claude-sonnet-5", "claude-sonnet-5"],
+  ["haiku", "claude-haiku-4-5"],
+  ["claude-haiku-4-5", "claude-haiku-4-5"],
 ]);
 
 export const EFFORT_ALIASES = {
@@ -759,6 +799,8 @@ export const DEFAULT_EFFORT_BY_MODEL = new Map([
   ["claude-opus-5", "xhigh"],
   ["sonnet", "high"],
   ["claude-sonnet-5", "high"],
+  ["haiku", "low"],
+  ["claude-haiku-4-5", "low"],
 ]);
 
 export function resolveDefaultEffort(model, effort) {
@@ -775,7 +817,7 @@ export function resolveModel(model) {
   const resolved = MODEL_ALIASES.get(normalized);
   if (resolved) return resolved;
   throw new Error(
-    `Unsupported Claude model "${model}". Use sonnet/claude-sonnet-5 or opus/claude-opus-5.`
+    `Unsupported Claude model "${model}". Use sonnet/claude-sonnet-5, opus/claude-opus-5, or test-only haiku/claude-haiku-4-5.`
   );
 }
 

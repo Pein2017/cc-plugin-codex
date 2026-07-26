@@ -38,7 +38,7 @@ describe("Claude headless adapter", () => {
     assert.equal(args.includes("--dangerously-skip-permissions"), true);
   });
 
-  it("pins the only two supported models and names only fresh sessions", () => {
+  it("pins the supported canonical models and names only fresh sessions", () => {
     const initial = buildArgs("ignored", {
       model: "opus",
       effort: "xhigh",
@@ -49,8 +49,13 @@ describe("Claude headless adapter", () => {
 
     const sonnet = buildArgs("ignored", { model: "claude-sonnet-5" });
     assert.equal(sonnet[sonnet.indexOf("--model") + 1], "claude-sonnet-5");
+    const haiku = buildArgs("ignored", { model: "haiku", effort: "low" });
+    assert.equal(haiku[haiku.indexOf("--model") + 1], "claude-haiku-4-5");
+    assert.equal(haiku[haiku.indexOf("--effort") + 1], "low");
     assert.throws(() => buildArgs("ignored", { model: "fable" }), /Unsupported Claude model/);
     assert.throws(() => buildArgs("ignored", { model: "claude-opus-4-7" }), /Unsupported Claude model/);
+    assert.throws(() => buildArgs("ignored", { model: "haiku-4-5" }), /Unsupported Claude model/);
+    assert.throws(() => buildArgs("ignored", { model: "claude-haiku-4-5-20251001" }), /Unsupported Claude model/);
 
     const resumed = buildArgs("ignored", {
       model: "opus",
@@ -89,5 +94,90 @@ describe("Claude headless adapter", () => {
       stderr: "Connection closed mid-response",
     });
     assert.equal(withoutSession.kind, "protocol_unknown");
+  });
+
+  it("classifies explicit account limits from terminal errors without confusing budgets or generic 429", () => {
+    for (const message of [
+      "You've hit your limit · resets 8pm",
+      "Weekly usage limit exceeded for this subscription",
+      "Quota exhausted: no remaining credits",
+    ]) {
+      const limited = classifyClaudeFailure({
+        status: "failed",
+        sessionId: "s-limit",
+        exitCode: 1,
+        terminalEvents: [{
+          type: "result",
+          subtype: "error_max_turns",
+          is_error: true,
+          errors: [message],
+        }],
+      });
+      assert.equal(limited.kind, "usage_or_subscription_limit", message);
+      assert.equal(limited.resumable, false, message);
+    }
+
+    const budget = classifyClaudeFailure({
+      status: "failed",
+      sessionId: "s-budget",
+      terminalEvents: [{
+        type: "result",
+        subtype: "error_max_budget_usd",
+        is_error: true,
+        result: "Reached maximum budget ($0.02)",
+      }],
+    });
+    assert.equal(budget.kind, "fatal");
+    assert.equal(budget.resumable, false);
+
+    const transient = classifyClaudeFailure({
+      status: "failed",
+      sessionId: "s-429",
+      stderr: "HTTP 429 rate limit exceeded; retry later",
+    });
+    assert.equal(transient.kind, "transport_closed_resumable");
+    assert.equal(transient.resumable, true);
+
+    for (const message of [
+      "HTTP 429: rate limit exceeded for your current usage tier; retry later",
+      "HTTP 429: request limit for API usage; retry after 30 seconds",
+      "HTTP 429: You've hit your rate limit; retry after 30 seconds",
+      "HTTP 429: You have reached your request limit; retry later",
+      "HTTP 429: You've exceeded your rate limit",
+    ]) {
+      const rateLimited = classifyClaudeFailure({
+        status: "failed",
+        sessionId: "s-rate-tier",
+        stderr: message,
+      });
+      assert.equal(rateLimited.kind, "transport_closed_resumable", message);
+      assert.equal(rateLimited.resumable, true, message);
+    }
+
+    for (const message of [
+      "Your current period allowance has been exhausted; resets tomorrow",
+      "Current billing-period limit reached; resets tomorrow",
+    ]) {
+      const periodLimited = classifyClaudeFailure({
+        status: "failed",
+        sessionId: "s-period",
+        terminalEvents: [{ type: "result", is_error: true, result: message }],
+      });
+      assert.equal(periodLimited.kind, "usage_or_subscription_limit", message);
+      assert.equal(periodLimited.resumable, false, message);
+    }
+
+    const explicitBudget = classifyClaudeFailure({
+      status: "failed",
+      sessionId: "s-explicit-budget",
+      terminalEvents: [{
+        type: "result",
+        subtype: "error_max_budget_usd",
+        is_error: true,
+        result: "error_max_budget_usd: Usage limit reached after maximum budget ($0.02)",
+      }],
+    });
+    assert.equal(explicitBudget.kind, "fatal");
+    assert.equal(explicitBudget.resumable, false);
   });
 });
