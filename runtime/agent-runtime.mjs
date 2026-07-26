@@ -17,7 +17,7 @@ import {
   generateJobId,
   getSteeringSnapshot,
   listJobsForAgentReconciliation,
-  patchJob,
+  markAgentProjectionReconciled,
   readJobFile,
 } from "./job-store.mjs";
 
@@ -589,16 +589,19 @@ class AgentRuntime {
     // must not turn a healthy just-reserved activation into a false orphan.
     const reconciliationStartedAt = Date.now();
     const jobs = this.rootJobs();
+    const jobsById = new Map(jobs.map((job) => [job.id, job]));
     const receipts = this.store.reconcileFromJobs(jobs);
     for (const receipt of receipts) {
-      if (!receipt.jobId || !(receipt.reconciled || receipt.reason === "already_finalized")) continue;
+      if (!receipt.jobId) continue;
+      const projectionMarkerMissing = !jobsById.get(receipt.jobId)?.agentProjectionReconciledAt;
+      if (!receipt.reconciled && !(receipt.reason === "already_finalized" && projectionMarkerMissing)) {
+        continue;
+      }
       try {
-        patchJob(this.cwd, receipt.jobId, {
-          agentProjectionReconciledAt: new Date().toISOString(),
-        });
+        markAgentProjectionReconciled(this.cwd, receipt.jobId);
       } catch {
         // The Agent projection is already durable. A later cleanup/reconcile
-        // pass may refresh the pruning marker if this job still exists.
+        // pass may record the missing pruning marker if this job still exists.
       }
     }
     const agentsBeforeMigration = this.store.listAgents();

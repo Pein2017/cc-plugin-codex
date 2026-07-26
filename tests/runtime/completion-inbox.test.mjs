@@ -129,6 +129,64 @@ function readFromFreshProcess(workspace, ownerRootId, runtimeHome) {
 }
 
 describe("completion inbox", () => {
+  it("keeps immutable reconciliation lock-free while serializing unfrozen duplicates", () => {
+    const { workspace, ownerRootId } = setup();
+    const job = {
+      id: "immutable-reconciliation",
+      agentId: "agent-immutable-reconciliation",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      completionSummary: "immutable reconciliation",
+      result: { rawOutput: "immutable public handoff" },
+      recoverability: {
+        resumable: false,
+        reason: "test_terminal",
+      },
+    };
+    const initial = reconcileTerminalJobCompletion(workspace, ownerRootId, job).event;
+
+    const unfrozenDuplicate = observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
+    );
+    assert.ok(unfrozenDuplicate.counts.lockLinks > 0);
+    assert.ok(unfrozenDuplicate.counts.fsync > 0);
+
+    readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    const frozenDuplicate = observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
+    );
+    assert.deepEqual(frozenDuplicate.counts, { fsync: 0, lockLinks: 0 });
+    assert.equal(frozenDuplicate.result.event.deliveryToken, initial.deliveryToken);
+
+    acknowledgeAgentCompletionEvents(workspace, ownerRootId, [initial.deliveryToken]);
+    const acknowledgedOnlyJob = {
+      ...job,
+      id: "acknowledged-only-reconciliation",
+      completionSummary: "acknowledged without first-delivery freezing",
+    };
+    const acknowledgedOnly = reconcileTerminalJobCompletion(
+      workspace,
+      ownerRootId,
+      acknowledgedOnlyJob
+    ).event;
+    acknowledgeAgentCompletionEvents(workspace, ownerRootId, [acknowledgedOnly.deliveryToken]);
+    const acknowledgedDuplicate = observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, acknowledgedOnlyJob)
+    );
+    assert.deepEqual(acknowledgedDuplicate.counts, { fsync: 0, lockLinks: 0 });
+    assert.equal(acknowledgedDuplicate.result.event.deliveryToken, acknowledgedOnly.deliveryToken);
+
+    assert.throws(
+      () => appendCompletionEvent(workspace, ownerRootId, {
+        ...completion(job.id, {
+          agentId: "agent-identity-collision",
+          finalMessage: "different Agent",
+        }),
+      }, { reconcileExisting: true }),
+      /identity collision/
+    );
+  });
+
   it("keeps quiet observation and frozen redelivery free of locks and fsync", () => {
     const { workspace, ownerRootId } = setup();
     const appended = appendCompletionEvent(workspace, ownerRootId, completion("agent-observation", {

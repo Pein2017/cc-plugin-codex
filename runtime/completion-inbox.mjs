@@ -543,19 +543,59 @@ function sameCompletionFact(existing, normalized) {
     JSON.stringify(existing.resumability) === JSON.stringify(normalized.resumability);
 }
 
+function assertSameCompletionIdentity(existing, normalized, ownerRootId) {
+  if (
+    existing.jobId !== normalized.jobId ||
+    existing.ownerRootId !== ownerRootId ||
+    (existing.agentId ?? null) !== normalized.agentId
+  ) {
+    throw new Error("Completion event identity collision.");
+  }
+}
+
+function immutableExistingCompletionResult(inbox, existing, normalized, ownerRootId, options) {
+  assertSameCompletionIdentity(existing, normalized, ownerRootId);
+  const immutable = Boolean(existing.firstDeliveredAt) ||
+    existing.sequence <= inbox.acknowledgedThrough;
+  if (!immutable) return null;
+  const factDiffers = options.reconcileExisting === true &&
+    !sameCompletionFact(existing, normalized);
+  return {
+    appended: false,
+    corrected: false,
+    ...(factDiffers
+      ? {
+          reason: existing.firstDeliveredAt
+            ? "delivered_event_immutable"
+            : "acknowledged_event_immutable",
+        }
+      : {}),
+    event: publicEvent(existing),
+    sequence: existing.sequence,
+  };
+}
+
 export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}) {
   const owner = assertText(ownerRootId, "owner root ID");
   const normalized = normalizeCompletionInput(owner, completion);
+  const snapshot = readInbox(cwd, owner, false);
+  const snapshotExisting = snapshot?.events.find(
+    (event) => event.eventId === normalized.eventId
+  );
+  if (snapshotExisting) {
+    const settled = immutableExistingCompletionResult(
+      snapshot,
+      snapshotExisting,
+      normalized,
+      owner,
+      options
+    );
+    if (settled) return settled;
+  }
   return withInboxLock(cwd, owner, (inbox, filePath) => {
     const existing = inbox.events.find((event) => event.eventId === normalized.eventId);
     if (existing) {
-      if (
-        existing.jobId !== normalized.jobId ||
-        existing.ownerRootId !== owner ||
-        (existing.agentId ?? null) !== normalized.agentId
-      ) {
-        throw new Error("Completion event identity collision.");
-      }
+      assertSameCompletionIdentity(existing, normalized, owner);
       if (options.reconcileExisting === true && !sameCompletionFact(existing, normalized)) {
         // Completion facts already acknowledged by Codex are immutable. A
         // durable job correction remains diagnosable, but must not rewrite a

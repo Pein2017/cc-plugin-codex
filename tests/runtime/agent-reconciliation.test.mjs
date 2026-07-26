@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
-import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
+import {
+  acknowledgeAgentCompletionEvents,
+  readUnreadAgentCompletionSummaries,
+  reconcileTerminalJobCompletion,
+} from "../../runtime/completion-inbox.mjs";
+import { cleanupOldJobs, readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 
 const sourceRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 let fixture;
@@ -85,7 +90,7 @@ function markActivationOld(runtime, agentId) {
 }
 
 describe("Agent reconciliation retention and activation recovery", () => {
-  it("projects a 101st terminal Agent fact before it can be pruned from the public retention view", () => {
+  it("repairs a finalized crash-window marker before retention and completion-tail compaction", async () => {
     const { workspace, env } = activeFixture();
     const runtime = createAgentRuntime({ cwd: workspace, env });
     const agent = runtime.store.createAgent({ task_name: "retention", selectedModel: "claude-sonnet-5" });
@@ -93,20 +98,56 @@ describe("Agent reconciliation retention and activation recovery", () => {
     const newest = terminalJob(agent, "retained-job-100", new Date(baseTime + 100_000).toISOString());
     runtime.store.reserveActivation(agent.agentId, newest.id, { initial: true });
     runtime.store.finalizeFromJob(newest);
+    const oldest = terminalJob(agent, "retained-job-000", new Date(baseTime).toISOString());
+    runtime.store.finalizeFromJob(oldest);
 
     for (let index = 0; index <= 100; index += 1) {
       const id = `retained-job-${String(index).padStart(3, "0")}`;
       writeJobFile(workspace, id, {
-        ...terminalJob(agent, id, new Date(baseTime + index * 1_000).toISOString()),
+        ...(index === 0
+          ? oldest
+          : terminalJob(agent, id, new Date(baseTime + index * 1_000).toISOString())),
         ...(index === 0 ? {} : { agentProjectionReconciledAt: new Date().toISOString() }),
       });
     }
+    reconcileTerminalJobCompletion(workspace, agent.rootThreadId, oldest);
 
     assert.equal(runtime.rootJobs().length, 101);
     const receipts = runtime.reconcile();
 
     assert.ok(readJobFile(workspace, "retained-job-000")?.agentProjectionReconciledAt);
-    assert.ok(receipts.some((receipt) => receipt.jobId === "retained-job-000" && receipt.reconciled));
+    assert.ok(receipts.some(
+      (receipt) => receipt.jobId === "retained-job-000" && receipt.reason === "already_finalized"
+    ));
+
+    cleanupOldJobs(workspace);
+    assert.equal(readJobFile(workspace, "retained-job-000"), null);
+
+    const firstBatch = readUnreadAgentCompletionSummaries(
+      workspace,
+      agent.rootThreadId,
+      { limit: 100 }
+    );
+    assert.equal(firstBatch.events.length, 100);
+    const firstAcknowledgement = acknowledgeAgentCompletionEvents(
+      workspace,
+      agent.rootThreadId,
+      firstBatch.events.map((event) => event.deliveryToken)
+    );
+    assert.equal(firstAcknowledgement.compactedCount, 0);
+
+    const finalBatch = readUnreadAgentCompletionSummaries(workspace, agent.rootThreadId);
+    assert.equal(finalBatch.events.length, 1);
+    const finalAcknowledgement = acknowledgeAgentCompletionEvents(
+      workspace,
+      agent.rootThreadId,
+      finalBatch.events.map((event) => event.deliveryToken)
+    );
+    assert.equal(finalAcknowledgement.compactedCount, 1);
+    assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), {
+      message: "Timed out waiting for CC Agent activity.",
+      timedOut: true,
+    });
   });
 
   it("releases only grace-expired missing reservations after restart and preserves the follow-up mailbox", () => {

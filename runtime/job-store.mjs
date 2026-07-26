@@ -789,6 +789,35 @@ export function patchJob(cwd, jobId, patch) {
   }
 }
 
+export function markAgentProjectionReconciled(cwd, jobId) {
+  const jobFile = resolveJobFile(cwd, jobId);
+  const lockFile = jobFile + ".lock";
+  const fd = acquireJobLock(lockFile);
+  try {
+    let job;
+    try {
+      job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") return { updated: false, job: null };
+      throw error;
+    }
+    if (job.agentProjectionReconciledAt) {
+      return { updated: false, job };
+    }
+    const timestamp = nowIso();
+    const updatedJob = {
+      ...job,
+      id: jobId,
+      agentProjectionReconciledAt: timestamp,
+      updatedAt: timestamp,
+    };
+    writeAtomic(jobFile, updatedJob);
+    return { updated: true, job: updatedJob };
+  } finally {
+    releaseJobLock(lockFile, fd);
+  }
+}
+
 export function mutateJob(cwd, jobId, updater) {
   const jobFile = resolveJobFile(cwd, jobId);
   const lockFile = jobFile + ".lock";

@@ -51,7 +51,7 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **THEN** the runtime rejects the acknowledgement without advancing past unseen events
 
 ### Requirement: Waiting is bounded and durable
-`wait_agent` SHALL first process valid `acknowledge_tokens` from a prior response, then report the oldest already-unread Agent-linked completion or wait for the next current-root Agent completion or safe progress activity up to `timeout_ms`. Every newly returned completion SHALL remain unread until its token is echoed in a later wait. Observation that finds no unread Agent-linked completion or only an already-frozen completion SHALL use the validated inbox snapshot without acquiring the persistence write lock or calling fsync. First delivery of an unfrozen completion SHALL lock, reread, and durably freeze its public payload before returning. `list_agents` SHALL not participate in completion or progress delivery.
+`wait_agent` SHALL first process valid `acknowledge_tokens` from a prior response, then report the oldest already-unread Agent-linked completion or wait for the next current-root Agent completion or safe progress activity up to `timeout_ms`. Every newly returned completion SHALL remain unread until its token is echoed in a later wait. Observation that finds no unread Agent-linked completion or only an already-frozen completion SHALL use the validated inbox snapshot without acquiring the persistence write lock or calling fsync. Reconciliation of an already-published immutable or acknowledged completion and an already-recorded Agent projection SHALL likewise remain observation-only. A complete wait that times out after all relevant completion, acknowledgement, Agent-projection, and progress-delivery facts are settled SHALL acquire no persistence lock, call no fsync, and write no durable state. First delivery of an unfrozen completion SHALL lock, reread, and durably freeze its public payload before returning. `list_agents` SHALL not participate in completion or progress delivery.
 
 #### Scenario: List reports logical state
 - **WHEN** `list_agents` renders completed Agent state
@@ -81,6 +81,14 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **WHEN** repeated wait polls find no unread Agent-linked completion in an existing validated inbox
 - **THEN** each observation returns no completion without acquiring the inbox write lock, calling fsync, or changing durable state
 
+#### Scenario: Settled terminal Agent remains quiet
+- **WHEN** a terminal Agent has no unread completion because its completion is acknowledged, its Agent projection marker is already recorded, and no progress remains eligible before timeout
+- **THEN** the complete wait call returns a timeout without acquiring a persistence lock, calling fsync, or writing durable state
+
+#### Scenario: Registry finalization outruns its job marker
+- **WHEN** recovery finds that the Agent registry already finalized a terminal job but that job lacks `agentProjectionReconciledAt`
+- **THEN** reconciliation repairs the missing marker once so normal retention can prune the detailed job before later settled waits become observation-only
+
 #### Scenario: Frozen completion is redelivered
 - **WHEN** an unread Agent-linked completion already has an immutable first-delivery payload
 - **THEN** wait returns the identical token and bounded payload from the validated snapshot without acquiring the inbox write lock or calling fsync
@@ -88,6 +96,10 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 #### Scenario: Completion requires first-delivery freezing
 - **WHEN** an unread Agent-linked completion has not been exposed before
 - **THEN** wait acquires the inbox lock, rereads current state, durably freezes the public payload, and returns the resulting token and payload
+
+#### Scenario: Missing completion requires repair
+- **WHEN** reconciliation finds a terminal Agent job whose deterministic completion event is absent
+- **THEN** it acquires the required persistence lock and durably appends the event before delivery
 
 ### Requirement: Proactive wakeup is not a local-runtime dependency
 The local runtime SHALL NOT require a resident forwarding agent, background terminal, or unsupported host callback to preserve completion delivery.
