@@ -330,6 +330,11 @@ function activeLeaseOwner(lease) {
   if (!lease?.workspaceRoot || !lease?.jobId) return null;
   const owner = readJobFile(lease.workspaceRoot, lease.jobId);
   if (!owner || !ACTIVE_JOB_STATUSES.has(owner.status)) return null;
+  // A launcher that detached from an unresolved worker handoff intentionally
+  // has no trustworthy PID. It remains the exact-session owner until normal
+  // terminal/reaper lifecycle resolves that durable pre-Claude fact; otherwise
+  // the short grace window would let a second resume steal the same session.
+  if (owner.preClaudeLaunch === true && owner.workerHandoffUncertainAt) return owner;
   if (isWithinReapGracePeriod(owner)) return owner;
   const controlPid = owner.pid ?? owner.workerPid ?? null;
   const controlIdentity = owner.pid ? owner.pidIdentity : owner.workerPidIdentity;
@@ -1254,29 +1259,36 @@ function releaseJobLock(lockFile, ownership) {
 
 /**
  * Atomically transition job status from `expected` to `next`.
- * Returns true on success, false if current status !== expected.
+ * An optional in-lock predicate can additionally protect a transition from a
+ * stale owner. Returns false if status or predicate does not match.
  * Throws on persistent lock contention.
  */
 export function casJobStatus(cwd, jobId, expected, next, extra = {}) {
   return transitionJob(cwd, jobId, [expected], next, extra).transitioned;
 }
 
-export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}) {
+export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}, options = {}) {
   const jobFile = resolveJobFile(cwd, jobId);
   const lockFile = jobFile + ".lock";
   const expectedList = Array.isArray(expectedStatuses)
     ? expectedStatuses
     : [expectedStatuses];
+  const predicate = typeof options.predicate === "function"
+    ? options.predicate
+    : null;
   const fd = acquireJobLock(lockFile);
 
   /** @type {any} */
   let outcome;
   try {
     const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
-    if (!expectedList.includes(job.status)) {
+    const statusMatches = expectedList.includes(job.status);
+    const predicateMatches = statusMatches && (!predicate || predicate(job));
+    if (!predicateMatches) {
       outcome = {
         transitioned: false,
         previousStatus: job.status,
+        reason: statusMatches ? "predicate" : "status",
         job,
       };
     } else {

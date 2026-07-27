@@ -11,7 +11,7 @@ import path from "node:path";
 import { createAgentStore } from "./agent-store.mjs";
 import { resolveModel } from "./claude-headless-adapter.mjs";
 import { validateExecutionProfileOptions } from "./execution-profile.mjs";
-import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
+import { createInternalClaudeRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
   enqueueSteeringMessage,
@@ -803,8 +803,10 @@ class AgentRuntime {
       });
       throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
     }
+    let launchAttempted = false;
     try {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
+      launchAttempted = true;
       const assigned = activation.assignedMessages;
       const turn = await this.jobs.launchPreparedStart(attached, messageText(assigned));
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
@@ -815,11 +817,16 @@ class AgentRuntime {
         residency: "ephemeral_turn",
       };
     } catch (error) {
-      this.jobs.abortPreparedStart(prepared);
-      this.rollbackActivation(agent.agentId, jobId, agent, {
-        initial: true,
-        removableMessageId: initialMessage?.messageId,
-      });
+      const handoffDisposition = launchAttempted
+        ? preparedStartDisposition(error)
+        : "rollback_safe";
+      if (handoffDisposition === "rollback_safe") {
+        this.jobs.abortPreparedStart(prepared, { handoffDisposition });
+        this.rollbackActivation(agent.agentId, jobId, agent, {
+          initial: true,
+          removableMessageId: initialMessage?.messageId,
+        });
+      }
       throw error;
     }
   }
@@ -1071,8 +1078,10 @@ class AgentRuntime {
 
     const assigned = activation.assignedMessages;
     const prompt = messageText(assigned);
+    let launchAttempted = false;
     try {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
+      launchAttempted = true;
       const turn = await this.jobs.launchPreparedStart(attached, prompt);
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
       return {
@@ -1083,8 +1092,13 @@ class AgentRuntime {
         assignedMessageIds: assigned.map((message) => message.messageId),
       };
     } catch (error) {
-      this.jobs.abortPreparedStart(prepared);
-      this.rollbackActivation(agent.agentId, jobId, previous, { initial: initialActivation });
+      const handoffDisposition = launchAttempted
+        ? preparedStartDisposition(error)
+        : "rollback_safe";
+      if (handoffDisposition === "rollback_safe") {
+        this.jobs.abortPreparedStart(prepared, { handoffDisposition });
+        this.rollbackActivation(agent.agentId, jobId, previous, { initial: initialActivation });
+      }
       throw error;
     }
   }

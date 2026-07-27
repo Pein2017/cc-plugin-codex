@@ -74,6 +74,282 @@ const TERMINAL_STATUSES = new Set([
   "cancelled",
   "unknown",
 ]);
+const HANDOFF_DISPOSITIONS = new Set([
+  "rollback_safe",
+  "lifecycle_owned",
+  "ownership_uncertain",
+]);
+const CHILD_SPAWN_WAIT_MS = 1_000;
+const CHILD_EXIT_WAIT_MS = 1_000;
+
+export function preparedStartDisposition(error) {
+  const value = String(error?.handoffDisposition ?? "");
+  return HANDOFF_DISPOSITIONS.has(value) ? value : "ownership_uncertain";
+}
+
+function withPreparedStartDisposition(error, disposition) {
+  const resolved = HANDOFF_DISPOSITIONS.has(disposition)
+    ? disposition
+    : "ownership_uncertain";
+  if (error && typeof error === "object") {
+    error.handoffDisposition = resolved;
+    return error;
+  }
+  const wrapped = new Error(String(error));
+  /** @type {any} */ (wrapped).handoffDisposition = resolved;
+  return wrapped;
+}
+
+function nonEmptyString(value) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function isTerminalJob(job) {
+  return Boolean(job && TERMINAL_STATUSES.has(job.status));
+}
+
+function matchesClaimedWorker(job, childPid, childIdentity = null) {
+  if (!job || !["queued", "running"].includes(job.status)) return false;
+  if (!Number.isFinite(childPid) || job.workerPid !== childPid) return false;
+  const storedIdentity = nonEmptyString(job.workerPidIdentity);
+  if (!storedIdentity) return false;
+  const expectedIdentity = nonEmptyString(childIdentity);
+  return expectedIdentity == null || storedIdentity === expectedIdentity;
+}
+
+function matchesLauncherOwnership(job, launcher) {
+  return Boolean(
+    job &&
+    job.status === "queued" &&
+    Number.isFinite(launcher?.pid) &&
+    job.workerPid === launcher.pid &&
+    nonEmptyString(job.workerPidIdentity) === nonEmptyString(launcher.identity) &&
+    nonEmptyString(job.launcherGeneration) === nonEmptyString(launcher.generation)
+  );
+}
+
+function waitFor(promise, milliseconds, fallback) {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), milliseconds);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function observeChild(child, onPostSpawnError) {
+  if (!child || typeof child.once !== "function") {
+    throw new Error("Worker spawn did not return an observable child process.");
+  }
+  let spawned = false;
+  let exited = child.exitCode != null || child.signalCode != null;
+  let postSpawnError = null;
+  let resolveSpawn = null;
+  let resolveExit = null;
+  const spawnOutcome = new Promise((resolve) => { resolveSpawn = resolve; });
+  const exitOutcome = new Promise((resolve) => { resolveExit = resolve; });
+  const markExit = () => {
+    if (exited) return;
+    exited = true;
+    resolveExit?.(true);
+  };
+  if (exited) resolveExit?.(true);
+  child.once("spawn", () => {
+    spawned = true;
+    resolveSpawn?.({ kind: "spawned" });
+  });
+  child.once("error", (error) => {
+    resolveSpawn?.({ kind: "error", error });
+    if (spawned) {
+      postSpawnError = error;
+      onPostSpawnError?.(error);
+    }
+  });
+  child.once("exit", markExit);
+  child.once("close", markExit);
+  return {
+    hasExited: () => exited,
+    postSpawnError: () => postSpawnError,
+    waitForSpawn: () => waitFor(spawnOutcome, CHILD_SPAWN_WAIT_MS, { kind: "timeout" }),
+    waitForExit: () => exited
+      ? Promise.resolve(true)
+      : waitFor(exitOutcome, CHILD_EXIT_WAIT_MS, false),
+  };
+}
+
+function terminalizeFencedWorker(cwd, jobId, errorMessage) {
+  return transitionJob(cwd, jobId, ["cancelling"], "failed", {
+    phase: "worker_handoff_failed",
+    completedAt: nowIso(),
+    errorMessage,
+    failureClass: "worker_handoff_failed",
+    safeFreshRetry: true,
+    workerPid: null,
+    workerPidIdentity: null,
+    pid: null,
+    pidIdentity: null,
+  });
+}
+
+function recordWorkerHandoffUncertainty(cwd, jobId, errorMessage) {
+  const current = readJobFile(cwd, jobId);
+  if (!current) return null;
+  const uncertainAt = nowIso();
+  const diagnostic = {
+    workerHandoffUncertainAt: uncertainAt,
+    workerHandoffError: errorMessage,
+  };
+  if (isTerminalJob(current)) patchJob(cwd, jobId, diagnostic);
+  else {
+    patchJob(cwd, jobId, {
+      ...diagnostic,
+      phase: current.status === "cancelling"
+        ? "worker_handoff_cancelling"
+        : "worker_handoff_uncertain",
+    });
+  }
+  const durable = readJobFile(cwd, jobId);
+  if (durable?.workerHandoffUncertainAt !== uncertainAt) {
+    throw new Error(`Worker handoff uncertainty for ${jobId} was not durably persisted.`);
+  }
+  return durable;
+}
+
+function mayUnrefUnresolvedChild(cwd, jobId, observer) {
+  if (observer.hasExited()) return true;
+  const durable = readJobFile(cwd, jobId);
+  return Boolean(
+    isTerminalJob(durable) ||
+    nonEmptyString(durable?.workerHandoffUncertainAt)
+  );
+}
+
+async function fenceQueuedWorkerAndTerminate({
+  cwd,
+  jobId,
+  child,
+  observer,
+  childPid,
+  childIdentity,
+  launcher,
+  reason,
+  recordUncertainty,
+}) {
+  let fence;
+  try {
+    fence = transitionJob(cwd, jobId, ["queued"], "cancelling", {
+      phase: "worker_handoff_cancelling",
+      workerHandoffFenceAt: nowIso(),
+      workerHandoffUncertainAt: nowIso(),
+      workerHandoffError: reason,
+      workerPid: Number.isFinite(childPid) ? childPid : null,
+      workerPidIdentity: childIdentity ?? null,
+      pid: null,
+      pidIdentity: null,
+    }, {
+      predicate: (job) => matchesLauncherOwnership(job, launcher),
+    });
+  } catch {
+    return { kind: "unknown" };
+  }
+
+  if (!fence.transitioned) {
+    const observed = fence.job ?? readJobFile(cwd, jobId);
+    // A worker claim that won before the fence has already crossed the
+    // execution boundary. The parent must never send it a cleanup signal.
+    if (matchesClaimedWorker(observed, childPid, childIdentity)) return { kind: "claimed" };
+    // A queued-to-terminal control CAS is also an execution fence: the worker
+    // claims only from queued, so an old child cannot accept Claude input.
+    if (isTerminalJob(observed)) return { kind: "terminal" };
+    return { kind: "unknown" };
+  }
+
+  let delivered = false;
+  try {
+    delivered = child.kill("SIGTERM") === true;
+  } catch {}
+  if (!delivered || !(await observer.waitForExit())) {
+    try { recordUncertainty(cwd, jobId, reason); } catch {}
+    return { kind: "unknown" };
+  }
+
+  let terminalized = null;
+  try {
+    terminalized = terminalizeFencedWorker(cwd, jobId, reason);
+  } catch {
+    return { kind: "unknown" };
+  }
+  if (terminalized.transitioned || isTerminalJob(terminalized.job)) return { kind: "terminal" };
+  return { kind: "unknown" };
+}
+
+async function resolveSpawnedWorkerHandoff({
+  cwd,
+  jobId,
+  child,
+  observer,
+  getWorkerIdentity,
+  publishWorkerIdentity,
+  launcher,
+  recordUncertainty,
+}) {
+  const childPid = Number.isFinite(child?.pid) ? child.pid : null;
+  let childIdentity = null;
+  let publicationError = null;
+  if (childPid != null) {
+    try {
+      childIdentity = nonEmptyString(await getWorkerIdentity(childPid));
+    } catch (error) {
+      publicationError = error;
+    }
+  }
+
+  if (!observer.postSpawnError() && childPid != null && childIdentity) {
+    try {
+      const publication = await publishWorkerIdentity(
+        cwd,
+        jobId,
+        childPid,
+        childIdentity,
+        launcher
+      );
+      if (publication?.transitioned && matchesClaimedWorker(publication.job, childPid, childIdentity)) {
+        return { kind: "published" };
+      }
+    } catch (error) {
+      publicationError = error;
+    }
+  }
+
+  const observed = readJobFile(cwd, jobId);
+  if (matchesClaimedWorker(observed, childPid, childIdentity)) return { kind: "claimed" };
+  if (isTerminalJob(observed)) return { kind: "terminal" };
+
+  const detail = observer.postSpawnError()
+    ? `worker reported a post-spawn error: ${observer.postSpawnError() instanceof Error
+      ? observer.postSpawnError().message
+      : String(observer.postSpawnError())}`
+    : publicationError instanceof Error
+    ? publicationError.message
+    : childIdentity
+      ? "queued worker identity publication did not prove ownership"
+      : "worker PID identity could not be proven";
+  return fenceQueuedWorkerAndTerminate({
+    cwd,
+    jobId,
+    child,
+    observer,
+    childPid,
+    childIdentity,
+    launcher,
+    reason: `Worker handoff failed: ${detail}`,
+    recordUncertainty,
+  });
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -225,6 +501,24 @@ class ClaudeRuntime {
     }
     this.sourceRoot = SOURCE_ROOT;
     this.env.CC_RUNTIME_SOURCE_ROOT = this.sourceRoot;
+    // Kept internal to this runtime constructor so local tests can freeze
+    // launch races without starting a real Claude worker. The public Agent API
+    // never accepts or exposes these dependencies.
+    this.launchDependencies = {
+      spawn: options.launchDependencies?.spawn ?? spawn,
+      getProcessIdentity: options.launchDependencies?.getProcessIdentity ?? getProcessIdentity,
+      createWorkerLogStdio: options.launchDependencies?.createWorkerLogStdio ?? createWorkerLogStdio,
+      publishWorkerIdentity: options.launchDependencies?.publishWorkerIdentity ??
+        ((cwd, jobId, workerPid, workerPidIdentity, launcher) => transitionJob(cwd, jobId, ["queued"], "queued", {
+          workerPid,
+          workerPidIdentity,
+          workerHandoffAt: nowIso(),
+        }, {
+          predicate: (job) => matchesLauncherOwnership(job, launcher),
+        })),
+      recordWorkerHandoffUncertainty:
+        options.launchDependencies?.recordWorkerHandoffUncertainty ?? recordWorkerHandoffUncertainty,
+    };
     this.operatorMode = options.operatorMode === true;
     this.ownerRootId = String(
       this.operatorMode && options.ownerRootId
@@ -363,6 +657,10 @@ class ClaudeRuntime {
     const candidateAgentId = String(options.agentId ?? "").trim() || null;
     let launcherIdentity = null;
     try { launcherIdentity = getProcessIdentity(process.pid); } catch {}
+    if (!launcherIdentity) {
+      throw new Error("Unable to establish a deterministic launcher process identity.");
+    }
+    const launcherGeneration = generateJobId("launcher");
     try {
       const base = createJobRecord({
         id: jobId,
@@ -412,6 +710,7 @@ class ClaudeRuntime {
         // cannot be mistaken for a dead reservation while the caller lives.
         workerPid: process.pid,
         workerPidIdentity: launcherIdentity,
+        launcherGeneration,
         pid: null,
         pidIdentity: null,
         logFile,
@@ -426,6 +725,9 @@ class ClaudeRuntime {
         summary: base.summary,
         profile,
         workspaceRoot: this.cwd,
+        launcherPid: process.pid,
+        launcherIdentity,
+        launcherGeneration,
       };
     } catch (error) {
       try { fs.unlinkSync(resolveJobFile(this.cwd, jobId)); } catch {}
@@ -439,7 +741,15 @@ class ClaudeRuntime {
     const id = String(agentId ?? "").trim();
     if (!id) throw new Error("Prepared Agent start requires an Agent ID.");
     const job = readJobFile(this.cwd, jobId);
-    if (!job || job.status !== "queued" || job.phase !== "activation_prepared" || job.agentId) {
+    if (
+      !matchesLauncherOwnership(job, {
+        pid: prepared?.launcherPid,
+        identity: prepared?.launcherIdentity,
+        generation: prepared?.launcherGeneration,
+      }) ||
+      job.phase !== "activation_prepared" ||
+      job.agentId
+    ) {
       throw new Error(`Prepared job ${jobId} is no longer attachable to an Agent.`);
     }
     patchJob(this.cwd, jobId, {
@@ -450,13 +760,24 @@ class ClaudeRuntime {
     return { ...prepared, agentId: id };
   }
 
-  abortPreparedStart(prepared) {
+  abortPreparedStart(prepared, options = {}) {
     const jobId = assertJobId(prepared?.jobId);
     const job = readJobFile(this.cwd, jobId);
-    // Only remove a fact that is still owned by this launcher and has not
-    // published a detached worker. Once the worker PID changes, ordinary job
-    // lifecycle recovery is authoritative.
-    if (!job || job.status !== "queued" || job.workerPid !== process.pid || job.pid != null) {
+    // A durable launch marker is a cross-process boundary: an ordinary caller
+    // may not remove it merely because no child PID was published yet. The
+    // sole exception is a structured rollback_safe disposition, which proves
+    // that spawn itself never succeeded.
+    const rollbackSafe = options.handoffDisposition === "rollback_safe";
+    if (
+      !job ||
+      !matchesLauncherOwnership(job, {
+        pid: prepared?.launcherPid,
+        identity: prepared?.launcherIdentity,
+        generation: prepared?.launcherGeneration,
+      }) ||
+      job.pid != null ||
+      (job.workerLaunchStartedAt && !rollbackSafe)
+    ) {
       return false;
     }
     try { fs.unlinkSync(resolveJobFile(this.cwd, jobId)); } catch { return false; }
@@ -467,7 +788,12 @@ class ClaudeRuntime {
   async launchPreparedStart(prepared, task) {
     const jobId = assertJobId(prepared?.jobId);
     const current = readJobFile(this.cwd, jobId);
-    if (!current || current.status !== "queued" || current.workerPid !== process.pid) {
+    const launcher = {
+      pid: prepared?.launcherPid,
+      identity: prepared?.launcherIdentity,
+      generation: prepared?.launcherGeneration,
+    };
+    if (!matchesLauncherOwnership(current, launcher)) {
       throw new Error(`Prepared job ${jobId} is no longer owned by this launcher.`);
     }
     if (prepared.agentId && current.agentId !== prepared.agentId) {
@@ -478,11 +804,18 @@ class ClaudeRuntime {
     if (!prompt && !resumeSessionId) {
       throw new Error("Prepared start requires a task or an explicit Claude session to resume.");
     }
-    const sessionLease = resumeSessionId
-      ? reserveSessionLease(this.cwd, this.env.CLAUDE_CONFIG_DIR, resumeSessionId, jobId)
-      : null;
+    let sessionLease = null;
+    let childReturned = false;
+    let handoffResolved = false;
+    let workerLog = null;
+    let launched = null;
+    let receipt = null;
+    let failure = null;
     try {
-      const launched = patchJob(this.cwd, jobId, {
+      sessionLease = resumeSessionId
+        ? reserveSessionLease(this.cwd, this.env.CLAUDE_CONFIG_DIR, resumeSessionId, jobId)
+        : null;
+      launched = patchJob(this.cwd, jobId, {
         summary: summaryOf(prompt),
         phase: "queued",
         activationPrepared: false,
@@ -500,71 +833,173 @@ class ClaudeRuntime {
       if (!launched || launched.status !== "queued") {
         throw new Error(`Prepared job ${jobId} could not enter the queued launch state.`);
       }
+      const marked = patchJob(this.cwd, jobId, { workerLaunchStartedAt: nowIso() });
+      if (!matchesLauncherOwnership(marked, launcher)) {
+        throw new Error(`Prepared job ${jobId} could not record detached-worker launch.`);
+      }
       appendLogLine(launched.logFile, "Queued for background execution.");
 
-      const workerLog = createWorkerLogStdio(launched.logFile);
-      try {
-        const child = spawn(process.execPath, [CLI_PATH, "worker", "--cwd", this.cwd, "--job-id", jobId], {
-          cwd: this.cwd,
-          env: this.env,
-          detached: true,
-          stdio: /** @type {import("node:child_process").StdioOptions} */ (workerLog.stdio),
-          windowsHide: true,
-        });
-        child.once("error", (error) => {
-          transitionJob(this.cwd, jobId, ["queued"], "failed", {
-            phase: "failed",
-            completedAt: nowIso(),
-            errorMessage: `Worker launch failed: ${error.message}`,
-            failureClass: "worker_launch_failed",
-            safeFreshRetry: true,
-            workerPid: null,
-            workerPidIdentity: null,
-            pid: null,
-            pidIdentity: null,
-          });
-        });
-        child.unref();
-        let workerPidIdentity = null;
-        try { workerPidIdentity = getProcessIdentity(child.pid); } catch {}
-        transitionJob(this.cwd, jobId, ["queued"], "queued", {
-          workerPid: child.pid,
-          workerPidIdentity,
-        });
-      } finally {
-        workerLog.close();
-      }
-
-      return {
-        jobId,
-        agentId: launched.agentId ?? null,
-        status: "queued",
-        title: launched.title,
-        summary: launched.summary,
-        profile: launched.profile,
-        workspaceRoot: this.cwd,
-      };
-    } catch (error) {
-      if (sessionLease) {
-        releaseSessionLease(
-          sessionLease.configIdentity,
-          sessionLease.sessionId,
-          jobId
+      workerLog = this.launchDependencies.createWorkerLogStdio(launched.logFile);
+      const child = this.launchDependencies.spawn(process.execPath, [CLI_PATH, "worker", "--cwd", this.cwd, "--job-id", jobId], {
+        cwd: this.cwd,
+        env: this.env,
+        detached: true,
+        stdio: /** @type {import("node:child_process").StdioOptions} */ (workerLog.stdio),
+        windowsHide: true,
+      });
+      childReturned = true;
+      let observer = null;
+      observer = observeChild(child, (error) => {
+        try {
+          this.launchDependencies.recordWorkerHandoffUncertainty(
+            this.cwd,
+            jobId,
+            `Worker reported an error after spawn: ${error instanceof Error ? error.message : String(error)}`
+          );
+        } catch {}
+      });
+      const spawnOutcome = await observer.waitForSpawn();
+      if (spawnOutcome.kind === "error") {
+        throw withPreparedStartDisposition(
+          spawnOutcome.error instanceof Error
+            ? spawnOutcome.error
+            : new Error("Worker process failed before spawn."),
+          "rollback_safe"
         );
       }
-      throw error;
+      if (spawnOutcome.kind !== "spawned") {
+        const handoff = await fenceQueuedWorkerAndTerminate({
+          cwd: this.cwd,
+          jobId,
+          child,
+          observer,
+          childPid: Number.isFinite(child?.pid) ? child.pid : null,
+          childIdentity: null,
+          launcher,
+          reason: `Worker process did not prove spawn within the handoff window for ${jobId}.`,
+          recordUncertainty: this.launchDependencies.recordWorkerHandoffUncertainty,
+        });
+        if (handoff.kind !== "unknown" || mayUnrefUnresolvedChild(this.cwd, jobId, observer)) {
+          try { child.unref(); } catch {}
+        }
+        if (handoff.kind === "terminal") {
+          throw withPreparedStartDisposition(
+            new Error(`Worker handoff ended before Claude launch for ${jobId}.`),
+            "lifecycle_owned"
+          );
+        }
+        if (handoff.kind === "claimed") {
+          handoffResolved = true;
+          receipt = {
+            jobId,
+            agentId: launched.agentId ?? null,
+            status: "queued",
+            title: launched.title,
+            summary: launched.summary,
+            profile: launched.profile,
+            workspaceRoot: this.cwd,
+          };
+        } else {
+          throw withPreparedStartDisposition(
+            new Error("Worker process did not prove spawn within the handoff window."),
+            "ownership_uncertain"
+          );
+        }
+      } else {
+        const handoff = await resolveSpawnedWorkerHandoff({
+          cwd: this.cwd,
+          jobId,
+          child,
+          observer,
+          getWorkerIdentity: this.launchDependencies.getProcessIdentity,
+          publishWorkerIdentity: this.launchDependencies.publishWorkerIdentity,
+          launcher,
+          recordUncertainty: this.launchDependencies.recordWorkerHandoffUncertainty,
+        });
+        if (handoff.kind === "published" || handoff.kind === "claimed") {
+          handoffResolved = true;
+          try { child.unref(); } catch {
+            try { appendLogLine(launched.logFile, "Worker handoff succeeded but child unref failed."); } catch {}
+          }
+          receipt = {
+            jobId,
+            agentId: launched.agentId ?? null,
+            status: "queued",
+            title: launched.title,
+            summary: launched.summary,
+            profile: launched.profile,
+            workspaceRoot: this.cwd,
+          };
+        } else if (handoff.kind === "terminal") {
+          handoffResolved = true;
+          try { child.unref(); } catch {}
+          throw withPreparedStartDisposition(
+            new Error(`Worker handoff ended before Claude launch for ${jobId}.`),
+            "lifecycle_owned"
+          );
+        } else {
+          try {
+            this.launchDependencies.recordWorkerHandoffUncertainty(
+              this.cwd,
+              jobId,
+              `Worker handoff could not prove publication, claim, or exit for ${jobId}.`
+            );
+          } catch {}
+          if (mayUnrefUnresolvedChild(this.cwd, jobId, observer)) {
+            try { child.unref(); } catch {}
+          }
+          throw withPreparedStartDisposition(
+            new Error(`Worker handoff ownership remains uncertain for ${jobId}.`),
+            "ownership_uncertain"
+          );
+        }
+      }
+    } catch (error) {
+      const explicitDisposition = String(error?.handoffDisposition ?? "");
+      failure = withPreparedStartDisposition(
+        error,
+        HANDOFF_DISPOSITIONS.has(explicitDisposition)
+          ? explicitDisposition
+          : childReturned ? "ownership_uncertain" : "rollback_safe"
+      );
     }
+
+    try {
+      workerLog?.close();
+    } catch (error) {
+      try {
+        appendLogLine(launched?.logFile, `Worker log cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {}
+      if (!handoffResolved && !failure) {
+        failure = withPreparedStartDisposition(error, childReturned ? "ownership_uncertain" : "rollback_safe");
+      }
+    }
+
+    if (failure) {
+      if (preparedStartDisposition(failure) === "rollback_safe" && sessionLease) {
+        releaseSessionLease(sessionLease.configIdentity, sessionLease.sessionId, jobId);
+      }
+      throw failure;
+    }
+    return receipt;
   }
 
   async start(task, options = {}) {
     const prepared = this.prepareStart(task, options);
+    let launchAttempted = false;
     try {
       const attached = prepared.agentId
         ? this.attachPreparedStart(prepared, prepared.agentId)
         : prepared;
+      launchAttempted = true;
       return await this.launchPreparedStart(attached, task);
     } catch (error) {
-      this.abortPreparedStart(prepared);
+      const handoffDisposition = launchAttempted
+        ? preparedStartDisposition(error)
+        : "rollback_safe";
+      if (handoffDisposition === "rollback_safe") {
+        this.abortPreparedStart(prepared, { handoffDisposition });
+      }
       throw error;
     }
   }

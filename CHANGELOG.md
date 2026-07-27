@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Harden detached worker handoff with launcher identity/generation predicates
+  and an atomic `queued` to `cancelling` cleanup fence; accepted Agent turns
+  continue across Codex exit or network loss, while failed handoffs cannot race
+  a worker claim or release an exact-session lease early.
 - Add canonical `claude-haiku-4-5` with explicit low effort as a test-only model
   for Plugin smoke, hook, environment-parity, and integration checks; retain
   Sonnet/Opus for general work and reject dated model IDs as public inputs.

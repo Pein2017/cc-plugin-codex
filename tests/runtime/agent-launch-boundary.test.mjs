@@ -276,6 +276,7 @@ describe("Agent durable launch boundary", () => {
     const jobs = /** @type {any} */ (runtime.jobs);
     const baseAttach = jobs.attachPreparedStart.bind(jobs);
     let observedJobId = null;
+    let observedPrepared = null;
 
     jobs.assertReady = () => {
       events.push("ready:start");
@@ -310,6 +311,7 @@ describe("Agent durable launch boundary", () => {
       assert.equal(task, "launch after readiness\n\nmessage racing initial reservation");
       events.push("launch");
       observedJobId = prepared.jobId;
+      observedPrepared = prepared;
       return { jobId: prepared.jobId, agentId: prepared.agentId, status: "queued" };
     };
 
@@ -334,7 +336,7 @@ describe("Agent durable launch boundary", () => {
       message.assignedJobId === observedJobId &&
       message.receipt?.delivery === "initial_prompt"
     ));
-    assert.equal(runtime.jobs.abortPreparedStart({ jobId: observedJobId }), true);
+    assert.equal(runtime.jobs.abortPreparedStart(observedPrepared), true);
   });
 
   it("keeps a racing mailbox message when initial job preparation fails", async () => {
