@@ -9,6 +9,10 @@ import {
   readBoundClaudeAgentMessages,
   resolveBoundClaudeTranscript,
 } from "../../runtime/claude-session-history.mjs";
+import {
+  appendCompletionEvent,
+  resolveCompletionInboxFile,
+} from "../../runtime/completion-inbox.mjs";
 
 const roots = [];
 const sharedHarness = fs.mkdtempSync(path.join(os.tmpdir(), "cc-history-runtime-"));
@@ -54,11 +58,12 @@ function setup(label = "history") {
   fs.mkdirSync(workspace);
   fs.mkdirSync(project, { recursive: true });
   fs.writeFileSync(envFile, `CLAUDE_CONFIG_DIR=${claudeConfigDir}\n`);
+  const ownerRootId = `root-${label}`;
   const runtime = createAgentRuntime({
     cwd: workspace,
     envFile,
     env: {
-      CODEX_THREAD_ID: `root-${label}`,
+      CODEX_THREAD_ID: ownerRootId,
       CODEX_HOME: sharedCodexHome,
       CC_RUNTIME_HOME: runtimeHome,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
@@ -73,7 +78,18 @@ function setup(label = "history") {
     continuation: { mode: "exact_session", evidence: { reason: "test_session" } },
   }));
   const transcript = path.join(project, `${sessionId}.jsonl`);
-  return { root, workspace, claudeConfigDir, projects, runtimeHome, runtime, agent, sessionId, transcript };
+  return {
+    root,
+    workspace,
+    claudeConfigDir,
+    projects,
+    runtimeHome,
+    runtime,
+    agent,
+    ownerRootId,
+    sessionId,
+    transcript,
+  };
 }
 
 function writeTranscript(filePath, records) {
@@ -118,8 +134,20 @@ describe("native Claude Agent message history", () => {
       }),
       record({ uuid: "m3", text: huge, sessionId: fixture.sessionId, timestamp: "2026-07-01T00:00:04.000Z" }),
     ]);
+    appendCompletionEvent(fixture.workspace, fixture.ownerRootId, {
+      jobId: "history-observation-job",
+      agentId: fixture.agent.agentId,
+      terminalStatus: "completed",
+      completedAt: "2026-07-01T00:00:05.000Z",
+      summary: "history observation completion",
+      finalMessage: "completion must remain unread",
+      resumability: { classification: "resumable", claudeSessionId: fixture.sessionId },
+      detailedResultAvailable: true,
+    });
 
     const before = JSON.stringify(fixture.runtime.store.readAgent(fixture.agent.agentId));
+    const inboxFile = resolveCompletionInboxFile(fixture.workspace, fixture.ownerRootId);
+    const inboxBefore = fs.readFileSync(inboxFile, "utf8");
     const latest = fixture.runtime.readAgentMessages({ target: fixture.agent.path });
     assert.equal(latest.agent_name, fixture.agent.path);
     assert.deepEqual(latest.messages, [{
@@ -146,6 +174,7 @@ describe("native Claude Agent message history", () => {
     assert.equal(older.next_before, null);
     assert.equal(JSON.stringify(older).includes("secret"), false);
     assert.equal(JSON.stringify(older).includes("sidechain"), false);
+    assert.equal(fs.readFileSync(inboxFile, "utf8"), inboxBefore);
   });
 
   it("rejects unavailable, ambiguous, escaped, malformed, and invalid-cursor history", () => {
@@ -189,6 +218,34 @@ describe("native Claude Agent message history", () => {
     assert.throws(
       () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, session_id: cursor.sessionId }),
       /does not support session_id/,
+    );
+    assert.throws(
+      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, transcript_path: cursor.transcript }),
+      /does not support transcript_path/,
+    );
+    assert.throws(
+      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, owner_root_id: "foreign" }),
+      /does not support owner_root_id/,
+    );
+
+    const trailingPartial = setup("trailing_partial");
+    fs.writeFileSync(
+      trailingPartial.transcript,
+      `${JSON.stringify(record({
+        uuid: "m1",
+        text: "complete-before-partial-tail",
+        sessionId: trailingPartial.sessionId,
+        timestamp: "2026-07-01T00:00:00.000Z",
+      }))}\n{\"type\":\"assistant\"`,
+      "utf8",
+    );
+    assert.deepEqual(
+      trailingPartial.runtime.readAgentMessages({ target: trailingPartial.agent.agentId }).messages,
+      [{
+        message_id: "m1",
+        timestamp: "2026-07-01T00:00:00.000Z",
+        text: "complete-before-partial-tail",
+      }],
     );
 
     const escaped = setup("escaped");

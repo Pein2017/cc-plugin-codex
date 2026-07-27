@@ -575,10 +575,13 @@ describe("canonical Agent runtime CLI", () => {
       ["spawn_agent", "--task-name", "forbidden", "--fork-turns", "none", "--resume-session", "x", "--json", "x"],
       ["wait_agent", "/root/not-allowed", "--json"],
       ["read_agent_messages", "/root/not-allowed", "--session-id", "foreign", "--json"],
+      ["read_agent_messages", "/root/not-allowed", "--owner-root-id", "foreign", "--json"],
+      ["read_agent_messages", "/root/not-allowed", "--all", "--json"],
+      ["read_agent_messages", "/root/not-allowed", "--transcript-path", "/tmp/foreign.jsonl", "--json"],
     ]) {
       const result = command(test, args);
       assert.equal(result.status, 1, args.join(" "));
-      assert.match(result.stderr, /Unsupported model-facing option|root-scoped/);
+      assert.match(result.stderr, /Unsupported model-facing option|Unknown option|root-scoped/);
     }
 
     const swallowedUnknown = command(test, [
