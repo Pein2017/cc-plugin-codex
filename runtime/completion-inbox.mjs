@@ -19,8 +19,6 @@ export const COMPLETION_INBOX_VERSION = 1;
 export const DEFAULT_ACKNOWLEDGED_TAIL = 100;
 export const DEFAULT_UNREAD_BATCH_SIZE = 20;
 export const DEFAULT_AGENT_SUMMARY_BATCH_SIZE = 1;
-export const MAX_COMPLETION_MESSAGE_BYTES = 64 * 1024;
-export const MAX_AGENT_COMPLETION_HANDOFF_BYTES = 4 * 1024;
 
 const INBOX_DIRECTORY_NAME = "completion-inboxes";
 const INBOX_FILE_NAME = "inbox.json";
@@ -61,27 +59,6 @@ export function agentStatusForTerminalJob(status) {
   // Legacy cancelled receipts remain diagnosable, but an Agent never gets a
   // public cancelled lifecycle.  Failed/unknown terminal evidence is errored.
   return "errored";
-}
-
-function boundedUtf8(value, maxBytes = MAX_COMPLETION_MESSAGE_BYTES) {
-  const text = String(value ?? "");
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-    return { text, truncated: false };
-  }
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
-    if (Buffer.byteLength(text.slice(0, middle), "utf8") <= maxBytes) low = middle;
-    else high = middle - 1;
-  }
-  let end = low;
-  const lastCodeUnit = text.charCodeAt(end - 1);
-  const nextCodeUnit = text.charCodeAt(end);
-  if (lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF && nextCodeUnit >= 0xDC00 && nextCodeUnit <= 0xDFFF) {
-    end -= 1;
-  }
-  return { text: text.slice(0, end), truncated: true };
 }
 
 function canonicalWorkspace(cwd) {
@@ -458,7 +435,7 @@ function normalizeCompletionInput(ownerRootId, completion) {
     throw new Error(`Invalid terminal completion status: ${terminalStatus}.`);
   }
   const resultPointer = completion.resultPointer == null ? null : String(completion.resultPointer);
-  const final = boundedUtf8(completion.finalMessage ?? completion.summary);
+  const finalMessage = String(completion.finalMessage ?? completion.summary ?? "");
   const agentId = optionalAgentId(completion.agentId);
   return {
     version: COMPLETION_INBOX_VERSION,
@@ -473,8 +450,10 @@ function normalizeCompletionInput(ownerRootId, completion) {
     resumability: validateResumability(completion.resumability),
     detailedResultAvailable: Boolean(completion.detailedResultAvailable),
     resultPointer,
-    finalMessage: final.text,
-    truncated: final.truncated,
+    finalMessage,
+    // Version-one events retain this field so an older event that already
+    // lost bytes remains honest. New normalization never discards content.
+    truncated: false,
     claudeSessionIdAvailable: Boolean(
       completion.claudeSessionIdAvailable ?? completion.resumability?.claudeSessionId
     ),
@@ -503,22 +482,21 @@ function publicEvent(event) {
 }
 
 /**
- * The completion inbox stores a complete, bounded terminal receipt for
- * recovery and operator diagnostics. Model-facing orchestration receives only
- * a small handoff for parent synthesis, never the full durable record.
+ * The completion inbox stores the complete terminal final message for durable
+ * parent delivery. Private result/session evidence stays out of this public
+ * projection, but the Agent's own final synthesis is never truncated here.
  */
 function publicAgentCompletionSummary(event) {
   if (!event.agentId) return null;
   const terminal = String(event.terminalStatus ?? "completed");
-  const handoff = boundedUtf8(event.finalMessage, MAX_AGENT_COMPLETION_HANDOFF_BYTES);
   return {
     kind: "completion",
     agentId: event.agentId,
     agentStatus: event.agentStatus,
     terminalStatus: terminal,
     summary: `Agent turn ${terminal}.`,
-    completionMessage: handoff.text,
-    completionMessageTruncated: Boolean(event.truncated || handoff.truncated),
+    completionMessage: event.finalMessage,
+    completionMessageTruncated: Boolean(event.truncated),
     deliveryToken: event.deliveryToken,
   };
 }

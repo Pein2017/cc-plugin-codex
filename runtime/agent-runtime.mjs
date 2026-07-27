@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
+import { readBoundClaudeAgentMessages } from "./claude-session-history.mjs";
 import { resolveModel } from "./claude-headless-adapter.mjs";
 import { validateExecutionProfileOptions } from "./execution-profile.mjs";
 import { createInternalClaudeRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
@@ -1156,6 +1157,33 @@ class AgentRuntime {
       status: turn.status,
       turn,
       reconciliation,
+    };
+  }
+
+  readAgentMessages(inputValue) {
+    const input = assertObject(inputValue, "read_agent_messages input");
+    const allowed = new Set(["target", "before", "limit"]);
+    const unsupported = Object.keys(input).find((key) => !allowed.has(key));
+    if (unsupported) {
+      throw new Error(`read_agent_messages does not support ${unsupported}.`);
+    }
+    const agent = this.store.resolveTarget(assertText(input.target, "read_agent_messages target"));
+    if (!agent.claudeSessionId || !agent.claudeConfigDir) {
+      throw new Error(`Agent ${agent.path} has no proven native Claude session history.`);
+    }
+    const history = readBoundClaudeAgentMessages(agent, {
+      before: input.before,
+      limit: input.limit,
+    });
+    return {
+      agent_name: agent.path,
+      agent_status: canonicalAgentStatus(agent),
+      messages: history.messages.map((message) => ({
+        message_id: message.messageId,
+        timestamp: message.timestamp,
+        text: message.text,
+      })),
+      next_before: history.nextBefore,
     };
   }
 

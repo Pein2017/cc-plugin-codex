@@ -5,7 +5,7 @@ in headless stream-json mode. It owns durable orchestration only; Claude Code
 continues to own authentication, project configuration, memory, hooks,
 plugins, skills, MCP configuration, sessions, and tool execution.
 
-> **Experimental feature:** the six CC Agent skills are an evolving local
+> **Experimental feature:** the seven CC Agent skills are an evolving local
 > orchestration surface. They preserve durable Claude work, but cannot make an
 > idle Codex parent start a new model turn after it has already ended. A parent
 > that needs a child result must keep the join obligation inside its active
@@ -40,10 +40,11 @@ send_message({ target, message })
 followup_task({ target, message })
 wait_agent({ timeout_ms?, acknowledge_tokens? })
 interrupt_agent({ target })
+read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
 ```
 
-The installed plugin exposes the same six operations as namespaced skills:
+The installed plugin exposes the same seven operations as namespaced skills:
 
 ```text
 $cc-for-pein:spawn-agent
@@ -51,14 +52,17 @@ $cc-for-pein:send-message
 $cc-for-pein:followup-task
 $cc-for-pein:wait-agent
 $cc-for-pein:interrupt-agent
+$cc-for-pein:read-agent-messages
 $cc-for-pein:list-agents
 ```
 
 Successful `spawn-agent` calls report the selected model plus the stable Agent
 path and current status. `list-agents` reports only canonical name/status
-records. `wait-agent` reports at most one bounded update: either coalesced safe
-progress or an acknowledgement-bearing completion with a 4096-byte handoff for
-parent synthesis. It never returns the full Claude final output.
+records. `wait-agent` reports at most one update: either coalesced safe progress
+or an acknowledgement-bearing completion with the complete stored Claude final
+message for parent synthesis. `read-agent-messages` retrieves recent outer
+assistant text from the exact Agent's bound native Claude transcript without
+activating it.
 
 The runtime model surface is pinned to three choices: Sonnet 5 maps to
 `claude-sonnet-5`, Opus 5 maps to `claude-opus-5`, and test-only Haiku 4.5 maps
@@ -105,11 +109,12 @@ native Claude process permits it:
 
 | Surface | Codex Multi-Agent V2 | CC for Pein v0.4 |
 | --- | --- | --- |
-| Operations | Six built-in snake_case tools | Same six runtime names, exposed as namespaced hyphenated skills |
+| Operations | Six built-in snake_case tools | The same six lifecycle names plus the `read_agent_messages` native-history extension, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | Same core fields; only `fork_turns=none` is supported because Codex context cannot safely become Claude history |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
-| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, with one safe progress milestone or durable bounded completion handoff in the wait receipt |
+| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, with one safe progress milestone or the complete durable final message in the wait receipt |
+| History | No model-facing transcript reader | Root-scoped recent outer-assistant history from the Agent's bound native Claude transcript |
 | Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
 
 `list_agents` intentionally includes logical nonresident terminal history.
@@ -156,14 +161,25 @@ revision and delivered with an adaptive 5, 10, 20, then 30 second heartbeat.
 Retry, reconnect, and first-response transitions reset that backoff, while
 completion always bypasses it.
 
-A completion update includes a 4096-byte bounded handoff and truncation flag.
+A completion update includes the complete stored final message and a
+legacy-compatible truncation flag. New completions are not truncated by this
+Plugin; an older event that already lost bytes retains its honest provenance.
 It remains unread until a later call echoes its token, so a lost host response
-safely redelivers the same handoff. The parent should synthesize it directly;
-it must not start a follow-up or ask Claude to write a temporary/repository file
-solely to recover the already-completed result. Legacy unowned events remain
-stored but cannot block Agent-linked delivery. Repeated `list_agents` calls are
-state-only. The complete Claude final output remains internal and in Claude's
-native artifacts/runtime evidence.
+safely redelivers the same message. The parent should synthesize it directly;
+it must not start a follow-up, read history, or ask Claude to write a
+temporary/repository file solely to recover the current completed result.
+Legacy unowned events remain stored but cannot block Agent-linked delivery.
+Repeated `list_agents` calls are
+state-only.
+
+`read_agent_messages` is a retrospective read-only extension. It defaults to
+the latest one eligible message, supports newest-first `before`/`limit`
+pagination with a 20-message maximum per call, and never truncates message text.
+It resolves only an exact current-root Agent and derives the transcript from
+that Agent's persisted config/session/workspace binding. It does not accept a
+path or session ID and exposes no thinking, tool data, attachment, subagent
+transcript, or Codex history. Claude's native `cleanupPeriodDays` remains the
+history-retention authority; missing or expired history fails explicitly.
 
 Job receipts are bounded internal execution evidence. Agent identity, session
 binding, mailbox entries, and completion projection survive worker exit and
@@ -214,7 +230,7 @@ not an internal job ID:
 | `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit supported model; Haiku is test-only |
 | `steer <job>` | `send_message <target> <message>` |
 | `steer --follow-up <job>` / `followUp` | `followup_task <target> <message>` |
-| `status` / `result` | `list_agents` and untargeted `wait_agent` |
+| `status` / `result` | `list_agents` and untargeted `wait_agent`; use `read_agent_messages` only for earlier native messages |
 | `interrupt <job>` | `interrupt_agent <target>` |
 | `cancel` | Removed; use `interrupt_agent` for graceful stop semantics |
 
@@ -252,7 +268,7 @@ does not remove the plugin. After that:
   refreshes with `codex plugin add`, and fails closed if the marketplace root
   drifted. Start a new Codex task to test newly discovered skill metadata.
 
-Verify the installed snapshot has exactly the six v0.4 Experimental skills and every one
+Verify the installed snapshot has exactly the seven v0.4 Experimental skills and every one
 delegates only to `CC_RUNTIME_CHECKOUT`.
 
 ## Provenance

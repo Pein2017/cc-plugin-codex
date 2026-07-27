@@ -13,6 +13,7 @@ describe("native plugin contract", () => {
     "followup-task",
     "interrupt-agent",
     "list-agents",
+    "read-agent-messages",
     "send-message",
     "spawn-agent",
     "wait-agent",
@@ -22,12 +23,13 @@ describe("native plugin contract", () => {
     "followup_task",
     "interrupt_agent",
     "list_agents",
+    "read_agent_messages",
     "send_message",
     "spawn_agent",
     "wait_agent",
   ];
 
-  it("publishes only the six canonical Agent skills and no Codex hook", () => {
+  it("publishes only the seven canonical Agent skills and no Codex hook", () => {
     const pluginRoot = path.join(root, "plugins", "cc-for-pein");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "cc-for-pein");
@@ -65,7 +67,7 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("exposes only the six canonical Agent lifecycle operations from the public index", () => {
+  it("exposes only the seven canonical Agent lifecycle operations from the public index", () => {
     const runtime = createClaudeRuntime({
       cwd: root,
       env: {
@@ -88,6 +90,7 @@ describe("native plugin contract", () => {
       ["wait-agent", "wait_agent"],
       ["interrupt-agent", "interrupt_agent"],
       ["list-agents", "list_agents"],
+      ["read-agent-messages", "read_agent_messages"],
     ]) {
       const text = fs.readFileSync(path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"), "utf8");
       assert.match(text, /bootstrap\/cc-runtime\.mjs/);
@@ -144,7 +147,7 @@ describe("native plugin contract", () => {
     assert.match(text, /--max-budget-usd[\s\S]*not subscription exhaustion/i);
   });
 
-  it("keeps list and wait receipts concise by default", () => {
+  it("keeps list and wait guidance intentional by default", () => {
     for (const name of ["list-agents", "wait-agent"]) {
       const text = fs.readFileSync(
         path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
@@ -154,7 +157,7 @@ describe("native plugin contract", () => {
       assert.match(text, /Experimental/i);
       if (name === "list-agents") assert.match(text, /final Claude output/i);
       else {
-        assert.match(text, /completion handoff/i);
+        assert.match(text, /complete stored[\s\S]*completion_message/i);
         assert.match(text, /600000 ms/);
         assert.match(text, /3600000 ms/);
         assert.match(text, /5 to 10, 20, and[\s\S]*30 seconds/);
@@ -162,7 +165,7 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("marks all six skill prompts and discovery descriptions Experimental", () => {
+  it("marks all seven skill prompts and discovery descriptions Experimental", () => {
     for (const name of canonicalSkills) {
       const skillRoot = path.join(root, "plugins", "cc-for-pein", "skills", name);
       assert.match(fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8"), /Experimental/i);

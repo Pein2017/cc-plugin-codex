@@ -1,7 +1,7 @@
 {
   "name": "cc-for-pein",
-  "version": "0.4.0+codex.20260727013517",
-  "description": "Experimental checkout-owned Claude Code Agent runtime with durable roots, bounded progress/completion delivery, interruption, and exact-session follow-up.",
+  "version": "0.4.0+codex.20260727022940",
+  "description": "Experimental checkout-owned Claude Code Agent runtime with durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",
     "email": "852128461@qq.com",
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "CC for Pein",
     "shortDescription": "Experimental durable local Claude Agents for Codex",
-    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with durable messages, bounded progress and completion handoff, interruption, exact-session continuation, and terminal-parity execution.",
+    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with durable messages, bounded progress, complete completion delivery, recent native message history, interruption, exact-session continuation, and terminal-parity execution.",
     "developerName": "Pein",
     "category": "Coding",
     "capabilities": [
@@ -29,7 +29,8 @@
     "defaultPrompt": [
       "Use $cc-for-pein:spawn-agent to create an Experimental named Claude Agent and retain required join obligations",
       "Use $cc-for-pein:followup-task to continue a Claude Agent",
-      "Use $cc-for-pein:list-agents to inspect local Claude Agent work"
+      "Use $cc-for-pein:list-agents to inspect local Claude Agent work",
+      "Use $cc-for-pein:read-agent-messages to retrieve an earlier native Claude message without activating the Agent"
     ]
   }
 }

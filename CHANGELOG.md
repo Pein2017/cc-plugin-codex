@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Deliver each new CC Agent final message completely through the durable
+  completion inbox and `wait_agent`, removing the former 64 KiB persistence and
+  4096-byte public handoff truncation while retaining honest legacy provenance.
+- Add Experimental `read_agent_messages` and `$cc-for-pein:read-agent-messages`
+  for root-bound, observation-only access to recent outer-assistant text in the
+  Agent's native Claude transcript; exclude thinking, tools, attachments,
+  subagent artifacts, arbitrary paths, and foreign sessions.
 - Harden detached worker handoff with launcher identity/generation predicates
   and an atomic `queued` to `cancelling` cleanup fence; accepted Agent turns
   continue across Codex exit or network loss, while failed handoffs cannot race

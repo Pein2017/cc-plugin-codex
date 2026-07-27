@@ -1,9 +1,5 @@
-# completion-delivery Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define durable, bounded, at-least-once completion delivery across inactive Codex turns without a resident forwarding process.
-## Requirements
 ### Requirement: Every terminal job emits one durable completion event
 The runtime SHALL create exactly one root-owned, Agent-linked completion event when an Agent's internal job first reaches `completed`, `interrupted`, or `failed`; the event SHALL map internal `failed` to Agent `errored` and retain the complete `finalMessage`, legacy-compatible `truncated`, `detailedResultAvailable`, and `claudeSessionIdAvailable` fields. New completion events SHALL preserve the complete final message without a Plugin-defined content limit and SHALL set `truncated=false`; an existing event whose content was truncated by an older runtime SHALL retain that historical provenance.
 
@@ -117,13 +113,6 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **WHEN** reconciliation finds an existing unread and unfrozen completion event whose normalized durable fields differ from the current terminal job fact
 - **THEN** it acquires the completion-inbox lock, rereads the latest state, and durably corrects the event without changing its deterministic identity or sequence
 
-### Requirement: Proactive wakeup is not a local-runtime dependency
-The local runtime SHALL NOT require a resident forwarding agent, background terminal, or unsupported host callback to preserve completion delivery.
-
-#### Scenario: Codex task is inactive when Claude completes
-- **WHEN** no Codex model turn is running at completion time
-- **THEN** the durable unread event remains available for the next turn without keeping Claude resident
-
 ### Requirement: Unread completion survives normal job pruning
 Unread Agent completion summary metadata and its complete public final-message handoff SHALL remain available if its detailed internal job receipt later exceeds the normal job-retention limit. Result pointers and native Claude session evidence SHALL remain internal details and SHALL NOT appear in default `list_agents` or `wait_agent` output.
 
@@ -131,16 +120,7 @@ Unread Agent completion summary metadata and its complete public final-message h
 - **WHEN** cleanup prunes the detailed job record before the owner acknowledges its Agent completion
 - **THEN** `wait_agent` still exposes a self-contained status, complete stored final message, legacy truncation flag, and token
 
-### Requirement: Legacy unowned completions cannot block Agent delivery
-Completion records with no durable Agent identity SHALL remain stored as quarantined legacy evidence but SHALL be skipped by model-facing Agent delivery and acknowledgement-prefix selection.
-
-#### Scenario: Legacy events precede a current Agent completion
-- **WHEN** one or more unread `agentId=null` events precede an unread Agent-linked event
-- **THEN** `wait_agent` returns the Agent-linked summary immediately and does not expose the legacy records
-
-#### Scenario: Agent update after a legacy prefix is acknowledged
-- **WHEN** the caller acknowledges the oldest returned Agent-linked update
-- **THEN** the cursor may advance across the preceding quarantined legacy sequences without rewriting their event IDs or delivery tokens
+## ADDED Requirements
 
 ### Requirement: Bound Agent history is readable from native Claude transcripts
 The runtime SHALL provide `read_agent_messages` for exact current-root Agent targets with proven Claude session bindings. It SHALL read only outer-assistant text messages from that Agent's top-level native Claude transcript beneath its canonical `CLAUDE_CONFIG_DIR`, SHALL return each selected message's complete text without a Plugin-defined content limit, and SHALL NOT read Codex transcripts, arbitrary paths, foreign sessions, thinking, tool payloads, attachments, or internal Claude subagent transcripts.

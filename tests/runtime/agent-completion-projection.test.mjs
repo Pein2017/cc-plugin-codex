@@ -7,7 +7,7 @@ import { after, afterEach, describe, it } from "node:test";
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import {
   appendCompletionEvent,
-  MAX_AGENT_COMPLETION_HANDOFF_BYTES,
+  resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
 
 const roots = [];
@@ -63,7 +63,7 @@ function completion(jobId, agentId = null) {
 }
 
 describe("Agent completion projection", () => {
-  it("returns one redeliverable Agent update with a bounded completion handoff", async () => {
+  it("returns one redeliverable Agent update with the complete final message", async () => {
     const { runtime, workspace, ownerRootId } = setup();
     const agent = runtime.store.createAgent({ task_name: "projection" });
     runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
@@ -129,11 +129,12 @@ describe("Agent completion projection", () => {
     });
   });
 
-  it("truncates only the public handoff while preserving two-phase redelivery", async () => {
+  it("preserves multilingual final output above the former 64 KiB bound", async () => {
     const { runtime, workspace, ownerRootId } = setup();
     const agent = runtime.store.createAgent({ task_name: "long_handoff" });
     runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
-    const longMessage = "界".repeat(MAX_AGENT_COMPLETION_HANDOFF_BYTES);
+    const longMessage = `${"界".repeat(24_000)}\n${"🙂".repeat(4_000)}\ncomplete-tail`;
+    assert.ok(Buffer.byteLength(longMessage, "utf8") > 64 * 1024);
     appendCompletionEvent(workspace, ownerRootId, {
       ...completion("agent-long", agent.agentId),
       finalMessage: longMessage,
@@ -141,9 +142,26 @@ describe("Agent completion projection", () => {
 
     const first = await runtime.waitAgent({ timeout_ms: 0 });
     assert.equal(first.update.kind, "completion");
+    assert.equal(first.update.completion_message_truncated, false);
+    assert.equal(first.update.completion_message, longMessage);
+    assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), first);
+  });
+
+  it("preserves legacy truncation provenance without claiming discarded bytes", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "legacy_truncated" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
+    appendCompletionEvent(workspace, ownerRootId, completion("agent-legacy", agent.agentId));
+
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const inbox = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    inbox.events[0].finalMessage = "legacy stored prefix";
+    inbox.events[0].truncated = true;
+    fs.writeFileSync(inboxFile, `${JSON.stringify(inbox, null, 2)}\n`, "utf8");
+
+    const first = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(first.update.completion_message, "legacy stored prefix");
     assert.equal(first.update.completion_message_truncated, true);
-    assert.ok(Buffer.byteLength(first.update.completion_message, "utf8") <= MAX_AGENT_COMPLETION_HANDOFF_BYTES);
-    assert.equal(first.update.completion_message, longMessage.slice(0, first.update.completion_message.length));
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), first);
   });
 });

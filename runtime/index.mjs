@@ -13,6 +13,7 @@ import { createAgentRuntime } from "./agent-runtime.mjs";
  * @property {(input: object) => Promise<object>} followup_task
  * @property {(input?: object) => Promise<object>} wait_agent
  * @property {(input: object) => Promise<object>} interrupt_agent
+ * @property {(input: object) => object} read_agent_messages
  * @property {(input?: object) => object} list_agents
  */
 
@@ -25,6 +26,7 @@ export function createClaudeRuntime(options = {}) {
     followup_task: runtime.followupTask.bind(runtime),
     wait_agent: runtime.waitAgent.bind(runtime),
     interrupt_agent: runtime.interruptAgent.bind(runtime),
+    read_agent_messages: runtime.readAgentMessages.bind(runtime),
     list_agents: runtime.listAgents.bind(runtime),
   });
 }

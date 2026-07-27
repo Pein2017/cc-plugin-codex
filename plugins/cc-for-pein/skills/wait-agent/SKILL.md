@@ -27,10 +27,12 @@ activity returns immediately.
 - It first acknowledges only a valid oldest contiguous completion prefix from
   a previous response. Newly returned completion events remain unread until
   their tokens are echoed later, enabling crash-safe redelivery.
-- Completion has priority. A completion update carries a bounded
-  `completion_message` for parent synthesis plus a truncation flag and delivery
-  token. Use that handoff directly; do not start a follow-up or ask the Agent to
-  write `/tmp`/repository files solely to recover an already completed result.
+- Completion has priority. A completion update carries the complete stored
+  `completion_message` for parent synthesis plus a legacy-compatible
+  truncation flag and delivery token. New completions are not truncated by
+  cc-for-pein. Use that message directly; do not start a follow-up, read history,
+  or ask the Agent to write `/tmp`/repository files solely to recover the
+  current completed result.
 - Progress updates are advisory, coalesced, adaptively rate-limited, and
   privacy-bounded. Routine heartbeat delivery backs off from 5 to 10, 20, and
   at most 30 seconds while retaining only the latest revision. Retry,
@@ -47,5 +49,5 @@ activity returns immediately.
   When a required result is the active blocker, continue bounded waits until
   completion, user steering, or an actionable failure. Never give the final
   answer with an unresolved required or parallel-then-join obligation.
-- Use the completion handoff for reasoning and synthesize it for the user. Do
+- Use the complete completion message for reasoning and synthesize it for the user. Do
   not dump it verbatim unless the user explicitly requests raw/debug detail.

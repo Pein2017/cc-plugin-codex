@@ -258,6 +258,18 @@ function invocations(test) {
     .map((line) => JSON.parse(line));
 }
 
+function writeNativeTranscript(test, sessionId, records) {
+  const claudeConfigDir = path.join(path.dirname(test.workspace), ".claude");
+  const encodedWorkspace = test.workspace.replace(/[^a-zA-Z0-9]/g, "-");
+  const projectDir = path.join(claudeConfigDir, "projects", encodedWorkspace);
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(projectDir, `${sessionId}.jsonl`),
+    `${records.map((record) => JSON.stringify({ sessionId, ...record })).join("\n")}\n`,
+    "utf8",
+  );
+}
+
 describe("canonical Agent runtime CLI", () => {
   it("launches test-only Haiku with its canonical model and explicit low effort", () => {
     const test = fixture();
@@ -272,7 +284,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "low");
   });
 
-  it("exposes all six operations with flat exact targeting and duplicate-name rejection", () => {
+  it("exposes all seven operations with flat exact targeting and duplicate-name rejection", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "sonnet", "--json", "session=alpha delay=700",
@@ -381,6 +393,97 @@ describe("canonical Agent runtime CLI", () => {
     assert.match(recorded[1].prompt, /session=resume follow-up/);
   });
 
+  it("reads complete paginated outer-assistant history from the bound native session", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--task-name", "history", "--fork-turns", "none",
+      "--model", "sonnet", "--json", "session=history delay=40",
+    ]);
+    const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
+    const before = fs.readFileSync(
+      path.join(
+        test.env.CC_RUNTIME_HOME,
+        "state",
+        createHash("sha256").update(fs.realpathSync.native(test.workspace)).digest("hex").slice(0, 16),
+        "agent-registry",
+        "roots",
+        createHash("sha256").update(test.env.CODEX_THREAD_ID).digest("hex").slice(0, 32),
+        "registry.json",
+      ),
+      "utf8",
+    );
+    const longMessage = `${"界".repeat(24_000)}-complete-tail`;
+    writeNativeTranscript(test, terminal.claudeSessionId, [
+      {
+        type: "assistant",
+        uuid: "old-message",
+        timestamp: "2026-07-27T00:00:00.000Z",
+        isSidechain: false,
+        message: { role: "assistant", content: [{ type: "text", text: "older" }] },
+      },
+      {
+        type: "assistant",
+        uuid: "private-thinking",
+        timestamp: "2026-07-27T00:00:01.000Z",
+        isSidechain: false,
+        message: { role: "assistant", content: [{ type: "thinking", thinking: "private" }] },
+      },
+      {
+        type: "assistant",
+        uuid: "new-message",
+        timestamp: "2026-07-27T00:00:02.000Z",
+        isSidechain: false,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: longMessage },
+            { type: "tool_use", name: "Bash", input: { command: "private" } },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "sidechain",
+        timestamp: "2026-07-27T00:00:03.000Z",
+        isSidechain: true,
+        message: { role: "assistant", content: [{ type: "text", text: "private-sidechain" }] },
+      },
+    ]);
+
+    const latest = run(test, ["read_agent_messages", terminal.path, "--json"]);
+    assert.deepEqual(latest.messages, [{
+      message_id: "new-message",
+      timestamp: "2026-07-27T00:00:02.000Z",
+      text: longMessage,
+    }]);
+    assert.equal(latest.next_before, "new-message");
+    assert.ok(Buffer.byteLength(latest.messages[0].text, "utf8") > 64 * 1024);
+
+    const older = run(test, [
+      "read_agent_messages", terminal.path,
+      "--before", latest.next_before,
+      "--limit", "2",
+      "--json",
+    ]);
+    assert.deepEqual(older.messages.map((message) => message.message_id), ["old-message"]);
+    assert.equal(older.next_before, null);
+    assert.equal(JSON.stringify(older).includes("private"), false);
+
+    const after = fs.readFileSync(
+      path.join(
+        test.env.CC_RUNTIME_HOME,
+        "state",
+        createHash("sha256").update(fs.realpathSync.native(test.workspace)).digest("hex").slice(0, 16),
+        "agent-registry",
+        "roots",
+        createHash("sha256").update(test.env.CODEX_THREAD_ID).digest("hex").slice(0, 32),
+        "registry.json",
+      ),
+      "utf8",
+    );
+    assert.equal(after, before);
+  });
+
   it("keeps list and wait completion delivery unread until a later acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
@@ -413,7 +516,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(list(test), firstList);
   });
 
-  it("reports safe stream progress before the bounded completion handoff", () => {
+  it("reports safe stream progress before the complete completion message", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--task-name", "progress_stream", "--fork-turns", "none",
@@ -471,6 +574,7 @@ describe("canonical Agent runtime CLI", () => {
       ["list_agents", "--all", "--json"],
       ["spawn_agent", "--task-name", "forbidden", "--fork-turns", "none", "--resume-session", "x", "--json", "x"],
       ["wait_agent", "/root/not-allowed", "--json"],
+      ["read_agent_messages", "/root/not-allowed", "--session-id", "foreign", "--json"],
     ]) {
       const result = command(test, args);
       assert.equal(result.status, 1, args.join(" "));

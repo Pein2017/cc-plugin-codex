@@ -15,6 +15,7 @@ const PUBLIC_COMMANDS = new Set([
   "followup_task",
   "wait_agent",
   "interrupt_agent",
+  "read_agent_messages",
   "list_agents",
 ]);
 
@@ -26,6 +27,7 @@ function usage() {
     "  node runtime/cli.mjs followup_task <exact-target> <message>",
     "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
     "  node runtime/cli.mjs interrupt_agent <exact-target>",
+    "  node runtime/cli.mjs read_agent_messages <exact-target> [--before <message-id>] [--limit <1-20>]",
     "  node runtime/cli.mjs list_agents [--path-prefix </root/prefix>]",
     "",
     "Internal diagnostics:",
@@ -194,6 +196,23 @@ function listAgents(argv) {
   output(receipt, options.json);
 }
 
+function readAgentMessages(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options, positionals } = parse(argv, {
+    valueOptions: ["target", "before", "limit"],
+  });
+  const target = options.target ?? positionals[0];
+  if (positionals.length > (options.target ? 0 : 1)) {
+    throw new Error("read_agent_messages accepts exactly one target plus optional --before/--limit.");
+  }
+  const receipt = createClaudeRuntime(runtimeOptions(options)).read_agent_messages({
+    target,
+    before: options.before,
+    limit: options.limit,
+  });
+  output(receipt, options.json);
+}
+
 async function worker(argv) {
   const { options } = parse(argv, { valueOptions: ["job-id"] });
   if (!options["job-id"]) throw new Error("worker requires --job-id.");
@@ -208,6 +227,7 @@ async function main() {
     case "followup_task": await followupTask(argv); break;
     case "wait_agent": await waitAgent(argv); break;
     case "interrupt_agent": await interruptAgent(argv); break;
+    case "read_agent_messages": readAgentMessages(argv); break;
     case "list_agents": listAgents(argv); break;
     case "worker": await worker(argv); break;
     case "readiness": {
