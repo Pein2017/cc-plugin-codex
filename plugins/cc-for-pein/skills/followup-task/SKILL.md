@@ -10,7 +10,7 @@ description: 'Experimental: send durable work to a CC Agent and guarantee delive
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" followup_task $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" followup_task $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree where
 this Agent should work. The lifecycle inherits that Codex cwd; never pass

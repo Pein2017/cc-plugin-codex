@@ -151,7 +151,7 @@ function fixture(ownerRootId = "owner-1") {
 }
 
 function command(test, args, options = {}) {
-  return spawnSync(process.execPath, [options.program ?? cli, ...args], {
+  return spawnSync(process.execPath, [...(options.nodeArgs ?? []), options.program ?? cli, ...args], {
     cwd: test.workspace,
     env: options.env ?? test.env,
     encoding: "utf8",
@@ -666,6 +666,7 @@ describe("canonical Agent runtime CLI", () => {
     fs.writeFileSync(poisonEnv, "not valid dotenv syntax\n");
     const delegated = command(test, ["list_agents", "--json"], {
       program: fakeBootstrap,
+      nodeArgs: ["--"],
       env: {
         ...test.env,
         CC_RUNTIME_CHECKOUT: fakeCache,
@@ -682,9 +683,10 @@ describe("canonical Agent runtime CLI", () => {
       ["list_agents", "--cwd", path.dirname(test.workspace), "--json"],
       ["list_agents", "-C", path.dirname(test.workspace), "--json"],
       ["list_agents", "--env-file", test.envFile, "--json"],
+      ["list_agents", "--env-file", path.join(fakeCache, "missing.env"), "--json"],
       ["list_agents", `--env-file ${test.envFile} --json`],
     ]) {
-      const rejected = command(test, args, { program: fakeBootstrap });
+      const rejected = command(test, args, { program: fakeBootstrap, nodeArgs: ["--"] });
       assert.equal(rejected.status, 1, args.join(" "));
       assert.match(rejected.stderr, /Unsupported model-facing option/);
     }

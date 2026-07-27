@@ -11,7 +11,7 @@ description: 'Experimental: wait for bounded current-root CC Agent progress or c
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" wait_agent $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" wait_agent $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree whose
 Agent mailbox should be observed. The lifecycle inherits that Codex cwd; never

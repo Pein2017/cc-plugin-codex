@@ -10,7 +10,7 @@ description: 'Experimental: list durable CC Agents in the current Codex root, in
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" list_agents $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" list_agents $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree whose
 Agent registry should be listed. The lifecycle inherits that Codex cwd; never

@@ -11,7 +11,7 @@ description: 'Experimental: read recent outer-assistant text messages from the n
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" read_agent_messages $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" read_agent_messages $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree that
 owns the Agent. The lifecycle inherits that Codex cwd; never pass `--cwd`,

@@ -150,7 +150,7 @@ function main() {
   } else {
     delete env.CC_TRUSTED_OWNER_ROOT_ID;
   }
-  const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], {
+  const child = spawn(process.execPath, ["--", cli, ...process.argv.slice(2)], {
     cwd: process.cwd(),
     env,
     stdio: "inherit",

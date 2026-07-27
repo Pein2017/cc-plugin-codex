@@ -10,7 +10,7 @@ description: 'Experimental: durably deliver or queue a message for a named CC Ag
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" send_message $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" send_message $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree that
 owns the Agent. The lifecycle inherits that Codex cwd; never pass `--cwd`,

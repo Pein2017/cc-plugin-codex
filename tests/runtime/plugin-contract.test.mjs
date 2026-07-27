@@ -94,6 +94,7 @@ describe("native plugin contract", () => {
     ]) {
       const text = fs.readFileSync(path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"), "utf8");
       assert.match(text, /bootstrap\/cc-runtime\.mjs/);
+      assert.match(text, /node -- "<plugin-root>\/bootstrap\/cc-runtime\.mjs"/);
       assert.match(text, new RegExp(`cc-runtime\\.mjs" ${operation} \\$ARGUMENTS`));
       assert.doesNotMatch(text, /<plugin-root>\/runtime\/cli\.mjs/);
       assert.match(text, /confirm the host command cwd/i);

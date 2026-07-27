@@ -12,7 +12,7 @@ description: 'Experimental: create a durable, root-scoped Claude Agent and start
 Use this skill to create a named Agent in the current Codex root. Resolve
 `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" spawn_agent $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" spawn_agent $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree where
 the new Agent should work. The lifecycle inherits that Codex cwd; never pass

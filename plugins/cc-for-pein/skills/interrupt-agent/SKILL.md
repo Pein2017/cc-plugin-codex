@@ -10,7 +10,7 @@ description: 'Experimental: gracefully interrupt a CC Agent current turn while k
 
 Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
-`node "<plugin-root>/bootstrap/cc-runtime.mjs" interrupt_agent $ARGUMENTS`
+`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" interrupt_agent $ARGUMENTS`
 
 Before invoking, confirm the host command cwd is the checkout or worktree where
 this Agent should work. The lifecycle inherits that Codex cwd; never pass
