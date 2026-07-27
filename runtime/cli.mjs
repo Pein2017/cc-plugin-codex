@@ -64,12 +64,13 @@ function output(payload, json = false) {
 }
 
 function rejectForbiddenPublicArgs(argv) {
-  const forbidden = argv.find((value) =>
-    /^(?:--all|--owner(?:-root|-session)?-id|--resume-session|--session-id|--agent-type|--service-tier)(?:=|$)/.test(value)
+  const forbidden = normalizeArgv(argv).find((value) =>
+    /^(?:--all|--cwd|--env-file|--owner(?:-root|-session)?-id|--resume-session|--session-id|--agent-type|--service-tier)(?:=|$)/.test(value) ||
+    /^(?:-C)(?:=|$)/.test(value)
   );
   if (forbidden) {
     throw new Error(
-      `Unsupported model-facing option ${forbidden}. Cross-root listing and foreign-session adoption are not public lifecycle operations.`
+      `Unsupported model-facing option ${forbidden}. Lifecycle workspace is inherited from the Codex working directory; environment, cross-root, and foreign-session selectors are not public operations.`
     );
   }
 }

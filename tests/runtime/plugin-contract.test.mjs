@@ -96,6 +96,29 @@ describe("native plugin contract", () => {
       assert.match(text, /bootstrap\/cc-runtime\.mjs/);
       assert.match(text, new RegExp(`cc-runtime\\.mjs" ${operation} \\$ARGUMENTS`));
       assert.doesNotMatch(text, /<plugin-root>\/runtime\/cli\.mjs/);
+      assert.match(text, /confirm the host command cwd/i);
+      assert.match(text, /inherits that Codex cwd/i);
+      assert.match(text, /never\s+pass[\s\S]*`--cwd`[\s\S]*`-C`[\s\S]*`--env-file`/i);
+    }
+  });
+
+  it("pins the installed bootstrap and Claude envelope to the canonical checkout", () => {
+    const bootstrap = fs.readFileSync(
+      path.join(root, "plugins", "cc-for-pein", "bootstrap", "cc-runtime.mjs"),
+      "utf8",
+    );
+    assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/cc-plugin-codex"/);
+    assert.doesNotMatch(bootstrap, /function (?:findAncestorEnv|selectEnvFile|bootstrapContext)/);
+    assert.match(bootstrap, /CC_RUNTIME_CHECKOUT: checkout/);
+    assert.match(bootstrap, /CC_RUNTIME_ENV_FILE: envFile/);
+    assert.match(bootstrap, /CC_RUNTIME_SOURCE_ROOT: checkout/);
+
+    const env = fs.readFileSync(path.join(root, "config", "runtime.env"), "utf8");
+    assert.match(env, /^CLAUDE_NATIVE_CONFIG_DIR=\/data\/CoordExp\/\.claude$/m);
+    assert.match(env, /^CLAUDE_CONFIG_DIR=\/data\/CoordExp\/\.claude$/m);
+    assert.match(env, /^CONDA_EXE=\/root\/miniconda3\/bin\/conda$/m);
+    for (const key of ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
+      assert.match(env, new RegExp(`^${key}=http:\\/\\/127\\.0\\.0\\.1:9090$`, "m"));
     }
   });
 

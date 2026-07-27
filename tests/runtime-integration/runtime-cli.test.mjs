@@ -320,7 +320,10 @@ describe("canonical Agent runtime CLI", () => {
     const beta = run(test, ["spawn_agent", "--task-name", "beta", "--fork-turns", "none", "--model", "sonnet", "--json", "session=beta delay=50"], { env: foreignEnv });
     waitForAgent(test, beta.agent.path, (value) => value.status === "completed", { env: foreignEnv });
 
-    const operator = run(test, ["list-agents", "--all", "--json"], {
+    const operator = run(test, [
+      "list-agents", "--all", "--cwd", test.workspace,
+      "--env-file", test.envFile, "--json",
+    ], {
       program: operatorCli,
       env: foreignEnv,
     });
@@ -572,6 +575,10 @@ describe("canonical Agent runtime CLI", () => {
     }
     for (const args of [
       ["list_agents", "--all", "--json"],
+      ["list_agents", "--cwd", path.dirname(test.workspace), "--json"],
+      ["list_agents", "-C", path.dirname(test.workspace), "--json"],
+      ["list_agents", "--env-file", test.envFile, "--json"],
+      ["list_agents", `--cwd ${path.dirname(test.workspace)} --json`],
       ["spawn_agent", "--task-name", "forbidden", "--fork-turns", "none", "--resume-session", "x", "--json", "x"],
       ["wait_agent", "/root/not-allowed", "--json"],
       ["read_agent_messages", "/root/not-allowed", "--session-id", "foreign", "--json"],
@@ -655,9 +662,31 @@ describe("canonical Agent runtime CLI", () => {
     fs.copyFileSync(bootstrap, fakeBootstrap);
     fs.mkdirSync(path.join(fakeCache, "runtime"));
     fs.writeFileSync(path.join(fakeCache, "runtime", "cli.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(poisonMarker)}, "bad");\n`);
-    const delegated = command(test, ["list_agents", "--json"], { program: fakeBootstrap });
+    const poisonEnv = path.join(fakeCache, "poison.env");
+    fs.writeFileSync(poisonEnv, "not valid dotenv syntax\n");
+    const delegated = command(test, ["list_agents", "--json"], {
+      program: fakeBootstrap,
+      env: {
+        ...test.env,
+        CC_RUNTIME_CHECKOUT: fakeCache,
+        CC_RUNTIME_ENV_FILE: poisonEnv,
+        CLAUDE_NATIVE_CONFIG_DIR: "/poison/native-claude",
+        CLAUDE_CONFIG_DIR: "/poison/claude",
+      },
+    });
     assert.equal(delegated.status, 0, delegated.stderr || delegated.stdout);
     assert.deepEqual(JSON.parse(delegated.stdout), list(test));
     assert.equal(fs.existsSync(poisonMarker), false);
+
+    for (const args of [
+      ["list_agents", "--cwd", path.dirname(test.workspace), "--json"],
+      ["list_agents", "-C", path.dirname(test.workspace), "--json"],
+      ["list_agents", "--env-file", test.envFile, "--json"],
+      ["list_agents", `--env-file ${test.envFile} --json`],
+    ]) {
+      const rejected = command(test, args, { program: fakeBootstrap });
+      assert.equal(rejected.status, 1, args.join(" "));
+      assert.match(rejected.stderr, /Unsupported model-facing option/);
+    }
   });
 });

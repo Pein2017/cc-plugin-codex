@@ -13,8 +13,10 @@ Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
 
 `node "<plugin-root>/bootstrap/cc-runtime.mjs" wait_agent $ARGUMENTS`
 
-The bootstrap must delegate to `CC_RUNTIME_CHECKOUT` from the selected
-`.codex/.env`; never execute a runtime from the plugin Cache.
+Before invoking, confirm the host command cwd is the checkout or worktree whose
+Agent mailbox should be observed. The lifecycle inherits that Codex cwd; never
+pass `--cwd`, `-C`, or `--env-file`. The bootstrap delegates only to the fixed
+local checkout and never executes a runtime from the Plugin Cache.
 
 Supported canonical arguments: `[--timeout-ms <ms>]`
 `[--acknowledge-tokens <comma-separated-tokens>]`.

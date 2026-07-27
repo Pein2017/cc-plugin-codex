@@ -19,9 +19,9 @@ history after its worker exits.
 The runtime has no source or runtime dependency on Sendbird, upstream
 installers, Codex forwarding hooks, or a versioned plugin Cache. Codex caches a
 minimal descriptor/bootstrap for discovery, but that bootstrap fails closed
-unless it delegates to `CC_RUNTIME_CHECKOUT`. Executable runtime source always
-comes from the independent `/data/CoordExp/cc-plugin-codex` clone or one of its
-registered worktrees. `/data/CoordExp/external/cc-plugin-codex` is a read-only
+unless it delegates to the fixed `/data/CoordExp/cc-plugin-codex` checkout.
+Executable runtime source never comes from a development worktree or selectable
+environment variable. `/data/CoordExp/external/cc-plugin-codex` is a read-only
 reference and is never a runtime, install, Git-object, remote, merge, or
 worktree dependency.
 
@@ -201,24 +201,25 @@ the plugin does not change the parent Codex permission policy.
 
 ## Environment
 
-The runtime resolves exactly one env file in this order:
+The installed model-facing bootstrap loads exactly
+`/data/CoordExp/cc-plugin-codex/config/runtime.env`. `--env-file`,
+`CC_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, and workspace `.codex/.env` are not
+environment selectors for `cc:*`. The public CLI rejects `--env-file` rather
+than pretending to honor it.
 
-1. `--env-file <path>` or `CC_RUNTIME_ENV_FILE`;
-2. `${CODEX_HOME}/.env`;
-3. the nearest ancestor `.codex/.env` from the workspace;
-4. `config/runtime.env` in this checkout.
+The fixed file is parsed as literal `KEY=VALUE`, never evaluated as shell code.
+It authoritatively pins `CLAUDE_NATIVE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+`CONDA_EXE`, the Claude binary, lower- and upper-case 9090 proxy variables, and
+localhost bypasses. Those values overlay conflicting inherited values; valid
+unrelated host state such as `PATH`, Codex root identity, and runtime-state
+location is preserved. Receipts expose only selected non-secret fields and
+redact proxy credentials.
 
-Files are parsed as literal `KEY=VALUE`, never evaluated as shell code. Valid
-values such as `CONDA_EXE`, `PATH`, `CLAUDE_CONFIG_DIR`, lower- and upper-case
-proxy variables, and localhost bypasses reach the Claude child together.
-Receipts expose only selected non-secret fields and redact proxy credentials.
-The effective Claude configuration path is the first non-empty value of
-`CLAUDE_NATIVE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`, then
-`/data/CoordExp/.claude`.
-
-This checkout's project configuration is `/data/CoordExp/.codex/.env`. It
-selects `/data/CoordExp/.claude`, the local 9090 proxy, the existing Conda
-environment, Claude binary, and this checkout through `CC_RUNTIME_CHECKOUT`.
+Every public lifecycle call inherits the host Codex process cwd. Before calling
+a skill, confirm Codex is operating in the checkout or worktree where Claude
+should work. Do not pass `--cwd`, `-C`, or `--env-file`. Private detached-worker
+reconstruction and the explicit read-only operator diagnostic retain their own
+context controls; Plugin skills never expose them.
 
 ## Migration from 0.1
 
@@ -261,15 +262,16 @@ plugin source is the intentionally small `plugins/cc-for-pein/` subtree.
 explicitly rebind a mismatched `pein-local` root to this independent clone. It
 does not remove the plugin. After that:
 
-- Runtime `.mjs` edits are checkout-hot through `CC_RUNTIME_CHECKOUT`; the next
-  lifecycle call uses them without any plugin action.
+- Runtime `.mjs` edits in `/data/CoordExp/cc-plugin-codex` are checkout-hot; the
+  next lifecycle call uses them without any plugin action.
 - Skill, skill metadata, manifest, or bootstrap edits use
   `npm run refresh:local`. It advances the manifest cachebuster, atomically
   refreshes with `codex plugin add`, and fails closed if the marketplace root
   drifted. Start a new Codex task to test newly discovered skill metadata.
 
-Verify the installed snapshot has exactly the seven v0.4 Experimental skills and every one
-delegates only to `CC_RUNTIME_CHECKOUT`.
+Verify the installed snapshot has exactly the seven v0.4 Experimental skills and
+every one delegates only to `/data/CoordExp/cc-plugin-codex` while inheriting
+the host Codex cwd.
 
 ## Provenance
 

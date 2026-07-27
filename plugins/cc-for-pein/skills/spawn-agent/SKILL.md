@@ -14,8 +14,10 @@ Use this skill to create a named Agent in the current Codex root. Resolve
 
 `node "<plugin-root>/bootstrap/cc-runtime.mjs" spawn_agent $ARGUMENTS`
 
-The bootstrap must delegate to `CC_RUNTIME_CHECKOUT` from the selected
-`.codex/.env`; never execute a runtime from the plugin Cache.
+Before invoking, confirm the host command cwd is the checkout or worktree where
+the new Agent should work. The lifecycle inherits that Codex cwd; never pass
+`--cwd`, `-C`, or `--env-file`. The bootstrap delegates only to the fixed local
+checkout and never executes a runtime from the Plugin Cache.
 
 Canonical arguments are `--task-name <name>`, `--fork-turns none`, an explicit
 `--model <model>`, and a message. Optional extensions are

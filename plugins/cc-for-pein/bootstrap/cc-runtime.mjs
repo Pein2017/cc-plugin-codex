@@ -2,32 +2,31 @@
 /**
  * SPDX-License-Identifier: Apache-2.0
  *
- * Cache-safe Codex discovery bootstrap. This file never executes a runtime
- * beside itself: it resolves and validates the checkout declared by the one
- * selected .codex/.env, then delegates to that checkout's CLI.
+ * Cache-safe Codex discovery bootstrap. The installed snapshot is only a
+ * descriptor: it validates the one personal checkout and environment, then
+ * delegates to that checkout's CLI from the host Codex working directory.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+
+const FIXED_RUNTIME_CHECKOUT = "/data/CoordExp/cc-plugin-codex";
+const PUBLIC_COMMANDS = new Set([
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "interrupt_agent",
+  "read_agent_messages",
+  "list_agents",
+]);
 
 function existing(candidate) {
   try {
     return fs.statSync(candidate).isFile() ? path.resolve(candidate) : null;
   } catch {
     return null;
-  }
-}
-
-function findAncestorEnv(startPath) {
-  let current = path.resolve(startPath);
-  while (true) {
-    const candidate = existing(path.join(current, ".codex", ".env"));
-    if (candidate) return candidate;
-    const parent = path.dirname(current);
-    if (parent === current) return null;
-    current = parent;
   }
 }
 
@@ -61,46 +60,27 @@ function splitRawArgumentString(raw) {
   return tokens;
 }
 
-function bootstrapContext(rawArgv) {
-  const argv = rawArgv.length === 1 && String(rawArgv[0] ?? "").trim()
-    ? splitRawArgumentString(rawArgv[0])
-    : rawArgv;
-  let cwd = process.cwd();
-  let envFile = null;
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (token === "--") break;
-    const match = /^(--cwd|--env-file)=(.*)$/.exec(token);
-    const option = match?.[1] ?? token;
-    if (!["--cwd", "-C", "--env-file"].includes(option)) continue;
-    const value = match?.[2] ?? argv[index + 1];
-    if (!value) throw new Error(`Missing value for ${option}`);
-    if (!match) index += 1;
-    if (option === "--env-file") envFile = value;
-    else cwd = path.resolve(process.cwd(), value);
+function normalizeArgv(rawArgv) {
+  if (rawArgv.length === 1 && String(rawArgv[0] ?? "").trim()) {
+    return splitRawArgumentString(rawArgv[0]);
   }
-  return { cwd, envFile };
+  if (rawArgv.length === 2 && String(rawArgv[1] ?? "").trim()) {
+    return [rawArgv[0], ...splitRawArgumentString(rawArgv[1])];
+  }
+  return rawArgv;
 }
 
-function selectEnvFile(env, context) {
-  if (context.envFile) {
-    const explicit = existing(path.resolve(context.cwd, context.envFile));
-    if (!explicit) throw new Error(`Runtime env file not found: ${context.envFile}`);
-    return explicit;
+function rejectPublicContextOverrides(rawArgv) {
+  const [command, ...argv] = normalizeArgv(rawArgv);
+  if (!PUBLIC_COMMANDS.has(command)) return;
+  const forbidden = argv.find((value) =>
+    /^(?:--cwd|--env-file)(?:=|$)/.test(value) || /^(?:-C)(?:=|$)/.test(value)
+  );
+  if (forbidden) {
+    throw new Error(
+      `Unsupported model-facing option ${forbidden}. CC lifecycle calls inherit the Codex working directory and use the Plugin's fixed environment.`
+    );
   }
-  if (env.CC_RUNTIME_ENV_FILE) {
-    const explicit = existing(path.resolve(context.cwd, env.CC_RUNTIME_ENV_FILE));
-    if (!explicit) throw new Error(`Runtime env file not found: ${env.CC_RUNTIME_ENV_FILE}`);
-    return explicit;
-  }
-  if (env.CODEX_HOME) {
-    const fromCodexHome = existing(path.join(env.CODEX_HOME, ".env"));
-    if (fromCodexHome) return fromCodexHome;
-  }
-  const discovered = findAncestorEnv(context.cwd) ?? existing(path.join(os.homedir(), ".codex", ".env"));
-  if (discovered) return discovered;
-  const checkout = String(env.CC_RUNTIME_CHECKOUT ?? "").trim();
-  return checkout ? existing(path.join(checkout, "config", "runtime.env")) : null;
 }
 
 function parseEnv(filePath) {
@@ -123,23 +103,15 @@ function parseEnv(filePath) {
   return values;
 }
 
-function isWithin(candidate, parent) {
-  const relative = path.relative(parent, candidate);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
-}
-
-function resolveCheckout(env) {
-  const configured = String(env.CC_RUNTIME_CHECKOUT ?? "").trim();
-  if (!configured) {
-    throw new Error("CC_RUNTIME_CHECKOUT is required in the selected .codex/.env.");
-  }
-  const checkout = fs.realpathSync.native(path.resolve(configured));
-  const codexHome = path.resolve(env.CODEX_HOME ?? path.join(os.homedir(), ".codex"));
-  const cacheRoot = path.join(codexHome, "plugins", "cache");
-  if (isWithin(checkout, cacheRoot)) {
-    throw new Error(`CC_RUNTIME_CHECKOUT must not point into Codex's versioned cache: ${checkout}`);
+function resolveCheckout() {
+  let checkout;
+  try {
+    checkout = fs.realpathSync.native(FIXED_RUNTIME_CHECKOUT);
+  } catch {
+    throw new Error(`Fixed CC runtime checkout is unavailable: ${FIXED_RUNTIME_CHECKOUT}`);
   }
   const cli = path.join(checkout, "runtime", "cli.mjs");
+  const envFile = existing(path.join(checkout, "config", "runtime.env"));
   const manifest = path.join(
     checkout,
     "plugins",
@@ -147,34 +119,37 @@ function resolveCheckout(env) {
     ".codex-plugin",
     "plugin.json"
   );
-  if (!existing(cli) || !existing(manifest)) {
-    throw new Error(`CC_RUNTIME_CHECKOUT is not a valid CC runtime checkout: ${checkout}`);
+  if (!existing(cli) || !envFile || !existing(manifest)) {
+    throw new Error(`Fixed CC runtime checkout is invalid: ${checkout}`);
   }
   const plugin = JSON.parse(fs.readFileSync(manifest, "utf8"));
   if (plugin.name !== "cc-for-pein") {
     throw new Error(`Unexpected plugin identity at ${checkout}: ${plugin.name ?? "missing"}`);
   }
-  return { checkout, cli };
+  return { checkout, cli, envFile };
 }
 
 function main() {
   const inherited = { ...process.env };
   const hostThreadId = String(inherited.CODEX_THREAD_ID ?? "").trim();
-  const context = bootstrapContext(process.argv.slice(2));
-  const envFile = selectEnvFile(inherited, context);
-  if (!envFile) throw new Error("No .codex/.env was found for the CC runtime bootstrap.");
+  rejectPublicContextOverrides(process.argv.slice(2));
+  const { checkout, cli, envFile } = resolveCheckout();
   const configured = parseEnv(envFile);
   delete configured.CODEX_THREAD_ID;
   delete configured.CC_TRUSTED_OWNER_ROOT_ID;
-  const env = { ...inherited, ...configured, CC_RUNTIME_ENV_FILE: envFile };
+  const env = {
+    ...inherited,
+    ...configured,
+    CC_RUNTIME_CHECKOUT: checkout,
+    CC_RUNTIME_ENV_FILE: envFile,
+    CC_RUNTIME_SOURCE_ROOT: checkout,
+  };
   if (hostThreadId) {
     env.CODEX_THREAD_ID = hostThreadId;
     env.CC_TRUSTED_OWNER_ROOT_ID = hostThreadId;
   } else {
     delete env.CC_TRUSTED_OWNER_ROOT_ID;
   }
-  const { checkout, cli } = resolveCheckout(env);
-  env.CC_RUNTIME_SOURCE_ROOT = checkout;
   const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], {
     cwd: process.cwd(),
     env,

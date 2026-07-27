@@ -1,9 +1,22 @@
-# local-runtime-boundary Specification
+## ADDED Requirements
 
-## Purpose
+### Requirement: Public lifecycle workspace is inherited from Codex
+Each model-facing lifecycle command SHALL use the canonical form of its host process working directory as the Agent workspace and SHALL NOT accept `--cwd`, `-C`, or `--env-file`. Every lifecycle skill SHALL instruct Codex to confirm the intended checkout or worktree before invocation. Private detached-worker reconstruction and explicit read-only operator diagnostics MAY retain their own context arguments, and those arguments SHALL NOT be exposed by Plugin skills.
 
-Define the checkout-owned runtime, host Claude dependency, environment selection, and portability boundary.
-## Requirements
+#### Scenario: Codex invokes a lifecycle command from the intended worktree
+- **WHEN** a Plugin skill starts from a Codex process whose cwd is the intended worktree
+- **THEN** the public runtime scopes Agent state to that worktree without an additional context argument
+
+#### Scenario: Model-facing context selector is supplied
+- **WHEN** any public lifecycle invocation includes `--cwd`, `-C`, or `--env-file`
+- **THEN** it fails with an unsupported model-facing option error before selecting a different workspace or environment
+
+#### Scenario: Detached worker reconstructs public context
+- **WHEN** a public spawn hands a prepared job to its private detached worker
+- **THEN** the runtime may pass the already-canonical workspace through the internal worker's `--cwd` argument
+
+## MODIFIED Requirements
+
 ### Requirement: Checkout-owned executable runtime
 The installed CC for Pein plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/cc-plugin-codex` checkout. The bootstrap SHALL NOT accept caller or ambient runtime-checkout selection. It SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned plugin Cache path.
 
@@ -18,13 +31,6 @@ The installed CC for Pein plugin SHALL load executable runtime source only from 
 #### Scenario: Development worktree provenance is inspected
 - **WHEN** the canonical checkout's Git common directory and remotes are inspected
 - **THEN** they resolve only to the independent local clone and its Pein2017 `origin`, with no upstream or external-repo dependency, and no development worktree becomes an executable runtime source
-
-### Requirement: Host Claude Code dependency is explicit
-The runtime SHALL use the host `claude` CLI for authentication, Claude configuration, sessions, hooks, memories, skills, plugins, MCP configuration, and tool execution.
-
-#### Scenario: Claude CLI is unavailable
-- **WHEN** the configured Claude executable cannot be resolved
-- **THEN** readiness fails without substituting an upstream package or cached runtime
 
 ### Requirement: Exactly one environment file is selected
 The installed model-facing bootstrap SHALL load exactly `/data/CoordExp/cc-plugin-codex/config/runtime.env`. It SHALL NOT select an environment from invocation arguments, `CC_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, or a workspace `.codex/.env`. It SHALL parse the fixed file as data and SHALL NOT evaluate it as shell code.
@@ -86,32 +92,3 @@ Executable runtime changes SHALL take effect directly from `/data/CoordExp/cc-pl
 #### Scenario: Local marketplace root drifts
 - **WHEN** refresh mode detects that `pein-local` points somewhere other than `/data/CoordExp/cc-plugin-codex`
 - **THEN** it fails closed instead of silently refreshing from the wrong source; initial installation may explicitly rebind the marketplace once
-
-### Requirement: Runtime support scope is Linux
-The checkout-owned runtime SHALL support Node.js 20.19 or newer on Linux. macOS
-and native Windows behavior is best-effort and SHALL NOT be treated as a release
-or compatibility guarantee without a separate OpenSpec change and real-platform
-acceptance evidence.
-
-#### Scenario: Supported Linux runtime starts
-- **WHEN** the checkout runs on Linux with a compatible Node.js and host Claude CLI
-- **THEN** the full runtime, installation, process-control, and state-protection contracts apply
-
-#### Scenario: Non-Linux runtime is attempted
-- **WHEN** the checkout is invoked on macOS or native Windows
-- **THEN** any surviving defensive behavior is explicitly unsupported and its limitations do not block the Linux release
-
-### Requirement: Public lifecycle workspace is inherited from Codex
-Each model-facing lifecycle command SHALL use the canonical form of its host process working directory as the Agent workspace and SHALL NOT accept `--cwd`, `-C`, or `--env-file`. Every lifecycle skill SHALL instruct Codex to confirm the intended checkout or worktree before invocation. Private detached-worker reconstruction and explicit read-only operator diagnostics MAY retain their own context arguments, and those arguments SHALL NOT be exposed by Plugin skills.
-
-#### Scenario: Codex invokes a lifecycle command from the intended worktree
-- **WHEN** a Plugin skill starts from a Codex process whose cwd is the intended worktree
-- **THEN** the public runtime scopes Agent state to that worktree without an additional context argument
-
-#### Scenario: Model-facing context selector is supplied
-- **WHEN** any public lifecycle invocation includes `--cwd`, `-C`, or `--env-file`
-- **THEN** it fails with an unsupported model-facing option error before selecting a different workspace or environment
-
-#### Scenario: Detached worker reconstructs public context
-- **WHEN** a public spawn hands a prepared job to its private detached worker
-- **THEN** the runtime may pass the already-canonical workspace through the internal worker's `--cwd` argument
