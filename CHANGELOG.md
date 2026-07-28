@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Bind terminal-parity authority to the public `write` intent: false or omitted
+  intent now respects native Claude permissions without
+  `--dangerously-skip-permissions`, while explicit `write: true` enables the
+  bypass. Require model-facing spawn guidance to choose the intent, preserve
+  follow-up inheritance, reject contradictory direct bypass requests, and mark
+  reconciliation-capable `list_agents` as non-read-only but idempotent.
+- Add one checkout-owned `cc_for_pein` stdio MCP server with exactly seven
+  typed lifecycle tools. Bind calls to trusted Codex thread/workspace metadata,
+  keep spawn/follow-up background handoff asynchronous, keep wait as the
+  explicit 10-minute-default/one-hour-maximum join, and cancel only the wait
+  observation. Skills now guide MCP calls without silent shell fallback; the
+  installed snapshot remains descriptor-only and the CLI remains operator-only.
+- Add a zero-model-cost Claude Code update guard: fingerprint the configured
+  executable, cache a required-CLI-surface check, fail before incompatible new
+  activation, revalidate at detached launch and after completion, and mark only
+  a full-fingerprint-matching requested turn as `observed_working` without an
+  automatic paid smoke.
 - Deliver each new CC Agent final message completely through the durable
   completion inbox and `wait_agent`, removing the former 64 KiB persistence and
   4096-byte public handoff truncation while retaining honest legacy provenance.
@@ -13,9 +30,12 @@
   and an atomic `queued` to `cancelling` cleanup fence; accepted Agent turns
   continue across Codex exit or network loss, while failed handoffs cannot race
   a worker claim or release an exact-session lease early.
-- Add canonical `claude-haiku-4-5` with explicit low effort as a test-only model
-  for Plugin smoke, hook, environment-parity, and integration checks; retain
-  Sonnet/Opus for general work and reject dated model IDs as public inputs.
+- Expand the supported roster to full `claude-haiku-4-5`, `claude-sonnet-5`,
+  `claude-opus-5`, and `claude-fable-5` selections. All accept `low` through
+  `max`; relative Plugin guidance (not exact pricing) orders approximate
+  capability and spend as Haiku < Sonnet < Opus < Fable. Make Haiku/low the
+  recommended real-smoke route rather than a test-only restriction, while
+  recommending Fable for core decisions and planning rather than routine coding.
 - Treat explicit Claude subscription, usage, allowance, credit, or quota
   exhaustion as terminal and non-retrying, with no model fallback; keep generic
   HTTP 429 recovery and caller-imposed maximum-budget failures distinct.

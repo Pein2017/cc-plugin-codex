@@ -29,22 +29,35 @@ The supported platform is Linux with Node.js 20.19 or newer. Any surviving
 macOS or native Windows defensive branches are best-effort only and are not a
 compatibility or release guarantee.
 
-## Public lifecycle
+## Typed MCP lifecycle
 
-`runtime/index.mjs` is the only model-facing lifecycle interface. Its complete
-v0.4 surface is:
+The Plugin exposes one stdio MCP server named `cc_for_pein`. Its seven typed
+tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 
 ```text
-spawn_agent({ task_name, message, fork_turns: "none", model, description?, reasoning_effort?, execution_profile? })
+spawn_agent({ task_name, message, fork_turns: "none", model, write, description?, reasoning_effort?, execution_profile? })
 send_message({ target, message })
-followup_task({ target, message })
+followup_task({ target, message, write?, reasoning_effort?, execution_profile? })
 wait_agent({ timeout_ms?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
 ```
 
-The installed plugin exposes the same seven operations as namespaced skills:
+Codex sees the tools as:
+
+```text
+mcp__cc_for_pein__spawn_agent
+mcp__cc_for_pein__send_message
+mcp__cc_for_pein__followup_task
+mcp__cc_for_pein__wait_agent
+mcp__cc_for_pein__interrupt_agent
+mcp__cc_for_pein__read_agent_messages
+mcp__cc_for_pein__list_agents
+```
+
+The installed Plugin also exposes the same seven namespaced skills as
+orchestration guidance:
 
 ```text
 $cc-for-pein:spawn-agent
@@ -56,23 +69,31 @@ $cc-for-pein:read-agent-messages
 $cc-for-pein:list-agents
 ```
 
-Successful `spawn-agent` calls report the selected model plus the stable Agent
-path and current status. `list-agents` reports only canonical name/status
-records. `wait-agent` reports at most one update: either coalesced safe progress
-or an acknowledgement-bearing completion with the complete stored Claude final
-message for parent synthesis. `read-agent-messages` retrieves recent outer
-assistant text from the exact Agent's bound native Claude transcript without
-activating it.
+Successful `spawn-agent` calls report one concise sentence with the selected
+model, its role/tier, stable Agent path, and current status—never final Claude
+text or raw JSON. `list-agents` reports only canonical name/status records.
+`wait-agent` reports at most one update: either coalesced safe progress or an
+acknowledgement-bearing completion with the complete stored Claude final message
+for parent synthesis. `read-agent-messages` retrieves recent outer-assistant
+text from the exact Agent's bound native Claude transcript without activating it.
 
-The runtime model surface is pinned to three choices: Sonnet 5 maps to
-`claude-sonnet-5`, Opus 5 maps to `claude-opus-5`, and test-only Haiku 4.5 maps
-to `claude-haiku-4-5`. Haiku/low is reserved for Plugin smoke, hook,
-environment-parity, and integration witnesses; normal delegation and
-decision-grade work remain Sonnet or Opus. Every initial spawn selects a model
-explicitly; there is no implicit model or fallback. Fable, older model IDs,
-dated backend snapshot IDs, and other available Claude models fail before
-Claude launches. Model and reasoning effort remain separate arguments;
-`x-high` maps to `xhigh`. Follow-up turns inherit the Agent's selected model.
+The runtime model surface normalizes its accepted aliases to four canonical IDs:
+`claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, and
+`claude-fable-5`. Relative Plugin guidance, not exact pricing: approximate
+capability and spend rise from Haiku < Sonnet < Opus < Fable. Haiku is the
+cheapest/fastest option for tests, real smoke, and small mechanical work;
+Haiku/low is the recommended real-smoke route, not a test-only restriction.
+Sonnet is the balanced default for general coding. Opus is for deep analysis,
+complex work, or high-risk implementation and review. Fable is the highest
+capability/spend choice for core decision discussion and planning, generally not
+routine code writing. Before launch, state the selected model's role/tier.
+
+Every initial spawn selects a model explicitly and persists its canonical full
+ID; there is no implicit model or fallback, and partial IDs are rejected. All four models accept `low`,
+`medium`, `high`, `xhigh`, or `max`; model and reasoning effort remain separate
+arguments, and `x-high` maps to `xhigh`. Older model IDs, dated backend snapshot
+IDs, and other Claude models fail before Claude launches. Follow-up turns
+inherit the Agent's selected model.
 
 An explicit Claude subscription, usage, weekly/monthly allowance, credit, or
 quota exhaustion ends subsequent real CC tests in that workflow. The runtime
@@ -87,9 +108,18 @@ auxiliary title-generation model call observed for unnamed sessions; resumed
 sessions keep their existing identity and are not renamed.
 
 Plugin skills necessarily remain namespaced; they are not literal replacement
-registrations for Codex built-in tools. Each invokes only
-`plugins/cc-for-pein/bootstrap/cc-runtime.mjs`, which delegates to the
-checkout-owned matching snake_case command.
+registrations for Codex built-in tools. Each guides the matching typed MCP
+tool. If the MCP server is unavailable, the model reports an actionable Plugin
+discovery/startup failure instead of silently falling back to a shell command.
+
+`spawn_agent` and an activating `followup_task` are asynchronous at the Agent
+boundary: they return after the durable detached-worker handoff, so no Codex
+background terminal is needed. `wait_agent` is the explicit synchronous join.
+It defaults to a 10-minute upper bound, accepts at most one hour, and returns
+immediately when eligible progress or completion arrives. Cancelling the MCP
+call stops only that observation; it never interrupts or cancels the Agent.
+Codex MCP calls do not expose Unified Exec terminal session IDs, and this
+Plugin deliberately does not add a second background-terminal/session layer.
 
 ## Agent model and V2 alignment
 
@@ -189,19 +219,61 @@ registry and inbox are rebuildable projections.
 ## Execution profiles
 
 `terminal-parity` is the default. It selects the caller's explicit supported
-model, sets `IS_SANDBOX=1`, and always launches Claude with
-`--dangerously-skip-permissions`. It otherwise leaves effort, settings, tools,
-MCP configuration, hooks, memories, skills, plugins, and prompts to the native
-Claude configuration unless the caller explicitly supplies an override.
+model and sets `IS_SANDBOX=1`. Read/review intent (`write: false`, or omission
+for direct runtime callers) omits `--dangerously-skip-permissions` and leaves
+authorization to the native Claude configuration; this is permission-respecting
+terminal parity, not an OS-enforced read-only sandbox. Explicit mutation intent
+(`write: true`) adds `--dangerously-skip-permissions`. The profile otherwise
+leaves effort, settings, tools, MCP configuration, hooks, memories, skills,
+plugins, and prompts to the native Claude configuration unless the caller
+explicitly supplies an override. Model-facing spawn guidance always passes the
+intent explicitly; follow-up omission inherits the Agent's latest activation.
 
 `safe` remains an explicit opt-in profile. It supplies the runtime-owned
 sandbox, permission, and read-only tool policy while retaining the Agent's
 caller-selected model. This permission choice affects only the Claude child;
 the plugin does not change the parent Codex permission policy.
 
+## Claude Code updates and compatibility
+
+Claude Code remains an independently updated host dependency. The fixed
+`CC_CLAUDE_BIN` in `config/runtime.env` selects the user's normal installed
+Claude entrypoint; an update may replace its target in place without changing
+that path. Updating Claude Code does not require reinstalling this Plugin.
+Already-running Claude processes keep their launch-time version, while a later
+new or resumed turn uses the newly admitted executable.
+
+Before a new Agent or idle follow-up is persisted, readiness fingerprints the
+configured executable from its canonical target, filesystem identity, and
+`claude --version` output. An unseen fingerprint receives a zero-model-cost
+`claude --help` check for the exact flags and values emitted by terminal-parity
+and safe profiles. The result is cached in owner-only workspace state until the
+fingerprint or runtime surface revision changes. Missing flags, probe failure,
+or a binary that changes during the check fails closed without creating a new
+Agent activation or falling back to another executable, model, or effort.
+
+Static compatibility is deliberately not called full stream-protocol proof.
+Readiness reports `static_only` for a newly admitted version and
+`observed_working` after an ordinary requested turn completes with a matching
+runtime-reported Claude version and a post-turn resample confirms the complete
+prepared executable fingerprint is unchanged. The runtime never spends
+subscription quota on an automatic compatibility probe. To verify a new
+version through the complete production path, explicitly spawn Haiku 4.5 with
+`low` effort and a minimal task, then wait for that Agent normally.
+
+The prepared fingerprint is stored with each job and checked again by the
+detached worker before Claude launch. A change in that interval starts no
+Claude child and sends no prompt; retrying prepares against the new version.
+Active-turn steering continues to target its already-running admitted process.
+Inspect the current evidence without a model call with:
+
+```bash
+node plugins/cc-for-pein/bootstrap/cc-runtime.mjs readiness
+```
+
 ## Environment
 
-The installed model-facing bootstrap loads exactly
+The installed MCP bootstrap and operator CLI load exactly
 `/data/CoordExp/cc-plugin-codex/config/runtime.env`. `--env-file`,
 `CC_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, and workspace `.codex/.env` are not
 environment selectors for `cc:*`. The public CLI rejects `--env-file` rather
@@ -215,11 +287,14 @@ unrelated host state such as `PATH`, Codex root identity, and runtime-state
 location is preserved. Receipts expose only selected non-secret fields and
 redact proxy credentials.
 
-Every public lifecycle call inherits the host Codex process cwd. Before calling
-a skill, confirm Codex is operating in the checkout or worktree where Claude
-should work. Do not pass `--cwd`, `-C`, or `--env-file`. Private detached-worker
-reconstruction and the explicit read-only operator diagnostic retain their own
-context controls; Plugin skills never expose them.
+Every MCP call is bound to the trusted Codex `_meta.threadId` and local
+`_meta["codex/sandbox-state-meta"].sandboxCwd`; tool arguments cannot select a
+cwd, environment, owner root, or native Claude session. Before calling a skill,
+confirm Codex is operating in the checkout or worktree where Claude should
+work. The operator CLI still inherits its host process cwd and rejects
+`--env-file`. Private detached-worker reconstruction and the explicit read-only
+operator diagnostic retain their own context controls; Plugin skills never
+expose them.
 
 ## Migration from 0.1
 
@@ -228,7 +303,7 @@ not an internal job ID:
 
 | Removed v0.1 surface | v0.3 canonical replacement |
 | --- | --- |
-| `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit supported model; Haiku is test-only |
+| `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit supported model; Haiku/low is the recommended real-smoke route |
 | `steer <job>` | `send_message <target> <message>` |
 | `steer --follow-up <job>` / `followUp` | `followup_task <target> <message>` |
 | `status` / `result` | `list_agents` and untargeted `wait_agent`; use `read_agent_messages` only for earlier native messages |
@@ -240,10 +315,10 @@ runtime backfills it only when an exact supported model is proven by a retained
 receipt or the bounded tail of the Agent's Claude session artifact. A terminal
 Agent whose historical model is unsupported or cannot be proven remains
 visible with its history intact, but continuation is blocked; the runtime never
-substitutes Sonnet 5, Opus 5, or Haiku 4.5. An active legacy turn without model evidence is
-left running and migration is deferred. If a previously unproven artifact later
-records an exact supported model, reconciliation restores exact-session
-continuation automatically.
+substitutes Haiku 4.5, Sonnet 5, Opus 5, or Fable 5. An active legacy turn
+without model evidence is left running and migration is deferred. If a
+previously unproven artifact later records an exact supported model,
+reconciliation restores exact-session continuation automatically.
 
 ## Local development and installation
 
@@ -256,22 +331,27 @@ node runtime/cli.mjs readiness --json
 npm run install:local
 ```
 
+`runtime/cli.mjs` and `plugins/cc-for-pein/bootstrap/cc-runtime.mjs` remain
+operator/debug surfaces. Model-facing lifecycle calls use the typed MCP tools;
+there is no automatic shell fallback.
+
 The repository-local marketplace is `.agents/plugins/marketplace.json`; its
 plugin source is the intentionally small `plugins/cc-for-pein/` subtree.
 `npm run install:local` performs the one-time local-marketplace binding and may
 explicitly rebind a mismatched `pein-local` root to this independent clone. It
 does not remove the plugin. After that:
 
-- Runtime `.mjs` edits in `/data/CoordExp/cc-plugin-codex` are checkout-hot; the
-  next lifecycle call uses them without any plugin action.
-- Skill, skill metadata, manifest, or bootstrap edits use
+- Runtime `.mjs` edits in `/data/CoordExp/cc-plugin-codex` are checkout-hot for
+  a newly started MCP process; restart the Codex task if its existing MCP server
+  must be replaced.
+- Skill, skill metadata, manifest, `.mcp.json`, or bootstrap edits use
   `npm run refresh:local`. It advances the manifest cachebuster, atomically
   refreshes with `codex plugin add`, and fails closed if the marketplace root
-  drifted. Start a new Codex task to test newly discovered skill metadata.
+  drifted. Start a new Codex task to discover refreshed skills and MCP tools.
 
 Verify the installed snapshot has exactly the seven v0.4 Experimental skills and
-every one delegates only to `/data/CoordExp/cc-plugin-codex` while inheriting
-the host Codex cwd.
+one `cc_for_pein` MCP server whose descriptor-only bootstrap delegates only to
+`/data/CoordExp/cc-plugin-codex`.
 
 ## Provenance
 

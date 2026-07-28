@@ -232,10 +232,29 @@ export function saveConfig(cwd, config) {
   return data;
 }
 
+/**
+ * Serialize config read-modify-write operations across concurrent Codex roots.
+ * The callback runs under the same process-identity-aware lock used for jobs.
+ */
+export function mutateConfig(cwd, mutation) {
+  if (typeof mutation !== "function") {
+    throw new Error("Config mutation must be a function.");
+  }
+  ensureStateDir(cwd);
+  const configFile = resolveConfigFile(cwd);
+  const ownership = acquireJobLock(`${configFile}.lock`);
+  try {
+    const current = loadConfig(cwd);
+    const proposed = mutation({ ...current });
+    const next = proposed == null ? current : proposed;
+    return saveConfig(cwd, next);
+  } finally {
+    releaseJobLock(`${configFile}.lock`, ownership);
+  }
+}
+
 export function setConfig(cwd, key, value) {
-  const config = loadConfig(cwd);
-  config[key] = value;
-  return saveConfig(cwd, config);
+  return mutateConfig(cwd, (config) => ({ ...config, [key]: value }));
 }
 
 export function getConfig(cwd) {

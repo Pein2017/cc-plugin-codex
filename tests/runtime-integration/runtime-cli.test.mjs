@@ -61,6 +61,7 @@ function appendInvocation(record) {
 
 async function main() {
   if (args[0] === "--version") return process.stdout.write("2.1.220 (Claude Code)\\n");
+  if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
   if (args[0] === "auth" && args[1] === "status") return process.stdout.write("authenticated\\n");
   if (args[0] !== "-p") throw new Error("unexpected args " + JSON.stringify(args));
   const initial = await firstEvent();
@@ -271,7 +272,7 @@ function writeNativeTranscript(test, sessionId, records) {
 }
 
 describe("canonical Agent runtime CLI", () => {
-  it("launches test-only Haiku with its canonical model and explicit low effort", () => {
+  it("launches Haiku with its canonical model and explicit low effort", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--task-name", "haiku_smoke", "--fork-turns", "none",
@@ -282,6 +283,19 @@ describe("canonical Agent runtime CLI", () => {
     const invocation = invocations(test)[0];
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-haiku-4-5");
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "low");
+  });
+
+  it("launches Fable with canonical model and explicit max effort", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--task-name", "fable_smoke", "--fork-turns", "none",
+      "--model", "fable", "--reasoning-effort", "max", "--json", "session=fable delay=40",
+    ]);
+    assert.equal(spawned.agent.selectedModel, "claude-fable-5");
+    waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
+    const invocation = invocations(test)[0];
+    assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-fable-5");
+    assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "max");
   });
 
   it("exposes all seven operations with flat exact targeting and duplicate-name rejection", () => {
@@ -606,7 +620,7 @@ describe("canonical Agent runtime CLI", () => {
       "spawn_agent",
       "--task-name", "unsupported_model",
       "--fork-turns", "none",
-      "--model", "fable",
+      "--model", "fable-5",
       "--json", "must fail before Claude starts",
     ]);
     assert.equal(unsupportedModel.status, 1);
@@ -633,7 +647,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(invocations(test), []);
   });
 
-  it("preserves terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
+  it("preserves permission-respecting terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--task-name", "parity", "--fork-turns", "none", "--model", "opus",
@@ -645,7 +659,7 @@ describe("canonical Agent runtime CLI", () => {
       assert.equal(invocation.args.includes(flag), false, flag);
     }
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-opus-5");
-    assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
+    assert.equal(invocation.args.includes("--dangerously-skip-permissions"), false);
     assert.equal(invocation.args[invocation.args.indexOf("--name") + 1], "parity");
     assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(path.dirname(test.workspace), ".claude"));
     assert.equal(invocation.env.CONDA_EXE, "/opt/conda/bin/conda");
@@ -690,5 +704,33 @@ describe("canonical Agent runtime CLI", () => {
       assert.equal(rejected.status, 1, args.join(" "));
       assert.match(rejected.stderr, /Unsupported model-facing option/);
     }
+  });
+
+  it("adds dangerous permission bypass only for explicit write and inherits it on follow-up", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--task-name", "write_parity", "--fork-turns", "none",
+      "--model", "sonnet", "--write", "--json", "session=write-parity delay=40",
+    ]);
+    const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
+    const followup = run(test, [
+      "followup_task", terminal.path, "session=write-parity follow-up", "--json",
+    ]);
+    waitForAgent(
+      test,
+      terminal.path,
+      (value) => value.status === "completed" && value.latestJobId === followup.turn.jobId,
+    );
+    const recorded = invocations(test);
+    assert.equal(recorded.length, 2);
+    assert.equal(recorded[0].args.includes("--dangerously-skip-permissions"), true);
+    assert.equal(recorded[1].args.includes("--dangerously-skip-permissions"), true);
+
+    const rejected = command(test, [
+      "spawn_agent", "--task-name", "contradictory", "--fork-turns", "none",
+      "--model", "sonnet", "--dangerously-skip-permissions", "--json", "must fail",
+    ]);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /requires explicit write access/);
   });
 });

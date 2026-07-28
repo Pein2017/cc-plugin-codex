@@ -20,6 +20,12 @@ import {
   createExecutionProfile,
   validateExecutionProfileOptions,
 } from "./execution-profile.mjs";
+import {
+  assertPreparedClaudeCompatibility,
+  formatClaudeCompatibilityError,
+  inspectClaudeCompatibility,
+  recordSuccessfulClaudeTurn,
+} from "./claude-version-compatibility.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { runClaudeTaskSession } from "./job-supervisor.mjs";
 import {
@@ -355,6 +361,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function waitAbortError() {
+  const error = new Error("CC Agent wait observation was cancelled by the caller.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfWaitAborted(signal) {
+  if (signal?.aborted) throw waitAbortError();
+}
+
+function sleepForWait(ms, signal) {
+  if (!signal) return sleep(ms);
+  throwIfWaitAborted(signal);
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(undefined);
+    };
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(waitAbortError());
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function summaryOf(prompt) {
   const normalized = String(prompt ?? "").trim().replace(/\s+/g, " ");
   if (!normalized) return "Continue Claude session";
@@ -543,12 +576,19 @@ class ClaudeRuntime {
 
   readiness() {
     const availability = getClaudeAvailability(this.cwd, { env: this.env });
+    const compatibility = inspectClaudeCompatibility(this.cwd, {
+      availability,
+      env: this.env,
+    });
     const auth = availability.available
       ? getClaudeAuthStatus(this.cwd, { env: this.env })
       : { available: false, loggedIn: false, detail: availability.detail };
     return {
-      ready: Boolean(availability.available && auth.loggedIn),
+      ready: Boolean(
+        availability.available && compatibility.staticCompatible && auth.loggedIn
+      ),
       availability,
+      compatibility,
       auth,
       cwd: this.cwd,
       claudeConfigDir: this.env.CLAUDE_CONFIG_DIR ?? null,
@@ -568,6 +608,9 @@ class ClaudeRuntime {
     if (!receipt.availability.available) {
       throw new Error("Claude Code CLI is unavailable. Install `claude` and ensure it is on PATH.");
     }
+    if (!receipt.compatibility?.staticCompatible) {
+      throw new Error(formatClaudeCompatibilityError(receipt.compatibility));
+    }
     if (!receipt.auth.loggedIn) {
       throw new Error("Claude Code CLI is not authenticated. Run `claude auth login` in the same environment.");
     }
@@ -579,6 +622,9 @@ class ClaudeRuntime {
     if (
       receipt?.ready !== true ||
       receipt?.availability?.available !== true ||
+      receipt?.compatibility?.staticCompatible !== true ||
+      !String(receipt?.compatibility?.fingerprint ?? "").trim() ||
+      !String(receipt?.compatibility?.executable ?? "").trim() ||
       receipt?.auth?.loggedIn !== true ||
       receipt?.cwd !== this.cwd ||
       receipt?.claudeConfigDir !== (this.env.CLAUDE_CONFIG_DIR ?? null) ||
@@ -1019,12 +1065,20 @@ class ClaudeRuntime {
       logFile: stored.logFile ?? resolveJobLogFile(this.cwd, id),
       onEvent: createJobProgressUpdater(this.cwd, id),
     });
-    return runTrackedJob(stored, (onSpawn) => this.execute(stored, progress, onSpawn), {
+    return runTrackedJob(stored, (onSpawn) => {
+      const availability = getClaudeAvailability(this.cwd, { env: this.env });
+      const compatibility = assertPreparedClaudeCompatibility(
+        this.cwd,
+        stored.readiness?.compatibility,
+        { availability, env: this.env },
+      );
+      return this.execute(stored, progress, onSpawn, compatibility);
+    }, {
       logFile: stored.logFile,
     });
   }
 
-  async execute(job, onProgress, onSpawn) {
+  async execute(job, onProgress, onSpawn, launchCompatibility) {
     const request = job.request ?? {};
     const profile = createExecutionProfile({
       profile: request.profile,
@@ -1045,6 +1099,7 @@ class ClaudeRuntime {
         write: Boolean(request.write),
         claudeOptions: {
           ...profile.claudeOptions,
+          claudeBin: launchCompatibility?.executable,
           sessionName: request.sessionName ?? undefined,
           resumeSessionId: request.resumeSessionId ?? undefined,
         },
@@ -1052,6 +1107,18 @@ class ClaudeRuntime {
         onSpawn,
       });
       const rawOutput = String(result.finalMessage ?? "");
+      const compatibilityObservation = result.status === "completed"
+        ? recordSuccessfulClaudeTurn(
+            this.cwd,
+            launchCompatibility,
+            result.runtimeReceipt?.claudeCodeVersion,
+            { env: this.env },
+          )
+        : {
+            recorded: false,
+            compatibility: launchCompatibility,
+            runtimeVersion: result.runtimeReceipt?.claudeCodeVersion ?? null,
+          };
       const payload = {
         status: result.status,
         sessionId: result.sessionId ?? null,
@@ -1070,7 +1137,11 @@ class ClaudeRuntime {
           environment: this.environmentReceipt,
           workspaceRoot: this.cwd,
           sourceRoot: this.sourceRoot,
-          hostClaudeVersion: job.readiness?.availability?.detail ?? null,
+          hostClaudeVersion: job.readiness?.compatibility?.version ?? null,
+          preparedClaudeFingerprint: launchCompatibility?.fingerprint ?? null,
+          claudeCompatibility: compatibilityObservation.compatibility,
+          compatibilityObservationRecorded: compatibilityObservation.recorded,
+          compatibilityObservationReason: compatibilityObservation.reason ?? null,
         },
         lastByteAt: result.lastByteAt ?? null,
         manualResumeCommand: result.manualResumeCommand ?? null,
@@ -1262,6 +1333,8 @@ class ClaudeRuntime {
     }
     const timeoutMs = requestedTimeout;
     const pollIntervalMs = Math.max(50, Number(options.pollIntervalMs) || 500);
+    const signal = options.signal ?? null;
+    throwIfWaitAborted(signal);
     const acknowledgeTokens = Array.isArray(options.acknowledgeTokens)
       ? options.acknowledgeTokens
       : [];
@@ -1281,6 +1354,7 @@ class ClaudeRuntime {
     let inbox = { events: [] };
     let selectedProgress = null;
     while (true) {
+      throwIfWaitAborted(signal);
       inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
       if (inbox.events.length > 0) break;
       const progress = pendingPublicProgress(
@@ -1292,7 +1366,10 @@ class ClaudeRuntime {
       if (!progress) {
         job = jobId ? this.status(jobId) : null;
         if ((job && !ACTIVE_JOB_STATUSES.has(job.status)) || Date.now() >= deadline) break;
-        await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
+        await sleepForWait(
+          Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+          signal
+        );
         continue;
       }
       // Completion is authoritative and always wins a race with advisory

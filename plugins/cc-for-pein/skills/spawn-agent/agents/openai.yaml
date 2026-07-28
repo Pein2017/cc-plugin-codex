@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Spawn Agent"
   short_description: "Experimental: start an asynchronous durable Claude Agent"
-  default_prompt: "Experimental: use $cc-for-pein:spawn-agent with fork_turns=none and an explicit model. Sonnet/Opus are for general work; Haiku 4.5 at low effort is test-only for smoke, hook, environment, and integration checks. Stop further real CC tests on explicit account-limit exhaustion. Classify join policy first, because completion cannot reactivate an idle Codex parent."
+  default_prompt: "Experimental: use $cc-for-pein:spawn-agent and invoke mcp__cc_for_pein__spawn_agent with fork_turns=none, an explicit model, and explicit write intent; use write=false for read/review work and write=true only for authorized mutation, never fall back to a shell command, and remember that completion cannot reactivate an idle Codex parent."

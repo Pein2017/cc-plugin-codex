@@ -22,7 +22,7 @@ const PUBLIC_COMMANDS = new Set([
 function usage() {
   return [
     "Usage:",
-    "  node runtime/cli.mjs spawn_agent --task-name <name> --fork-turns none --model <sonnet|opus|haiku> [options] <message>",
+    "  node runtime/cli.mjs spawn_agent --task-name <name> --fork-turns none --model <haiku|sonnet|opus|fable> [options] <message>",
     "  node runtime/cli.mjs send_message <exact-target> <message>",
     "  node runtime/cli.mjs followup_task <exact-target> <message>",
     "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",

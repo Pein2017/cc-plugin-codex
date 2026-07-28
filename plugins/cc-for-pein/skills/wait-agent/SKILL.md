@@ -9,20 +9,21 @@ description: 'Experimental: wait for bounded current-root CC Agent progress or c
 > reactivate a Codex parent that has already ended. Required joins must remain
 > inside the active parent turn.
 
-Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
+Invoke `mcp__cc_for_pein__wait_agent` with optional typed `timeout_ms` and
+`acknowledge_tokens` fields.
 
-`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" wait_agent $ARGUMENTS`
+Before invoking, confirm the active Codex turn workspace is the checkout or
+worktree whose Agent mailbox should be observed. Trusted Codex metadata
+supplies the workspace and root identity; never add cwd, environment,
+owner-root, target, or Claude-session selectors. If the typed MCP tool is
+unavailable, report the Plugin discovery/startup failure instead of silently
+running a shell fallback.
 
-Before invoking, confirm the host command cwd is the checkout or worktree whose
-Agent mailbox should be observed. The lifecycle inherits that Codex cwd; never
-pass `--cwd`, `-C`, or `--env-file`. The bootstrap delegates only to the fixed
-local checkout and never executes a runtime from the Plugin Cache.
-
-Supported canonical arguments: `[--timeout-ms <ms>]`
-`[--acknowledge-tokens <comma-separated-tokens>]`.
-
-The default observation upper bound is 600000 ms (10 minutes); the maximum is
-3600000 ms (one hour). This is an upper bound, not a sleep duration: eligible
+For an ordinary required join, omit `timeout_ms`. The runtime then uses its
+default observation upper bound of 600000 ms (10 minutes). Pass `timeout_ms`
+only for an intentional immediate probe, a
+shorter observation window, or a longer bounded wait; the maximum is 3600000 ms
+(one hour). The timeout is an upper bound, not a sleep duration: eligible
 activity returns immediately.
 
 - Waiting is untargeted and reads only the current logical root mailbox.

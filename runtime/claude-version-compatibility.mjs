@@ -1,0 +1,504 @@
+/**
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Zero-model-cost compatibility evidence for the independently updated host
+ * Claude Code CLI. Static help checks admit a binary; successful real turns
+ * add stronger observation without launching an extra paid probe.
+ */
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+
+import { resolveClaudeExecutable } from "./claude-headless-adapter.mjs";
+import { getConfig, mutateConfig, nowIso } from "./job-store.mjs";
+
+export const CLAUDE_CLI_SURFACE_REVISION = "cc-agent-v1";
+export const REQUIRED_CLAUDE_OPTIONS = Object.freeze([
+  "-p",
+  "--output-format",
+  "--verbose",
+  "--include-partial-messages",
+  "--input-format",
+  "--replay-user-messages",
+  "--include-hook-events",
+  "--name",
+  "--model",
+  "--effort",
+  "--resume",
+  "--allowedTools",
+  "--settings",
+  "--permission-mode",
+  "--dangerously-skip-permissions",
+]);
+export const REQUIRED_CLAUDE_VALUES = Object.freeze([
+  "stream-json",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "dontAsk",
+  "bypassPermissions",
+]);
+
+const PROBE_TIMEOUT_MS = 10_000;
+const MAX_MISSING_SURFACE = 64;
+
+function boundedText(value, maxChars = 200) {
+  const text = String(value ?? "").trim();
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
+}
+
+export function normalizeClaudeVersion(value) {
+  const text = boundedText(value, 200);
+  const semantic = /\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/.exec(text)?.[1];
+  return semantic ?? text;
+}
+
+function probeResultFailureCode(result, probe) {
+  if (result?.status === 0) return null;
+  if (result?.error?.code === "ETIMEDOUT") {
+    return `${probe}_probe_timeout`;
+  }
+  return `${probe}_probe_failed`;
+}
+
+function compatibilityFailure(code, message) {
+  const error = new Error(message);
+  /** @type {any} */ (error).compatibilityCode = code;
+  return error;
+}
+
+function compatibilityFailureCode(error, fallback) {
+  const code = error && typeof error === "object"
+    ? /** @type {any} */ (error).compatibilityCode
+    : null;
+  return typeof code === "string"
+    ? code
+    : fallback;
+}
+
+function runCommand(executable, args, cwd, env, spawnSyncImpl) {
+  return spawnSyncImpl(executable, args, {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: PROBE_TIMEOUT_MS,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+}
+
+function fileIdentity(target, statSync = fs.statSync) {
+  const stat = statSync(target);
+  return {
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    size: String(stat.size),
+    mtimeMs: String(Math.trunc(stat.mtimeMs)),
+    mode: String(stat.mode),
+  };
+}
+
+function fingerprintPayload(payload) {
+  return createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+}
+
+export function sampleClaudeExecutable(cwd, options = {}) {
+  const env = options.env ?? process.env;
+  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
+  const executable = options.executable ?? resolveClaudeExecutable({ env });
+  const versionResult = options.versionText == null
+    ? runCommand(executable, ["--version"], cwd, env, spawnSyncImpl)
+    : null;
+  if (versionResult) {
+    const failureCode = probeResultFailureCode(versionResult, "version");
+    if (failureCode) {
+      throw compatibilityFailure(failureCode, "Claude version probe failed.");
+    }
+  }
+  const versionText = boundedText(
+    options.versionText ?? versionResult?.stdout ?? versionResult?.stderr,
+    200,
+  );
+  if (!versionText) {
+    throw compatibilityFailure("version_probe_empty", "Claude version probe returned no version.");
+  }
+  let canonicalTarget;
+  let identity;
+  try {
+    canonicalTarget = (options.realpathSync ?? fs.realpathSync.native)(executable);
+    identity = fileIdentity(canonicalTarget, options.statSync);
+  } catch {
+    throw compatibilityFailure(
+      "executable_identity_failed",
+      "Claude executable identity could not be sampled."
+    );
+  }
+  const version = normalizeClaudeVersion(versionText);
+  const fingerprint = fingerprintPayload({
+    executable,
+    canonicalTarget,
+    identity,
+    versionText,
+  });
+  return {
+    executable,
+    canonicalTarget,
+    version,
+    versionText,
+    identity,
+    fingerprint,
+  };
+}
+
+function checkHelpSurface(helpText) {
+  const tokens = new Set(String(helpText ?? "").match(/--?[A-Za-z][A-Za-z0-9-]*/g) ?? []);
+  const missingOptions = REQUIRED_CLAUDE_OPTIONS.filter((option) => !tokens.has(option));
+  const missingValues = REQUIRED_CLAUDE_VALUES.filter(
+    (value) => !new RegExp(`(?:^|[^A-Za-z0-9_-])${value}(?:$|[^A-Za-z0-9_-])`).test(helpText),
+  );
+  return [...missingOptions, ...missingValues.map((value) => `value:${value}`)]
+    .slice(0, MAX_MISSING_SURFACE);
+}
+
+function sameCachedProbe(current, snapshot) {
+  return Boolean(
+    current?.fingerprint === snapshot.fingerprint &&
+    current?.requiredSurfaceRevision === CLAUDE_CLI_SURFACE_REVISION &&
+    typeof current?.staticStatus === "string"
+  );
+}
+
+function persistedStaticObservation(snapshot, extra = {}) {
+  return {
+    fingerprint: snapshot?.fingerprint ?? null,
+    version: snapshot?.version ?? null,
+    executable: snapshot?.canonicalTarget ?? snapshot?.executable ?? null,
+    requiredSurfaceRevision: CLAUDE_CLI_SURFACE_REVISION,
+    staticStatus: extra.staticStatus ?? null,
+    missingSurface: Array.isArray(extra.missingSurface)
+      ? extra.missingSurface.slice(0, MAX_MISSING_SURFACE)
+      : [],
+    failureCode: extra.failureCode ?? null,
+    checkedAt: extra.checkedAt ?? null,
+  };
+}
+
+function persistedSuccessfulObservation(observation) {
+  if (!observation?.fingerprint) return null;
+  return {
+    fingerprint: observation.fingerprint,
+    version: observation.version ?? null,
+    executable: observation.executable ?? null,
+    observedAt: observation.observedAt ?? null,
+  };
+}
+
+function sanitizedCompatibilityState(state) {
+  if (!state) return null;
+  const current = state.current
+    ? persistedStaticObservation(state.current, state.current)
+    : null;
+  const lastStaticallyCompatible = state.lastStaticallyCompatible
+    ? persistedStaticObservation(state.lastStaticallyCompatible, state.lastStaticallyCompatible)
+    : null;
+  return {
+    schemaVersion: 1,
+    current,
+    lastStaticallyCompatible,
+    lastSuccessfulTurn: persistedSuccessfulObservation(state.lastSuccessfulTurn),
+  };
+}
+
+function containsLegacyRawEvidence(state) {
+  return [state?.current, state?.lastStaticallyCompatible].some((entry) =>
+    entry && (
+      Object.hasOwn(entry, "versionText") ||
+      Object.hasOwn(entry, "detail") ||
+      Object.hasOwn(entry, "identity") ||
+      Object.hasOwn(entry, "canonicalTarget") ||
+      Object.hasOwn(entry, "configuredExecutable")
+    )
+  );
+}
+
+function publicReceipt(state) {
+  const current = state?.current ?? null;
+  const lastCompatible = state?.lastStaticallyCompatible ?? null;
+  const lastSuccess = state?.lastSuccessfulTurn ?? null;
+  const staticCompatible = current?.staticStatus === "compatible";
+  const runtimeObserved = Boolean(
+    staticCompatible && lastSuccess?.fingerprint === current?.fingerprint
+  );
+  return {
+    status: staticCompatible
+      ? runtimeObserved ? "observed_working" : "static_only"
+      : "incompatible",
+    staticCompatible,
+    runtimeObserved,
+    version: current?.version ?? null,
+    executable: current?.executable ?? null,
+    fingerprint: current?.fingerprint ?? null,
+    requiredSurfaceRevision: current?.requiredSurfaceRevision ?? CLAUDE_CLI_SURFACE_REVISION,
+    checkedAt: current?.checkedAt ?? null,
+    missingSurface: Array.isArray(current?.missingSurface)
+      ? current.missingSurface.slice(0, MAX_MISSING_SURFACE)
+      : [],
+    failureCode: current?.failureCode ?? null,
+    lastStaticallyCompatibleVersion: lastCompatible?.version ?? null,
+    lastSuccessfulVersion: lastSuccess?.version ?? null,
+    lastSuccessfulAt: lastSuccess?.observedAt ?? null,
+  };
+}
+
+function persistStaticProbe(cwd, initialSnapshot, options) {
+  const env = options.env ?? process.env;
+  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
+  return mutateConfig(cwd, (config) => {
+    let before;
+    try {
+      before = sampleClaudeExecutable(cwd, {
+        env,
+        spawnSyncImpl,
+        executable: initialSnapshot.executable,
+        realpathSync: options.realpathSync,
+        statSync: options.statSync,
+      });
+    } catch (error) {
+      const checkedAt = nowIso();
+      const existing = /** @type {any} */ (
+        sanitizedCompatibilityState(config.claudeCliCompatibility) ?? {}
+      );
+      return {
+        ...config,
+        claudeCliCompatibility: {
+          schemaVersion: 1,
+          ...existing,
+          current: persistedStaticObservation(initialSnapshot, {
+            staticStatus: "probe_failed",
+            missingSurface: [],
+            failureCode: compatibilityFailureCode(error, "version_probe_failed"),
+            checkedAt,
+          }),
+        },
+      };
+    }
+
+    const existing = /** @type {any} */ (
+      sanitizedCompatibilityState(config.claudeCliCompatibility) ?? {}
+    );
+    if (sameCachedProbe(existing.current, before)) {
+      return {
+        ...config,
+        claudeCliCompatibility: existing,
+      };
+    }
+
+    const helpResult = runCommand(before.executable, ["--help"], cwd, env, spawnSyncImpl);
+    const helpFailureCode = probeResultFailureCode(helpResult, "help");
+    let after = null;
+    let afterFailureCode = null;
+    try {
+      after = sampleClaudeExecutable(cwd, {
+        env,
+        spawnSyncImpl,
+        executable: before.executable,
+        realpathSync: options.realpathSync,
+        statSync: options.statSync,
+      });
+    } catch (error) {
+      afterFailureCode = compatibilityFailureCode(error, "post_probe_failed");
+    }
+
+    const stable = after?.fingerprint === before.fingerprint;
+    const missingSurface = helpFailureCode
+      ? []
+      : checkHelpSurface(`${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`);
+    const staticStatus = helpFailureCode || afterFailureCode
+      ? "probe_failed"
+      : !stable
+        ? "unstable"
+        : missingSurface.length > 0
+          ? "missing_surface"
+          : "compatible";
+    const failureCode = helpFailureCode ?? afterFailureCode ?? (
+      !stable
+        ? "executable_unstable"
+        : missingSurface.length > 0
+          ? "missing_surface"
+          : null
+    );
+    const checkedAt = nowIso();
+    const current = persistedStaticObservation(before, {
+      staticStatus,
+      missingSurface,
+      failureCode,
+      checkedAt,
+    });
+    return {
+      ...config,
+      claudeCliCompatibility: {
+        schemaVersion: 1,
+        ...existing,
+        current,
+        lastStaticallyCompatible: staticStatus === "compatible"
+          ? current
+          : existing.lastStaticallyCompatible ?? null,
+        lastSuccessfulTurn: existing.lastSuccessfulTurn ?? null,
+      },
+    };
+  }).claudeCliCompatibility;
+}
+
+export function inspectClaudeCompatibility(cwd, options = {}) {
+  const availability = options.availability;
+  if (availability?.available !== true) {
+    return {
+      status: "incompatible",
+      staticCompatible: false,
+      runtimeObserved: false,
+      version: null,
+      executable: availability?.executable ?? null,
+      fingerprint: null,
+      requiredSurfaceRevision: CLAUDE_CLI_SURFACE_REVISION,
+      checkedAt: null,
+      missingSurface: [],
+      failureCode: "availability_unavailable",
+      lastStaticallyCompatibleVersion: null,
+      lastSuccessfulVersion: null,
+      lastSuccessfulAt: null,
+    };
+  }
+
+  let snapshot;
+  try {
+    snapshot = sampleClaudeExecutable(cwd, {
+      env: options.env,
+      spawnSyncImpl: options.spawnSyncImpl,
+      executable: availability.executable,
+      versionText: availability.detail,
+      realpathSync: options.realpathSync,
+      statSync: options.statSync,
+    });
+  } catch (error) {
+    return {
+      status: "incompatible",
+      staticCompatible: false,
+      runtimeObserved: false,
+      version: null,
+      executable: availability.executable,
+      fingerprint: null,
+      requiredSurfaceRevision: CLAUDE_CLI_SURFACE_REVISION,
+      checkedAt: null,
+      missingSurface: [],
+      failureCode: compatibilityFailureCode(error, "executable_identity_failed"),
+      lastStaticallyCompatibleVersion: null,
+      lastSuccessfulVersion: null,
+      lastSuccessfulAt: null,
+    };
+  }
+
+  const cached = getConfig(cwd).claudeCliCompatibility;
+  if (sameCachedProbe(cached?.current, snapshot)) {
+    if (!containsLegacyRawEvidence(cached)) return publicReceipt(cached);
+    const sanitized = mutateConfig(cwd, (config) => ({
+      ...config,
+      claudeCliCompatibility: sanitizedCompatibilityState(config.claudeCliCompatibility),
+    })).claudeCliCompatibility;
+    return publicReceipt(sanitized);
+  }
+  return publicReceipt(persistStaticProbe(cwd, snapshot, options));
+}
+
+export function assertPreparedClaudeCompatibility(cwd, expected, options = {}) {
+  if (!expected?.staticCompatible || !expected.fingerprint) {
+    throw new Error("Prepared job has no statically compatible Claude executable receipt.");
+  }
+  const availability = options.availability ?? options.getAvailability?.(cwd, {
+    env: options.env,
+  });
+  if (!availability) {
+    throw new Error("Claude compatibility recheck requires current availability evidence.");
+  }
+  const current = inspectClaudeCompatibility(cwd, { ...options, availability });
+  if (!current.staticCompatible) {
+    throw new Error(formatClaudeCompatibilityError(current));
+  }
+  if (current.fingerprint !== expected.fingerprint) {
+    throw new Error(
+      `Claude Code changed after job preparation (${expected.version ?? "unknown"} -> ${current.version ?? "unknown"}); retry against the new compatible executable.`
+    );
+  }
+  return current;
+}
+
+export function recordSuccessfulClaudeTurn(cwd, prepared, runtimeVersionText, options = {}) {
+  let recorded = false;
+  let reason = null;
+  const runtimeVersion = normalizeClaudeVersion(runtimeVersionText);
+  let postTurnSnapshot = null;
+  try {
+    postTurnSnapshot = sampleClaudeExecutable(cwd, {
+      env: options.env,
+      spawnSyncImpl: options.spawnSyncImpl,
+      executable: options.executable,
+      realpathSync: options.realpathSync,
+      statSync: options.statSync,
+    });
+  } catch (error) {
+    reason = compatibilityFailureCode(error, "post_turn_probe_failed");
+  }
+  if (!reason && postTurnSnapshot?.fingerprint !== prepared?.fingerprint) {
+    reason = "post_turn_fingerprint_changed";
+  }
+  if (!reason && (!runtimeVersion || runtimeVersion !== postTurnSnapshot?.version)) {
+    reason = "runtime_version_mismatch";
+  }
+  const saved = mutateConfig(cwd, (config) => {
+    const state = /** @type {any} */ (
+      sanitizedCompatibilityState(config.claudeCliCompatibility) ?? {}
+    );
+    const current = state.current;
+    if (
+      reason ||
+      !prepared?.fingerprint ||
+      current?.fingerprint !== prepared.fingerprint ||
+      current?.staticStatus !== "compatible" ||
+      postTurnSnapshot?.fingerprint !== current.fingerprint
+    ) {
+      if (!reason) reason = "compatibility_state_changed";
+      return config;
+    }
+    recorded = true;
+    return {
+      ...config,
+      claudeCliCompatibility: {
+        schemaVersion: 1,
+        ...state,
+        lastSuccessfulTurn: {
+          fingerprint: current.fingerprint,
+          version: current.version,
+          executable: current.executable,
+          observedAt: nowIso(),
+        },
+      },
+    };
+  }).claudeCliCompatibility;
+  return {
+    recorded,
+    reason: recorded ? null : reason ?? "compatibility_state_changed",
+    compatibility: publicReceipt(saved),
+    runtimeVersion,
+  };
+}
+
+export function formatClaudeCompatibilityError(receipt) {
+  const version = receipt?.version ?? "unknown version";
+  const missing = Array.isArray(receipt?.missingSurface) && receipt.missingSurface.length > 0
+    ? ` Missing: ${receipt.missingSurface.join(", ")}.`
+    : "";
+  const failure = receipt?.failureCode ? ` Failure: ${receipt.failureCode}.` : "";
+  return `Claude Code ${version} is incompatible with CC runtime surface ${CLAUDE_CLI_SURFACE_REVISION}.${missing}${failure}`;
+}

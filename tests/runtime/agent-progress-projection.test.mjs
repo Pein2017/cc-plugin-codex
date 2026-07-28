@@ -21,7 +21,7 @@ afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
-function setup() {
+function setup(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-progress-projection-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, ".claude");
@@ -43,6 +43,7 @@ function setup() {
       CC_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
+    abortSignal: options.abortSignal,
   });
   const agent = runtime.store.createAgent({
     task_name: "progress",
@@ -164,6 +165,17 @@ describe("Agent progress projection", () => {
       runtime.waitAgent({ timeout_ms: 3_600_001 }),
       /between 0 and 3600000/
     );
+  });
+
+  it("cancels only the current wait observation", async () => {
+    const controller = new AbortController();
+    const { runtime, workspace, agent } = setup({ abortSignal: controller.signal });
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.kind, "progress");
+    const waiting = runtime.waitAgent({ timeout_ms: 60_000 });
+    controller.abort();
+    await assert.rejects(waiting, (error) => error?.name === "AbortError");
+    assert.equal(runtime.store.resolveTarget(agent.agentId).status, "running");
+    assert.equal(readJobFile(workspace, "cc-progress").status, "running");
   });
 
   it("prioritizes a durable completion over pending progress", async () => {

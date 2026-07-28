@@ -36,9 +36,26 @@ describe("execution profiles", () => {
       }),
       /cannot be combined/,
     );
+    assert.deepEqual(
+      validateExecutionProfileOptions({ profile: "terminal-parity", model: "sonnet" }),
+      {
+        name: "terminal-parity",
+        model: "claude-sonnet-5",
+        effort: undefined,
+        dangerouslySkipPermissions: false,
+      },
+    );
+    assert.equal(
+      validateExecutionProfileOptions({
+        profile: "terminal-parity",
+        model: "sonnet",
+        write: true,
+      }).dangerouslySkipPermissions,
+      true,
+    );
   });
 
-  it("defaults to full-access terminal parity while keeping model and effort explicit", () => {
+  it("binds terminal-parity bypass to write intent while keeping model and effort explicit", () => {
     const profile = createExecutionProfile({
       model: "sonnet",
       write: true,
@@ -53,7 +70,7 @@ describe("execution profiles", () => {
     assert.equal(profile.receipt.inheritedClaudeConfiguration, true);
     assert.throws(
       () => createExecutionProfile({ profile: "terminal-parity", env: {} }),
-      /explicit Sonnet, Opus, or test-only Haiku model/
+      /explicit Haiku, Sonnet, Opus, or Fable model/
     );
     const haiku = createExecutionProfile({
       profile: "terminal-parity",
@@ -62,7 +79,8 @@ describe("execution profiles", () => {
     });
     assert.equal(haiku.claudeOptions.model, "claude-haiku-4-5");
     assert.equal(haiku.claudeOptions.effort, undefined);
-    assert.deepEqual(haiku.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
+    assert.equal(haiku.claudeOptions.dangerouslySkipPermissions, undefined);
+    assert.deepEqual(haiku.receipt.addedOverrides, ["model"]);
 
     const explicitLowHaiku = createExecutionProfile({
       profile: "terminal-parity",
@@ -73,8 +91,13 @@ describe("execution profiles", () => {
     assert.equal(explicitLowHaiku.claudeOptions.effort, "low");
     assert.deepEqual(
       explicitLowHaiku.receipt.addedOverrides,
-      ["model", "dangerouslySkipPermissions", "effort"],
+      ["model", "effort"],
     );
+
+    const fable = createExecutionProfile({ profile: "safe", model: "fable", env: {} });
+    assert.equal(fable.claudeOptions.model, "claude-fable-5");
+    assert.equal(fable.claudeOptions.effort, "max");
+    fable.cleanup();
   });
 
   it("preserves caller-explicit tool selection but rejects permission-mode conflicts", () => {
@@ -85,7 +108,7 @@ describe("execution profiles", () => {
       env: {},
     });
     assert.deepEqual(profile.claudeOptions.allowedTools, ["mcp__serena__get_symbols_overview"]);
-    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "dangerouslySkipPermissions", "model"]);
+    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "model"]);
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
@@ -100,6 +123,7 @@ describe("execution profiles", () => {
     const profile = createExecutionProfile({
       profile: "terminal-parity",
       model: "opus",
+      write: true,
       dangerouslySkipPermissions: true,
       env: { CLAUDE_CONFIG_DIR: "/project/.claude", IS_SANDBOX: "0" },
     });
@@ -107,13 +131,27 @@ describe("execution profiles", () => {
     assert.equal(profile.claudeOptions.env.IS_SANDBOX, "1");
     assert.deepEqual(profile.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
     assert.throws(
-      () => createExecutionProfile({ profile: "safe", model: "opus", dangerouslySkipPermissions: true }),
+      () => createExecutionProfile({
+        profile: "safe",
+        model: "opus",
+        write: true,
+        dangerouslySkipPermissions: true,
+      }),
       /safe must remain sandboxed/
     );
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
         model: "opus",
+        dangerouslySkipPermissions: true,
+      }),
+      /requires explicit write access/
+    );
+    assert.throws(
+      () => createExecutionProfile({
+        profile: "terminal-parity",
+        model: "opus",
+        write: true,
         dangerouslySkipPermissions: true,
         permissionMode: "auto",
       }),

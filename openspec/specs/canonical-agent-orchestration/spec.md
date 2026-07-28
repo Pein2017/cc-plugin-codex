@@ -5,24 +5,47 @@ Define the seven canonical model-facing Agent operations and their exact mapping
 to the checkout-owned CC for Pein plugin surface.
 ## Requirements
 ### Requirement: Plugin skills map directly to the canonical operations
-The installed Plugin SHALL expose exactly `$cc-for-pein:spawn-agent`, `$cc-for-pein:send-message`, `$cc-for-pein:followup-task`, `$cc-for-pein:wait-agent`, `$cc-for-pein:interrupt-agent`, `$cc-for-pein:list-agents`, and `$cc-for-pein:read-agent-messages`, each delegating to the matching checkout-owned snake_case runtime operation. All seven SHALL be identified as Experimental and eligible for model-visible skill discovery in a newly started Codex task.
+The installed Plugin SHALL expose exactly `$cc-for-pein:spawn-agent`, `$cc-for-pein:send-message`, `$cc-for-pein:followup-task`, `$cc-for-pein:wait-agent`, `$cc-for-pein:interrupt-agent`, `$cc-for-pein:list-agents`, and `$cc-for-pein:read-agent-messages` as Experimental orchestration guidance for the matching `mcp__cc_for_pein__spawn_agent`, `mcp__cc_for_pein__send_message`, `mcp__cc_for_pein__followup_task`, `mcp__cc_for_pein__wait_agent`, `mcp__cc_for_pein__interrupt_agent`, `mcp__cc_for_pein__list_agents`, and `mcp__cc_for_pein__read_agent_messages` typed tools. Each MCP tool SHALL delegate to the matching checkout-owned snake_case runtime operation. All seven skills and tools SHALL be eligible for model-visible discovery in a newly started Codex task. Skills SHALL NOT silently substitute shell execution when the typed server is unavailable; the checkout CLI remains an operator/debug fallback.
 
 #### Scenario: Installed snapshot is verified in a new task
 - **WHEN** Codex loads Plugin version `0.4.0`
-- **THEN** all seven Experimental Agent skills are present in the model-visible catalog and none of the old lifecycle skills is discoverable
+- **THEN** all seven Experimental Agent skills and all seven typed Agent tools are present in the model-visible catalog, none of the old lifecycle skills is discoverable, and ordinary lifecycle calls require no shell command
+
+#### Scenario: Typed MCP server is unavailable
+- **WHEN** a model-facing lifecycle operation cannot resolve its matching MCP tool
+- **THEN** the skill reports the Plugin discovery or startup failure instead of silently invoking the checkout CLI
+
+### Requirement: Model-facing activation selects write intent deliberately
+The `spawn-agent` skill SHALL classify each requested turn as read/review or authorized mutation and SHALL pass `write: false` or `write: true` explicitly to the typed tool. The `followup-task` skill SHALL explain that omitted write intent inherits the Agent's latest activation and SHALL pass an explicit value whenever the requested follow-up changes that authority. The skills SHALL identify `write: true` as the condition that enables terminal-parity dangerous permission bypass and SHALL NOT describe false or omitted intent as an OS-enforced read-only sandbox.
+
+#### Scenario: Parent delegates a read-only audit
+- **WHEN** the requested Agent should inspect or advise without repository mutation
+- **THEN** `spawn-agent` passes `write: false` and explains that native Claude permissions remain authoritative
+
+#### Scenario: Parent delegates authorized implementation
+- **WHEN** the requested Agent is authorized to modify the workspace
+- **THEN** `spawn-agent` passes `write: true` and terminal-parity may use dangerous permission bypass
+
+#### Scenario: Follow-up changes authority
+- **WHEN** a follow-up changes from read/review work to authorized mutation or from mutation to read/review work
+- **THEN** `followup-task` passes the new explicit write intent rather than inheriting the previous one
 
 ### Requirement: Spawn skill presents a concise acknowledgement by default
 The `spawn-agent` skill SHALL retain the complete runtime receipt for machine
 reasoning while presenting only a concise successful acknowledgement derived
-from the selected model, stable Agent path, and current status. It SHALL NOT print the complete
-JSON receipt unless the user explicitly requests raw or debug output, and it
-SHALL preserve actionable error or recovery information when spawn fails.
+from the selected model, its configured relative capability/spend role, stable
+Agent path, and current status. The relative model ladder SHALL be identified
+as approximate Plugin guidance rather than exact pricing. It SHALL NOT print
+the complete JSON receipt unless the user explicitly requests raw or debug
+output, and it SHALL preserve actionable error or recovery information when
+spawn fails.
 
 #### Scenario: Agent starts successfully
 - **WHEN** `spawn-agent` receives a successful runtime receipt and the user did
   not request raw or debug output
-- **THEN** Codex reports the selected model, Agent path, and current status without dumping the
-  complete JSON receipt
+- **THEN** Codex reports the selected model, its concise role and relative tier
+  within `Haiku < Sonnet < Opus < Fable`, Agent path, and current status without
+  dumping the complete JSON receipt
 
 #### Scenario: Raw receipt is explicitly requested
 - **WHEN** the user explicitly requests raw or debug receipt output
@@ -35,19 +58,19 @@ SHALL preserve actionable error or recovery information when spawn fails.
   generic concise success message
 
 ### Requirement: Real CC testing stops on account-limit exhaustion
-The model-facing orchestration policy SHALL explicitly pass Haiku 4.5 with low effort for routine real Plugin smoke, hook, environment-parity, and integration witnesses unless the test specifically targets another model. The runtime SHALL NOT inject an omitted effort under `terminal-parity`. When Claude reports explicit subscription, usage, credit, weekly/monthly, or quota-limit exhaustion, the parent SHALL stop subsequent real CC test launches and SHALL NOT retry or fall back to another model. Local code work, fake-Claude fixtures, unit tests, and integration tests MAY continue.
+The model-facing orchestration policy SHALL explicitly pass Haiku 4.5 with low effort for routine real Plugin smoke, hook, environment-parity, and integration witnesses unless the test specifically targets another model. Haiku SHALL remain fully available for non-test work and all supported effort values. The runtime SHALL NOT inject an omitted effort under `terminal-parity`. When Claude reports explicit subscription, usage, credit, weekly/monthly, or quota-limit exhaustion, the parent SHALL stop subsequent real CC test launches and SHALL NOT retry or fall back to another model. Local code work, fake-Claude fixtures, unit tests, and integration tests MAY continue.
 
 #### Scenario: Routine Plugin smoke selects a model
 - **WHEN** a real CC test needs only a protocol, hook, or environment witness
-- **THEN** the parent explicitly selects `claude-haiku-4-5` with `low` effort rather than Sonnet or Opus
+- **THEN** the parent explicitly selects `claude-haiku-4-5` with `low` effort rather than spending Sonnet, Opus, or Fable capacity
 
 #### Scenario: Haiku test omits effort under terminal parity
 - **WHEN** a direct runtime caller selects Haiku under `terminal-parity` without an effort argument
 - **THEN** the runtime passes no effort override instead of silently injecting `low`
 
 #### Scenario: Test specifically validates another model
-- **WHEN** the test requirement is to prove Sonnet 5 or Opus 5 selection itself
-- **THEN** the parent may launch that exact model instead of Haiku
+- **WHEN** the test requirement is to prove another exact model selection itself
+- **THEN** the parent may launch that exact supported model instead of Haiku
 
 #### Scenario: Claude reports subscription exhaustion
 - **WHEN** a real CC test returns an explicit subscription, usage, credit, periodic, or quota-limit exhaustion
@@ -58,12 +81,16 @@ The model-facing orchestration policy SHALL explicitly pass Haiku 4.5 with low e
 - **THEN** local edits, fake-Claude tests, and non-Claude integration verification may continue
 
 ### Requirement: Spawn skill uses exact Claude model and effort identifiers
-The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass model and effort as separate arguments. It SHALL support Sonnet 5 as `claude-sonnet-5` and Opus 5 as `claude-opus-5` for general delegation, plus Haiku 4.5 as `claude-haiku-4-5` only for Plugin smoke, hook, environment-parity, and integration testing. It SHALL NOT pass partial identifiers such as `sonnet-5`, `opus-5`, or `haiku-4-5`, and SHALL NOT silently substitute a different model after an availability or account-limit rejection.
+The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass model and effort as separate arguments. It SHALL support Haiku 4.5 as `claude-haiku-4-5`, Sonnet 5 as `claude-sonnet-5`, Opus 5 as `claude-opus-5`, and Fable 5 as `claude-fable-5`. All four models SHALL accept each exact effort value `low`, `medium`, `high`, `xhigh`, and `max`. The skill SHALL present the approximate relative capability/spend ladder `Haiku < Sonnet < Opus < Fable`, recommend Sonnet for balanced general coding, Opus for deeper or higher-risk work, and Fable primarily for core decision discussion and planning rather than routine code writing. It SHALL NOT pass partial identifiers such as `sonnet-5`, `opus-5`, `haiku-4-5`, or `fable-5`, and SHALL NOT silently substitute a different model after an availability or account-limit rejection.
 
 #### Scenario: Public alias and effort are requested
 - **WHEN** the user requests Opus 5 with x-high effort
 - **THEN** the skill passes model `claude-opus-5` and reasoning effort `xhigh`
   as separate canonical arguments
+
+#### Scenario: Every model accepts every effort
+- **WHEN** spawn selects any supported model with any of `low`, `medium`, `high`, `xhigh`, or `max`
+- **THEN** the runtime forwards that exact canonical model and effort combination to Claude
 
 #### Scenario: Orchestration label resembles a model version
 - **WHEN** an `Ops5` substring appears only inside an Agent or task name
@@ -73,20 +100,24 @@ The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass
 - **WHEN** the user selects Sonnet or Sonnet 5
 - **THEN** the skill passes the exact model ID `claude-sonnet-5`
 
-#### Scenario: Haiku is selected for a test witness
-- **WHEN** a Plugin smoke, hook, environment-parity, or integration test selects Haiku or Haiku 4.5
-- **THEN** the skill passes exact model `claude-haiku-4-5` with `low` effort and identifies the selection as test-only
+#### Scenario: Haiku is selected
+- **WHEN** the user selects Haiku or Haiku 4.5 for either test or general work
+- **THEN** the skill passes the exact model ID `claude-haiku-4-5` and accepts the caller-selected supported effort
 
-#### Scenario: Haiku is considered for general delegation
-- **WHEN** the requested work is architecture, research judgment, production implementation, or another non-test delegation
-- **THEN** the skill does not recommend Haiku and requires Sonnet 5 or Opus 5 instead
+#### Scenario: Fable is selected for a core decision
+- **WHEN** the user selects Fable for core decision discussion or planning
+- **THEN** the skill passes the exact model ID `claude-fable-5` and reports it as the highest relative capability/spend tier
+
+#### Scenario: Fable is considered for routine coding
+- **WHEN** the parent is choosing a model for ordinary code implementation without an explicit Fable request
+- **THEN** the skill recommends Sonnet or Opus instead of spending Fable capacity
 
 #### Scenario: Requested model is unavailable
 - **WHEN** Claude Code rejects the requested model for the active account
 - **THEN** the skill reports the rejection and does not retry under another model
 
 #### Scenario: Another available Claude model is requested
-- **WHEN** spawn explicitly requests Fable, an older Haiku/Sonnet/Opus, or any model other than `claude-haiku-4-5`, `claude-sonnet-5`, and `claude-opus-5`
+- **WHEN** spawn explicitly requests an older, dated, partial, or otherwise available model outside `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, and `claude-fable-5`
 - **THEN** the runtime rejects the model before launching Claude
 
 #### Scenario: No model is explicitly selected
@@ -116,7 +147,7 @@ The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass
 A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact supported model proven by a retained runtime receipt or a bounded read of its own Claude session artifact. Dated artifact evidence matching the verified Haiku 4.5 family SHALL normalize to canonical `claude-haiku-4-5`; arbitrary dated public requests SHALL remain unsupported. Reconciliation SHALL index pending session artifacts once per Claude config root rather than rescan the full history per Agent. It SHALL defer an evidence-free active turn. It SHALL preserve identity and history while blocking terminal continuation when the model is unsupported or not yet proven, SHALL retry a directly located unproven artifact, and SHALL never infer or substitute a supported model.
 
 #### Scenario: Pruned job has a supported Claude artifact
-- **WHEN** a terminal legacy Agent has no retained job but its bound Claude session artifact proves `claude-sonnet-5`, `claude-opus-5`, canonical `claude-haiku-4-5`, or a dated `claude-haiku-4-5-YYYYMMDD` backend
+- **WHEN** a terminal legacy Agent has no retained job but its bound Claude session artifact proves `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, or a dated `claude-haiku-4-5-YYYYMMDD` backend
 - **THEN** the runtime persists the exact canonical selected model and preserves exact-session continuation
 
 #### Scenario: Historical model is unsupported
@@ -170,7 +201,7 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **THEN** follow-up is rejected with the blocking evidence
 
 ### Requirement: wait_agent returns bounded root mailbox activity
-`wait_agent` SHALL accept optional `timeout_ms` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL default its observation upper bound to 600000 ms, SHALL reject values above 3600000 ms, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token; a progress update SHALL include only the safe bounded public-progress projection when its adaptive delivery interval is eligible. It SHALL omit raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
+`wait_agent` SHALL accept optional `timeout_ms` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL default its observation upper bound to 600000 ms, SHALL reject values above 3600000 ms, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. Model-facing guidance SHALL make omission of `timeout_ms` the canonical ordinary wait invocation and SHALL reserve an explicit bound for an intentional immediate probe, shorter observation window, or longer bounded wait. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token; a progress update SHALL include only the safe bounded public-progress projection when its adaptive delivery interval is eligible. It SHALL omit raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
 
 #### Scenario: Unread activity predates wait
 - **WHEN** the root inbox already contains an unread Agent completion
@@ -192,9 +223,13 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **WHEN** `timeout_ms` expires without new current-root Agent progress or completion activity
 - **THEN** wait returns an honest timeout without interrupting or changing any Agent
 
-#### Scenario: Caller omits timeout
-- **WHEN** the parent calls wait without `timeout_ms`
-- **THEN** the observation deadline is 600000 ms while eligible progress or completion may return earlier
+#### Scenario: Ordinary caller omits timeout
+- **WHEN** the parent performs an ordinary wait without a specific scheduling deadline
+- **THEN** model-facing guidance omits `timeout_ms` and the observation deadline is 600000 ms while eligible progress or completion may return earlier
+
+#### Scenario: Caller intentionally overrides timeout
+- **WHEN** the parent needs an immediate probe, shorter observation window, or longer bounded wait
+- **THEN** it may pass an explicit `timeout_ms` without changing Agent execution lifetime
 
 #### Scenario: Caller exceeds the maximum
 - **WHEN** the parent requests `timeout_ms` greater than 3600000

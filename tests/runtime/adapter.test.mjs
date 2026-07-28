@@ -102,9 +102,13 @@ describe("Claude headless adapter", () => {
       dangerouslySkipPermissions: true,
     });
     assert.equal(args.includes("--dangerously-skip-permissions"), true);
+    const permissionRespecting = buildArgs("ignored", {
+      outputFormat: "stream-json",
+    });
+    assert.equal(permissionRespecting.includes("--dangerously-skip-permissions"), false);
   });
 
-  it("pins the supported canonical models and names only fresh sessions", () => {
+  it("pins canonical model aliases, every explicit effort, and names only fresh sessions", () => {
     const initial = buildArgs("ignored", {
       model: "opus",
       effort: "xhigh",
@@ -113,15 +117,35 @@ describe("Claude headless adapter", () => {
     assert.equal(initial[initial.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(initial[initial.indexOf("--name") + 1], "audit_agent");
 
-    const sonnet = buildArgs("ignored", { model: "claude-sonnet-5" });
-    assert.equal(sonnet[sonnet.indexOf("--model") + 1], "claude-sonnet-5");
-    const haiku = buildArgs("ignored", { model: "haiku", effort: "low" });
-    assert.equal(haiku[haiku.indexOf("--model") + 1], "claude-haiku-4-5");
-    assert.equal(haiku[haiku.indexOf("--effort") + 1], "low");
-    assert.throws(() => buildArgs("ignored", { model: "fable" }), /Unsupported Claude model/);
+    for (const [requested, canonical] of [
+      ["haiku", "claude-haiku-4-5"],
+      ["claude-haiku-4-5", "claude-haiku-4-5"],
+      ["sonnet", "claude-sonnet-5"],
+      ["claude-sonnet-5", "claude-sonnet-5"],
+      ["opus", "claude-opus-5"],
+      ["claude-opus-5", "claude-opus-5"],
+      ["fable", "claude-fable-5"],
+      ["claude-fable-5", "claude-fable-5"],
+    ]) {
+      const args = buildArgs("ignored", { model: requested });
+      assert.equal(args[args.indexOf("--model") + 1], canonical);
+    }
+    for (const [model, canonical] of [
+      ["haiku", "claude-haiku-4-5"],
+      ["sonnet", "claude-sonnet-5"],
+      ["opus", "claude-opus-5"],
+      ["fable", "claude-fable-5"],
+    ]) {
+      for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+        const args = buildArgs("ignored", { model, effort });
+        assert.equal(args[args.indexOf("--model") + 1], canonical);
+        assert.equal(args[args.indexOf("--effort") + 1], effort);
+      }
+    }
     assert.throws(() => buildArgs("ignored", { model: "claude-opus-4-7" }), /Unsupported Claude model/);
     assert.throws(() => buildArgs("ignored", { model: "haiku-4-5" }), /Unsupported Claude model/);
     assert.throws(() => buildArgs("ignored", { model: "claude-haiku-4-5-20251001" }), /Unsupported Claude model/);
+    assert.throws(() => buildArgs("ignored", { model: "fable-5" }), /Unsupported Claude model/);
 
     const resumed = buildArgs("ignored", {
       model: "opus",

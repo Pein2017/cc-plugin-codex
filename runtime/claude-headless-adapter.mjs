@@ -779,12 +779,14 @@ export function pruneStaleSandboxSettings(options = {}) {
 // ---------------------------------------------------------------------------
 
 export const MODEL_ALIASES = new Map([
-  ["opus", "claude-opus-5"],
-  ["claude-opus-5", "claude-opus-5"],
-  ["sonnet", "claude-sonnet-5"],
-  ["claude-sonnet-5", "claude-sonnet-5"],
   ["haiku", "claude-haiku-4-5"],
   ["claude-haiku-4-5", "claude-haiku-4-5"],
+  ["sonnet", "claude-sonnet-5"],
+  ["claude-sonnet-5", "claude-sonnet-5"],
+  ["opus", "claude-opus-5"],
+  ["claude-opus-5", "claude-opus-5"],
+  ["fable", "claude-fable-5"],
+  ["claude-fable-5", "claude-fable-5"],
 ]);
 
 export const EFFORT_ALIASES = {
@@ -795,12 +797,14 @@ export const EFFORT_ALIASES = {
 export const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 export const DEFAULT_EFFORT_BY_MODEL = new Map([
-  ["opus", "xhigh"],
-  ["claude-opus-5", "xhigh"],
-  ["sonnet", "high"],
-  ["claude-sonnet-5", "high"],
   ["haiku", "low"],
   ["claude-haiku-4-5", "low"],
+  ["sonnet", "high"],
+  ["claude-sonnet-5", "high"],
+  ["opus", "xhigh"],
+  ["claude-opus-5", "xhigh"],
+  ["fable", "max"],
+  ["claude-fable-5", "max"],
 ]);
 
 export function resolveDefaultEffort(model, effort) {
@@ -817,7 +821,7 @@ export function resolveModel(model) {
   const resolved = MODEL_ALIASES.get(normalized);
   if (resolved) return resolved;
   throw new Error(
-    `Unsupported Claude model "${model}". Use sonnet/claude-sonnet-5, opus/claude-opus-5, or test-only haiku/claude-haiku-4-5.`
+    `Unsupported Claude model "${model}". Use haiku/claude-haiku-4-5, sonnet/claude-sonnet-5, opus/claude-opus-5, or fable/claude-fable-5.`
   );
 }
 

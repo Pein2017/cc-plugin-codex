@@ -9,24 +9,21 @@ description: 'Experimental: read recent outer-assistant text messages from the n
 > reactivate an idle Codex parent, extend Claude's retention period, or recover
 > a transcript that Claude already removed.
 
-Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
+Invoke `mcp__cc_for_pein__read_agent_messages` with typed `target` and optional
+`before` and `limit` fields.
 
-`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" read_agent_messages $ARGUMENTS`
-
-Before invoking, confirm the host command cwd is the checkout or worktree that
-owns the Agent. The lifecycle inherits that Codex cwd; never pass `--cwd`,
-`-C`, or `--env-file`. The bootstrap delegates only to the fixed local checkout
-and never executes a runtime from the Plugin Cache.
-
-Supported canonical arguments:
-`<exact-target> [--before <message-id>] [--limit <1-20>]`.
+Before invoking, confirm the active Codex turn workspace is the checkout or
+worktree that owns the Agent. Trusted Codex metadata supplies the workspace and
+root identity; never add cwd, environment, owner-root, transcript-path, or
+Claude-session selectors. If the typed MCP tool is unavailable, report the
+Plugin discovery/startup failure instead of silently running a shell fallback.
 
 - Use an exact current-root Agent ID, `/root/<task_name>` path, or normalized
   name. Never supply or infer a transcript path, Claude session ID, owner/root
   override, or cross-root selector.
 - With no pagination arguments, read the latest eligible outer Claude
   assistant text message. Results are newest first. Use `next_before` as the
-  next `--before` value only when older messages are genuinely needed.
+  next `before` value only when older messages are genuinely needed.
 - Message text is complete and is not truncated by cc-for-pein. The surrounding
   Codex/tool/UI transport may still impose its own external capacity.
 - The operation excludes thinking, tool calls/results, attachments, internal

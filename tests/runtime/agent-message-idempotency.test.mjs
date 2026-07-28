@@ -200,6 +200,12 @@ describe("Agent message delivery idempotency", () => {
     runtime.jobs.assertReady = () => ({
       ready: true,
       availability: { available: true },
+      compatibility: {
+        staticCompatible: true,
+        fingerprint: "test-compatible-claude",
+        executable: process.execPath,
+        version: "test",
+      },
       auth: { loggedIn: true },
       cwd: runtime.jobs.cwd,
       claudeConfigDir: runtime.jobs.env.CLAUDE_CONFIG_DIR ?? null,

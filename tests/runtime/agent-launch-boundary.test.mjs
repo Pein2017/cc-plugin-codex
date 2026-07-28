@@ -49,6 +49,12 @@ function readiness(runtime) {
   return {
     ready: true,
     availability: { available: true },
+    compatibility: {
+      staticCompatible: true,
+      fingerprint: "test-compatible-claude",
+      executable: process.execPath,
+      version: "test",
+    },
     auth: { loggedIn: true },
     cwd: runtime.jobs.cwd,
     claudeConfigDir: runtime.jobs.env.CLAUDE_CONFIG_DIR ?? null,
@@ -168,6 +174,83 @@ describe("Agent durable launch boundary", () => {
       assert.deepEqual(runtime.store.listMessages(agent.agentId), [], `case ${index}: mailbox`);
       assert.deepEqual(listStoredJobs(workspace), [], `case ${index}: job store`);
     }
+  });
+
+  it("fails compatibility before spawn or idle follow-up durable mutation", async () => {
+    const spawnSetup = setup();
+    spawnSetup.runtime.jobs.assertReady = () => {
+      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v1.");
+    };
+    await assert.rejects(
+      spawnSetup.runtime.spawnAgent({
+        task_name: "incompatible_spawn",
+        message: "must not persist",
+        fork_turns: "none",
+        model: "sonnet",
+      }),
+      /incompatible with CC runtime surface/,
+    );
+    assert.deepEqual(spawnSetup.runtime.store.listAgents(), []);
+    assert.deepEqual(listStoredJobs(spawnSetup.workspace), []);
+
+    const followupSetup = setup();
+    const agent = followupSetup.runtime.store.createAgent({
+      task_name: "incompatible_followup",
+      selectedModel: "claude-sonnet-5",
+    });
+    followupSetup.runtime.store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      status: "completed",
+    }));
+    followupSetup.runtime.jobs.assertReady = () => {
+      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v1.");
+    };
+    await assert.rejects(
+      followupSetup.runtime.followupTask({
+        target: agent.agentId,
+        message: "must remain outside the mailbox",
+      }),
+      /incompatible with CC runtime surface/,
+    );
+    assert.deepEqual(followupSetup.runtime.store.listMessages(agent.agentId), []);
+    assert.deepEqual(listStoredJobs(followupSetup.workspace), []);
+  });
+
+  it("delivers to an admitted active process without checking a replacement CLI", async () => {
+    const { runtime, workspace } = setup();
+    const agent = runtime.store.createAgent({
+      task_name: "active_version_steering",
+      selectedModel: "claude-sonnet-5",
+    });
+    const jobId = "active-version-steering-job";
+    runtime.store.reserveActivation(agent.agentId, jobId, { initial: true });
+    const timestamp = new Date().toISOString();
+    writeJobFile(workspace, jobId, {
+      id: jobId,
+      workspaceRoot: workspace,
+      ownerRootId: agent.rootThreadId,
+      agentId: agent.agentId,
+      status: "running",
+      phase: "running_attempt",
+      preClaudeLaunch: false,
+      acceptingSteering: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      request: { model: "claude-sonnet-5", profile: "terminal-parity" },
+    });
+    let readinessCalled = false;
+    runtime.jobs.assertReady = () => {
+      readinessCalled = true;
+      throw new Error("replacement CLI must not gate active steering");
+    };
+
+    const result = await runtime.followupTask({
+      target: agent.agentId,
+      message: "continue in the already-running process",
+    });
+    assert.equal(result.delivery, "dispatched_active");
+    assert.equal(readinessCalled, false);
+    assert.equal(runtime.store.listMessages(agent.agentId)[0].state, "dispatched");
   });
 
   it("rejects an invalid active-turn follow-up before mailbox or steering mutation", async () => {

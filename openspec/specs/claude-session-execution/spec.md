@@ -7,11 +7,19 @@ Define Claude Code headless transport, execution profiles, session capture, and 
 ## Requirements
 
 ### Requirement: Claude runs through the headless streaming protocol
-The runtime SHALL execute Claude Code with print mode, stream-json input and output, verbose partial messages, and hook events so that prompts, steering, session identity, output, tool use, and terminal receipts can be tracked.
+The runtime SHALL execute only a statically admitted Claude executable, using
+print mode, stream-json input and output, verbose partial messages, and hook
+events so that prompts, steering, session identity, output, tool use, and
+terminal receipts can be tracked. Each attempt SHALL retain the prepared
+executable fingerprint and record the runtime-reported Claude Code version.
 
 #### Scenario: A tracked turn starts
 - **WHEN** the supervisor launches a Claude attempt
 - **THEN** the initial prompt is written through stdin and stream events are parsed into bounded runtime receipts
+
+#### Scenario: A tracked turn completes
+- **WHEN** Claude reports a terminal success for the admitted executable
+- **THEN** the turn receipt records both its prepared compatibility fingerprint and runtime-reported Claude Code version
 
 ### Requirement: Account-limit exhaustion is terminal and non-fallback
 The runtime SHALL classify explicit Claude subscription, usage, credit, weekly/monthly, or quota-limit exhaustion as `usage_or_subscription_limit`. It SHALL expose the terminal failure without automatic reconnect or model fallback. Terminal result error strings SHALL participate in classification so a structured Claude error cannot be hidden by an empty final message.
@@ -51,23 +59,27 @@ The explicit opt-in safe profile SHALL apply the runtime-owned sandbox and permi
 - **WHEN** a caller starts a safe task without write access or explicit allowed tools
 - **THEN** Claude receives the read-only sandbox settings, bounded read-only tool policy, and caller-selected supported model
 
-### Requirement: Default terminal-parity profile launches Claude with full access
-The default terminal-parity profile SHALL inherit Claude settings, hooks, memories, skills, plugins, MCP configuration, tools, and prompts while requiring the explicit supported model from `spawn_agent`. Before launching Claude it SHALL set the effective `CLAUDE_CONFIG_DIR`, set `IS_SANDBOX=1`, and pass `--dangerously-skip-permissions`. It SHALL NOT add model fallback, effort, settings, tool, MCP, or prompt overrides that the caller did not request.
+### Requirement: Default terminal-parity profile preserves native configuration with intent-bound permissions
+The default terminal-parity profile SHALL inherit Claude settings, hooks, memories, skills, plugins, MCP configuration, tools, and prompts while requiring the explicit supported model from `spawn_agent`. Before launching Claude it SHALL set the effective `CLAUDE_CONFIG_DIR` and set `IS_SANDBOX=1`. It SHALL pass `--dangerously-skip-permissions` exactly when the activation has explicit `write: true`; false or omitted write intent SHALL omit that flag and leave permissions to native Claude configuration. It SHALL NOT add model fallback, effort, settings, tool, MCP, or prompt overrides that the caller did not request.
 
-#### Scenario: Default full-access Agent starts
-- **WHEN** `spawn_agent` supplies a supported model and omits an execution profile
-- **THEN** Claude receives the selected config directory, `IS_SANDBOX=1`, `--dangerously-skip-permissions`, and the explicit model without other implicit Claude policy overrides
+#### Scenario: Read-intent Agent starts
+- **WHEN** `spawn_agent` supplies a supported model with false or omitted write intent
+- **THEN** Claude receives the selected config directory, `IS_SANDBOX=1`, and the explicit model without `--dangerously-skip-permissions` or other implicit Claude policy overrides
+
+#### Scenario: Write-intent Agent starts
+- **WHEN** `spawn_agent` supplies a supported model and `write: true`
+- **THEN** Claude additionally receives `--dangerously-skip-permissions` without other implicit Claude policy overrides
 
 #### Scenario: Native Claude customizations are configured
 - **WHEN** the selected Claude config enables hooks, Serena MCP, memories, plugins, or skills
-- **THEN** terminal-parity leaves those native configuration sources enabled rather than replacing them with runtime-owned settings
+- **THEN** terminal-parity leaves those native configuration sources enabled for both read and write intent rather than replacing them with runtime-owned settings
 
 ### Requirement: Initial Agent sessions have an explicit Claude display name
 The runtime SHALL pass the durable Agent name through Claude's `--name` option when creating a new session, so Claude Code does not need an auxiliary model to generate an automatic title. Exact-session resumes SHALL retain the existing session identity without renaming it.
 
 #### Scenario: Initial Agent turn starts
 - **WHEN** a new Agent turn creates a fresh Claude session
-- **THEN** Claude receives the Agent name through `--name` together with the selected canonical `claude-haiku-4-5`, `claude-sonnet-5`, or `claude-opus-5` model
+- **THEN** Claude receives the Agent name through `--name` together with the selected canonical `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, or `claude-fable-5` model
 
 #### Scenario: Exact session resumes
 - **WHEN** a follow-up resumes an existing Claude session
@@ -75,11 +87,19 @@ The runtime SHALL pass the durable Agent name through Claude's `--name` option w
   argument
 
 ### Requirement: Dangerous permission bypass is constrained
-The default terminal-parity profile SHALL always use dangerous permission bypass and SHALL NOT combine it with an explicit permission mode. The safe profile SHALL reject dangerous permission bypass.
+The terminal-parity profile SHALL derive dangerous permission bypass from explicit write intent and SHALL NOT combine it with an explicit permission mode. An explicit dangerous-bypass request without write intent SHALL fail validation. The safe profile SHALL reject dangerous permission bypass.
 
-#### Scenario: Default terminal-parity Agent starts
-- **WHEN** a caller starts an Agent without selecting an execution profile
+#### Scenario: Terminal-parity read intent starts
+- **WHEN** a caller starts an Agent with false or omitted write intent
+- **THEN** the runtime selects terminal-parity without dangerous permission bypass
+
+#### Scenario: Terminal-parity write intent starts
+- **WHEN** a caller starts an Agent with `write: true`
 - **THEN** the runtime selects terminal-parity and applies dangerous permission bypass
+
+#### Scenario: Explicit bypass lacks write intent
+- **WHEN** a terminal-parity caller requests dangerous permission bypass with false or omitted write intent
+- **THEN** the runtime rejects the request before launching Claude
 
 #### Scenario: Explicit permission mode conflicts with terminal parity
 - **WHEN** a terminal-parity caller supplies an explicit permission mode

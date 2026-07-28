@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Interrupt Agent"
   short_description: "Experimental: interrupt a Claude Agent current turn"
-  default_prompt: "Experimental: use $cc-for-pein:interrupt-agent to stop a Claude Agent turn while preserving safe continuation; it cannot reactivate an idle Codex parent."
+  default_prompt: "Experimental: use $cc-for-pein:interrupt-agent and invoke mcp__cc_for_pein__interrupt_agent to stop a Claude Agent turn while preserving safe continuation; never fall back to a shell command. It cannot reactivate an idle Codex parent."

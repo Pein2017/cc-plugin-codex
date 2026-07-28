@@ -93,7 +93,7 @@ function requiredSpawnModel(input) {
   const requested = optionalText(input.model);
   if (!requested) {
     throw new Error(
-      "spawn_agent requires an explicit model: sonnet/claude-sonnet-5, opus/claude-opus-5, or test-only haiku/claude-haiku-4-5."
+      "spawn_agent requires an explicit model: haiku/claude-haiku-4-5, sonnet/claude-sonnet-5, opus/claude-opus-5, or fable/claude-fable-5."
     );
   }
   return requested;
@@ -345,6 +345,7 @@ function requeuePreClaudeMailboxMessage(message, jobId) {
 class AgentRuntime {
   constructor(options = {}) {
     this.jobs = createInternalClaudeRuntime(options);
+    this.abortSignal = options.abortSignal ?? null;
     this.ownerRootId = this.jobs.assertOwnerRoot();
     this.cwd = this.jobs.cwd;
     this.store = createAgentStore({
@@ -954,6 +955,11 @@ class AgentRuntime {
     if (agent.continuation.mode === "blocked") {
       throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
     }
+    // An idle follow-up will need a new Claude process. Prove the host CLI
+    // surface before adding its message to durable state. Active steering keeps
+    // using the already-running admitted process and needs no replacement-CLI
+    // check.
+    let readinessReceipt = agent.activeJobId ? null : this.jobs.assertReady();
     const queued = this.store.enqueueMessage(
       agent.agentId,
       assertText(input.message, "followup_task message"),
@@ -992,7 +998,7 @@ class AgentRuntime {
     // Keep slow Claude CLI/auth preflight outside the active-reservation
     // interval. A concurrent follow-up then sees an idle Agent until a winner
     // is genuinely ready to publish its local job receipt.
-    const readinessReceipt = this.jobs.assertReady();
+    readinessReceipt ??= this.jobs.assertReady();
     const jobId = generateJobId("cc-agent");
     const previous = agent;
     const latestJob = validationLatestJob;
@@ -1106,6 +1112,11 @@ class AgentRuntime {
 
   async waitAgent(inputValue = {}) {
     const input = assertObject(inputValue, "wait_agent input");
+    if (this.abortSignal?.aborted) {
+      const error = new Error("CC Agent wait observation was cancelled by the caller.");
+      error.name = "AbortError";
+      throw error;
+    }
     const timeout = input.timeout_ms == null
       ? DEFAULT_AGENT_WAIT_TIMEOUT_MS
       : Number(input.timeout_ms);
@@ -1127,6 +1138,7 @@ class AgentRuntime {
       timeoutMs: timeout,
       acknowledgeTokens,
       progressJobIds,
+      signal: this.abortSignal,
     });
     this.reconcile();
     const agents = this.store.listAgents();

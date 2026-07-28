@@ -8,16 +8,14 @@ description: 'Experimental: durably deliver or queue a message for a named CC Ag
 > **Experimental.** Queueing a message does not activate an idle Claude Agent
 > or reactivate an idle Codex parent.
 
-Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
+Invoke `mcp__cc_for_pein__send_message` with typed `target` and `message`
+fields.
 
-`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" send_message $ARGUMENTS`
-
-Before invoking, confirm the host command cwd is the checkout or worktree that
-owns the Agent. The lifecycle inherits that Codex cwd; never pass `--cwd`,
-`-C`, or `--env-file`. The bootstrap delegates only to the fixed local checkout
-and never executes a runtime from the Plugin Cache.
-
-Supported canonical arguments: `<target> <message>`.
+Before invoking, confirm the active Codex turn workspace is the checkout or
+worktree that owns the Agent. Trusted Codex metadata supplies the workspace and
+root identity; never add cwd, environment, owner-root, or Claude-session
+selectors. If the typed MCP tool is unavailable, report the Plugin
+discovery/startup failure instead of silently running a shell fallback.
 
 - `target` must be an exact Agent ID, exact `/root/<task_name>` path, or exact
   normalized name in the current logical Codex root; prefixes do not mutate.

@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein",
-  "version": "0.4.0+codex.20260727125503",
+  "version": "0.4.0+codex.20260728124337",
   "description": "Experimental checkout-owned Claude Code Agent runtime with durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",
@@ -16,6 +16,7 @@
     "agent-orchestration"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "CC for Pein",
     "shortDescription": "Experimental durable local Claude Agents for Codex",
@@ -27,10 +28,10 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Use $cc-for-pein:spawn-agent to create an Experimental named Claude Agent and retain required join obligations",
-      "Use $cc-for-pein:followup-task to continue a Claude Agent",
-      "Use $cc-for-pein:list-agents to inspect local Claude Agent work",
-      "Use $cc-for-pein:read-agent-messages to retrieve an earlier native Claude message without activating the Agent"
+      "Use $cc-for-pein:spawn-agent with mcp__cc_for_pein__spawn_agent to create an Experimental named Claude Agent and retain required join obligations",
+      "Use $cc-for-pein:followup-task with mcp__cc_for_pein__followup_task to continue a Claude Agent",
+      "Use $cc-for-pein:list-agents with mcp__cc_for_pein__list_agents to inspect local Claude Agent work",
+      "Use $cc-for-pein:read-agent-messages with mcp__cc_for_pein__read_agent_messages to retrieve an earlier native Claude message without activating the Agent"
     ]
   }
 }

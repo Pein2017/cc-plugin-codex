@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "cc_for_pein": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "--",
+        "bootstrap/cc-mcp.mjs"
+      ],
+      "cwd": ".",
+      "required": true,
+      "supports_parallel_tool_calls": true,
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 3660,
+      "default_tools_approval_mode": "approve"
+    }
+  }
+}

@@ -71,6 +71,14 @@ describe("legacy Agent model migration", () => {
     assert.equal(migrated.continuation.mode, "exact_session");
   });
 
+  it("reconciles native Fable 5 artifact evidence to its canonical model", () => {
+    const { runtime, agent } = setup("claude-fable-5");
+    runtime.reconcile();
+    const migrated = runtime.store.readAgent(agent.agentId);
+    assert.equal(migrated.selectedModel, "claude-fable-5");
+    assert.equal(migrated.continuation.mode, "exact_session");
+  });
+
   it("blocks an unsupported historical model instead of substituting Opus 5", async () => {
     const { runtime, agent } = setup("claude-opus-4-7[1m]");
     runtime.reconcile();

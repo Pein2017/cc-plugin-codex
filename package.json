@@ -39,5 +39,9 @@
     "eslint": "^10.2.0",
     "globals": "^17.5.0",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
   }
 }

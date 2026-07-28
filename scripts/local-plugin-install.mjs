@@ -141,7 +141,7 @@ function main() {
   process.stdout.write(installed.stdout);
   process.stdout.write(
     `Installed ${PLUGIN}@${MARKETPLACE} ${manifest.version} from ${sourceRoot}.\n` +
-    "Start a new Codex task to reload the seven lifecycle skills. Runtime-only checkout edits stay hot.\n"
+    "Start a new Codex task to reload the seven lifecycle skills and typed MCP tools; a new task also restarts the checkout-owned MCP module graph.\n"
   );
 }
 

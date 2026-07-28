@@ -119,6 +119,12 @@ function readiness(runtime) {
   return {
     ready: true,
     availability: { available: true },
+    compatibility: {
+      staticCompatible: true,
+      fingerprint: "test-compatible-claude",
+      executable: process.execPath,
+      version: "test",
+    },
     auth: { loggedIn: true },
     cwd: runtime.cwd,
     claudeConfigDir: runtime.env.CLAUDE_CONFIG_DIR ?? null,

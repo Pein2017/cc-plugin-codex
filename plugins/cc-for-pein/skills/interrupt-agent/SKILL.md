@@ -8,16 +8,13 @@ description: 'Experimental: gracefully interrupt a CC Agent current turn while k
 > **Experimental.** Interruption semantics depend on Claude flush evidence and
 > do not imply deletion, archive, or automatic Codex-parent reactivation.
 
-Resolve `<plugin-root>` as two directories above this `SKILL.md`, then run:
+Invoke `mcp__cc_for_pein__interrupt_agent` with the typed `target` field.
 
-`node -- "<plugin-root>/bootstrap/cc-runtime.mjs" interrupt_agent $ARGUMENTS`
-
-Before invoking, confirm the host command cwd is the checkout or worktree where
-this Agent should work. The lifecycle inherits that Codex cwd; never pass
-`--cwd`, `-C`, or `--env-file`. The bootstrap delegates only to the fixed local
-checkout and never executes a runtime from the Plugin Cache.
-
-Supported canonical arguments: `<target>`.
+Before invoking, confirm the active Codex turn workspace is the checkout or
+worktree that owns the Agent. Trusted Codex metadata supplies the workspace and
+root identity; never add cwd, environment, owner-root, or Claude-session
+selectors. If the typed MCP tool is unavailable, report the Plugin
+discovery/startup failure instead of silently running a shell fallback.
 
 - Resolve `target` exactly within the current logical Codex root; prefixes do
   not select arbitrary Agents.

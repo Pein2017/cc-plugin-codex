@@ -33,16 +33,24 @@ export function normalizeProfileName(value) {
  */
 export function validateExecutionProfileOptions(options = {}) {
   const name = normalizeProfileName(options.profile);
-  const dangerouslySkipPermissions = Boolean(options.dangerouslySkipPermissions);
+  const write = Boolean(options.write);
+  const requestedDangerousBypass = Boolean(options.dangerouslySkipPermissions);
   const requestedModel = String(options.model ?? "").trim();
   if (!requestedModel) {
-    throw new Error("Claude execution requires an explicit Sonnet, Opus, or test-only Haiku model.");
+    throw new Error(
+      "Claude execution requires an explicit Haiku, Sonnet, Opus, or Fable model."
+    );
   }
   const model = resolveModel(requestedModel);
 
-  if (dangerouslySkipPermissions && name !== "terminal-parity") {
+  if (requestedDangerousBypass && name !== "terminal-parity") {
     throw new Error(
       "--dangerously-skip-permissions requires --profile terminal-parity; safe must remain sandboxed."
+    );
+  }
+  if (requestedDangerousBypass && !write) {
+    throw new Error(
+      "--dangerously-skip-permissions requires explicit write access."
     );
   }
   if (name === "terminal-parity" && options.permissionMode) {
@@ -54,6 +62,7 @@ export function validateExecutionProfileOptions(options = {}) {
   const effort = name === "terminal-parity"
     ? resolveEffort(options.effort)
     : resolveEffort(resolveDefaultEffort(model, options.effort));
+  const dangerouslySkipPermissions = name === "terminal-parity" && write;
   return { name, model, effort, dangerouslySkipPermissions };
 }
 
@@ -67,8 +76,10 @@ export function createExecutionProfile(options = {}) {
     const claudeOptions = {
       env,
       model,
-      dangerouslySkipPermissions: true,
     };
+    if (validated.dangerouslySkipPermissions) {
+      claudeOptions.dangerouslySkipPermissions = true;
+    }
     if (effort) claudeOptions.effort = effort;
     if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
       claudeOptions.allowedTools = options.allowedTools;
