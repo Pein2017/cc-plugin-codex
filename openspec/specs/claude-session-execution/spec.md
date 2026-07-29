@@ -3,9 +3,7 @@
 ## Purpose
 
 Define Claude Code headless transport, execution profiles, session capture, and exact-session continuation.
-
 ## Requirements
-
 ### Requirement: Claude runs through the headless streaming protocol
 The runtime SHALL execute only a statically admitted Claude executable, using
 print mode, stream-json input and output, verbose partial messages, and hook
@@ -60,34 +58,42 @@ The explicit opt-in safe profile SHALL apply the runtime-owned sandbox and permi
 - **THEN** Claude receives the read-only sandbox settings, bounded read-only tool policy, and caller-selected supported model
 
 ### Requirement: Runtime appends a bounded delegation envelope
-Every public Claude turn SHALL receive a runtime-owned `--append-system-prompt` envelope without replacing Claude's native system prompt. The common envelope SHALL identify the turn as a bounded delegation from the Codex lead, preserve the supplied task/workspace/authority boundary, assign user-facing synthesis and final acceptance to Codex, and require one self-contained final result. Leaf mode SHALL additionally forbid delegation and SHALL emit `--disallowedTools Agent`. Fable orchestrator mode SHALL omit that deny, permit only one native child generation, and require the parent to join and synthesize its children.
+Every public Claude turn SHALL receive a runtime-owned `--append-system-prompt` envelope without replacing Claude's native system prompt. The common envelope SHALL identify the turn as a bounded delegation from the Codex lead, preserve the supplied task/workspace boundary, state the current activation's write intent as a behavioral authority boundary, assign user-facing synthesis and final acceptance to Codex, and require one self-contained final result. False write intent SHALL forbid workspace and repository mutation even though terminal parity grants full Claude CLI authority; true write intent SHALL permit only task-scoped mutation. Leaf mode SHALL additionally forbid delegation and SHALL emit `--disallowedTools Agent`. Fable orchestrator mode SHALL omit that deny, permit only one native child generation, and require the parent to join and synthesize its children.
 
-#### Scenario: Leaf turn starts
-- **WHEN** any Agent activates in leaf mode
-- **THEN** Claude receives the common and leaf appended instruction plus a hard native `Agent` tool denial
+#### Scenario: Read-intent leaf turn starts
+- **WHEN** an Agent activates in leaf mode with `write: false`
+- **THEN** Claude receives the common read-only behavioral instruction and leaf instruction plus a hard native `Agent` tool denial
+
+#### Scenario: Write-intent leaf turn starts
+- **WHEN** an Agent activates in leaf mode with `write: true`
+- **THEN** Claude receives task-scoped mutation authority and the leaf instruction plus a hard native `Agent` tool denial
 
 #### Scenario: Fable orchestrator starts
 - **WHEN** a `claude-fable-5` Agent activates in `claude_orchestrator` mode
-- **THEN** Claude receives the common and orchestrator appended instruction without the `Agent` tool denial
+- **THEN** Claude receives the current write-intent instruction and orchestrator instruction without the `Agent` tool denial
 
-#### Scenario: Exact session resumes
-- **WHEN** a follow-up or reconnect resumes an Agent's Claude session
-- **THEN** the same immutable delegation envelope and tool boundary are reconstructed from durable Agent/job evidence
+#### Scenario: Exact job reconnects
+- **WHEN** transport recovery reconnects the same Agent job
+- **THEN** the same delegation mode and write-intent envelope are reconstructed from that durable job evidence
+
+#### Scenario: Follow-up changes write intent
+- **WHEN** a follow-up activates the same Claude session with a new explicit write intent
+- **THEN** the new job receives the envelope for the new intent without changing Agent or Claude session identity
 
 #### Scenario: Native Claude customizations exist
 - **WHEN** hooks, memories, skills, plugins, Serena MCP, or other native configuration is enabled
 - **THEN** the runtime appends its bounded envelope rather than replacing or disabling Claude's native system and configuration sources
 
-### Requirement: Default terminal-parity profile preserves native configuration with intent-bound permissions
-The model-facing terminal-parity profile SHALL inherit Claude settings, hooks, memories, skills, plugins, MCP configuration, and native tools while requiring the explicit supported model and explicit spawn write intent. Before launching Claude it SHALL set the effective `CLAUDE_CONFIG_DIR` and set `IS_SANDBOX=1`. It SHALL pass `--dangerously-skip-permissions` exactly when the activation has explicit or inherited `write: true`; false write intent SHALL omit that flag and leave permissions to native Claude configuration. It SHALL NOT add model fallback, effort, settings, MCP, or replacement-system-prompt overrides. Its only implicit prompt/tool policy SHALL be the immutable runtime-owned delegation envelope and, for leaf Agents, the hard native `Agent` denial.
+### Requirement: Default terminal-parity profile preserves native configuration with full access
+The model-facing terminal-parity profile SHALL inherit Claude settings, hooks, memories, skills, plugins, MCP configuration, and native tools while requiring the explicit supported model and explicit spawn write intent. Before launching Claude it SHALL set the effective `CLAUDE_CONFIG_DIR`, set `IS_SANDBOX=1`, and pass `--dangerously-skip-permissions` for both false and true write intent. It SHALL NOT add model fallback, effort, settings, MCP, or replacement-system-prompt overrides. Its only implicit prompt/tool policy SHALL be the runtime-owned delegation envelope for the current write intent and, for leaf Agents, the hard native `Agent` denial.
 
 #### Scenario: Read-intent Agent starts
 - **WHEN** `spawn_agent` supplies a supported model with `write: false`
-- **THEN** Claude receives the selected config directory, `IS_SANDBOX=1`, the explicit model, and delegation envelope without `--dangerously-skip-permissions`
+- **THEN** Claude receives the selected config directory, `IS_SANDBOX=1`, `--dangerously-skip-permissions`, the explicit model, and a read-only behavioral delegation envelope
 
 #### Scenario: Write-intent Agent starts
 - **WHEN** `spawn_agent` supplies a supported model and `write: true`
-- **THEN** Claude additionally receives `--dangerously-skip-permissions` while retaining the delegation envelope
+- **THEN** Claude receives the same full-access process envelope with task-scoped mutation authority in the delegation prompt
 
 #### Scenario: Native Claude customizations are configured
 - **WHEN** the selected Claude config enables hooks, Serena MCP, memories, plugins, or skills
@@ -110,19 +116,15 @@ The runtime SHALL pass the durable Agent name through Claude's `--name` option w
   argument
 
 ### Requirement: Dangerous permission bypass is constrained
-The terminal-parity profile SHALL derive dangerous permission bypass from explicit write intent and SHALL NOT combine it with an explicit permission mode. An explicit dangerous-bypass request without write intent SHALL fail validation. The safe profile SHALL reject dangerous permission bypass.
+The terminal-parity profile SHALL always apply dangerous permission bypass and SHALL NOT combine it with an explicit permission mode. The safe profile SHALL reject dangerous permission bypass. Write intent SHALL NOT enable or disable the terminal-parity bypass.
 
 #### Scenario: Terminal-parity read intent starts
-- **WHEN** a caller starts an Agent with false or omitted write intent
-- **THEN** the runtime selects terminal-parity without dangerous permission bypass
+- **WHEN** a caller starts an Agent with false write intent
+- **THEN** the runtime selects terminal-parity with dangerous permission bypass and a read-only behavioral prompt
 
 #### Scenario: Terminal-parity write intent starts
 - **WHEN** a caller starts an Agent with `write: true`
-- **THEN** the runtime selects terminal-parity and applies dangerous permission bypass
-
-#### Scenario: Explicit bypass lacks write intent
-- **WHEN** a terminal-parity caller requests dangerous permission bypass with false or omitted write intent
-- **THEN** the runtime rejects the request before launching Claude
+- **THEN** the runtime selects terminal-parity with dangerous permission bypass and a task-scoped mutation prompt
 
 #### Scenario: Explicit permission mode conflicts with terminal parity
 - **WHEN** a terminal-parity caller supplies an explicit permission mode

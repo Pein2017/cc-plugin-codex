@@ -62,13 +62,17 @@ transient HTTP 429 may use the runtime's bounded reconnect policy; a caller-set
 Choose mutation intent before invoking:
 
 - Pass `write: false` for audits, reviews, exploration, planning, or any turn
-  that is not authorized to mutate the workspace. This omits `--dangerously-skip-permissions` and
-  leaves authorization to native Claude configuration. Do not describe this as
-  an OS-enforced read-only sandbox.
+  that is not authorized to mutate the workspace. The runtime prompt tells the
+  fully capable Claude process not to create, edit, delete, rename, move, or
+  otherwise mutate workspace files or repository state. This is a behavioral
+  boundary, not an OS-enforced read-only sandbox.
 - Pass `write: true` only for work explicitly authorized to modify the
-  workspace. Under `terminal-parity` this adds
-  `--dangerously-skip-permissions` after the fixed `CLAUDE_CONFIG_DIR` and
-  `IS_SANDBOX=1` environment is established.
+  workspace. The runtime prompt limits mutations to the supplied task.
+- Under default `terminal-parity`, both values establish the fixed
+  `CLAUDE_CONFIG_DIR` and `IS_SANDBOX=1`, then add
+  `--dangerously-skip-permissions` so Bash, MCP, hooks, and other native tools
+  do not stall on headless permission prompts. `write` does not reduce the
+  Claude process capability.
 - Never omit `write` from a model-facing spawn, even though direct runtime
   omission fails safer and behaves like false.
 

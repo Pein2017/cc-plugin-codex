@@ -11,7 +11,7 @@ plugins, skills, MCP configuration, sessions, and tool execution.
 > that needs a child result must keep the join obligation inside its active
 > turn.
 
-Version 0.5 makes a named Agent—not an internal job ID—the public object. A
+Version 0.9 makes a named Agent—not an internal job ID—the public object. A
 Claude turn is temporary. An Agent has a stable root-scoped identity, a native
 Claude session pointer when safe, a durable message queue, and nonresident
 history after its worker exits.
@@ -38,7 +38,7 @@ tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, allowed_tools?, delegation_mode? })
 send_message({ target, message })
 followup_task({ target, message, write?, reasoning_effort?, allowed_tools? })
-wait_agent({ timeout_ms?, acknowledge_tokens? })
+wait_agent({ timeout_ms?, wake_on_progress?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
@@ -71,10 +71,14 @@ $cc-for-pein:list-agents
 
 Successful `spawn-agent` calls report one concise sentence with the selected
 model, its role/tier, stable Agent path, and current status—never final Claude
-text or raw JSON. `list-agents` reports only canonical name/status/delegation-mode records.
-`wait-agent` reports at most one update: either coalesced safe progress or an
-acknowledgement-bearing completion with the complete stored Claude final message
-for parent synthesis. `read-agent-messages` retrieves recent outer-assistant
+text or raw JSON. `send-message` returns only the stable Agent path and delivery
+disposition; the parent confirms it in one short sentence without repeating
+message text or internal IDs. `list-agents` reports only
+canonical name/status/delegation-mode records.
+`wait-agent` reports at most one update: by default an acknowledgement-bearing
+completion with the complete stored Claude final message for parent synthesis,
+or one coalesced safe progress update when explicitly requested.
+`read-agent-messages` retrieves recent outer-assistant
 text from the exact Agent's bound native Claude transcript without activating it.
 
 The runtime model surface normalizes its accepted aliases to four canonical IDs:
@@ -124,8 +128,10 @@ discovery/startup failure instead of silently falling back to a shell command.
 `spawn_agent` and an activating `followup_task` are asynchronous at the Agent
 boundary: they return after the durable detached-worker handoff, so no Codex
 background terminal is needed. `wait_agent` is the explicit synchronous join.
-It defaults to a 10-minute upper bound, accepts at most one hour, and returns
-immediately when eligible progress or completion arrives. Cancelling the MCP
+It defaults to a completion-first 10-minute upper bound, accepts at most one
+hour, and returns immediately when completion arrives. Set
+`wake_on_progress: true` only for one intentional intermediate progress
+observation; the next call defaults back to completion-first. Cancelling the MCP
 call stops only that observation; it never interrupts or cancels the Agent.
 Codex MCP calls do not expose Unified Exec terminal session IDs, and this
 Plugin deliberately does not add a second background-terminal/session layer.
@@ -146,13 +152,13 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.5 |
+| Surface | Codex Multi-Agent V2 | CC for Pein v0.9 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | The same six lifecycle names plus the `read_agent_messages` native-history extension, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | `task_name`, self-contained `message`, exact `model`, and explicit `write`; the runtime never inherits Codex turns |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
-| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, with one safe progress milestone or the complete durable final message in the wait receipt |
+| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, completion-first by default, with one safe progress milestone only on explicit opt-in |
 | History | No model-facing transcript reader | Root-scoped recent outer-assistant history from the Agent's bound native Claude transcript |
 | Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
 
@@ -167,7 +173,9 @@ The parent chooses one of three policies: required work must complete before
 final; parallel-then-join work runs alongside useful non-overlapping parent
 work and joins before its dependency boundary; explicitly detached work is
 allowed only when the user requests background execution and the result is not
-needed in the current answer. Quiet wait timeouts are not failures and should
+needed in the current answer. Calls to `wait_agent` should be sparse: an
+ordinary join omits progress wakeup, and one explicit progress observation must
+not turn into reflexive polling. Quiet wait timeouts are not failures and should
 not trigger repetitive narration or `list_agents` polling.
 
 Public fork/profile selectors, `agent_type`, Codex service-tier routing, and
@@ -185,20 +193,24 @@ errored, non-resumable turn while preserving the Agent record.
 
 `send_message` records a durable Agent-mailbox entry. It delivers to an active
 turn when possible. For an idle resumable Agent it returns `queued_no_turn` and
-does not start a Claude process. `followup_task` uses the same mailbox but
-guarantees work: it delivers to an active turn, or starts one exact-session or
-receipt-proven safe-fresh turn and assigns queued entries in order.
+does not start a Claude process. Its successful public receipt contains only
+`agent_name` and `delivery`; complete message, assignment, job,
+steering, and timestamp evidence remains in the durable operator state.
+`followup_task` uses the same mailbox but guarantees work: it delivers to an
+active turn, or starts one exact-session or receipt-proven safe-fresh turn and
+assigns queued entries in order.
 
-`wait_agent` first checks the current root's durable completion mailbox, then
-safe public progress. Its default observation upper bound is 10 minutes and
-its accepted maximum is one hour; completion returns immediately rather than
-waiting for that upper bound. A progress update is advisory and contains only
-a generic activity/phase summary plus, at most, a sanitized tool name; Claude
-response, thinking, tool arguments, paths, hook payloads, receipts, and session
-IDs stay private. Repeated routine activity is coalesced into the latest
-revision and delivered with an adaptive 5, 10, 20, then 30 second heartbeat.
-Retry, reconnect, and first-response transitions reset that backoff, while
-completion always bypasses it.
+`wait_agent` first checks the current root's durable completion mailbox. Its
+default observation upper bound is 10 minutes and its accepted maximum is one
+hour; completion returns immediately rather than waiting for that upper bound.
+An ordinary wait neither returns nor claims safe public progress. With
+`wake_on_progress: true`, the call may return one advisory update containing
+only a generic activity/phase summary plus, at most, a sanitized tool name;
+Claude response, thinking, tool arguments, paths, hook payloads, receipts, and
+session IDs stay private. Repeated routine activity is coalesced into the
+latest revision and remains subject to an adaptive 5, 10, 20, then 30 second
+eligibility backoff. Retry, reconnect, and first-response transitions reset
+that backoff, while completion always bypasses it.
 
 A completion update includes the complete stored final message and a
 legacy-compatible truncation flag. New completions are not truncated by this
@@ -228,11 +240,12 @@ registry and inbox are rebuildable projections.
 ## Execution profiles
 
 `terminal-parity` is the default. It selects the caller's explicit supported
-model and sets `IS_SANDBOX=1`. Read/review intent (`write: false`, or omission
-for direct runtime callers) omits `--dangerously-skip-permissions` and leaves
-authorization to the native Claude configuration; this is permission-respecting
-terminal parity, not an OS-enforced read-only sandbox. Explicit mutation intent
-(`write: true`) adds `--dangerously-skip-permissions`. The profile otherwise
+model, sets `IS_SANDBOX=1`, and always adds
+`--dangerously-skip-permissions` so headless Bash, MCP, hooks, and other native
+tools do not stop for permission prompts. Read/review intent (`write: false`, or
+omission for direct runtime callers) is enforced by the appended delegation
+prompt and is not an OS-enforced read-only sandbox. Explicit mutation intent
+(`write: true`) permits only task-scoped changes in that prompt. The profile otherwise
 leaves effort, settings, tools, MCP configuration, hooks, memories, skills,
 plugins, and prompts to the native Claude configuration unless the caller
 explicitly supplies an override. Model-facing spawn guidance always passes the
@@ -293,7 +306,8 @@ npm run doctor -- --json
 Doctor is zero-model-cost and not exposed as a Skill or MCP tool. It checks the
 canonical checkout and installed snapshot, production Node dependencies,
 Claude CLI version/static compatibility and login, the fixed Claude config and
-9090 proxy envelope, exactly seven MCP tools, and aggregate local storage. Its
+9090 proxy envelope, exactly seven MCP tools, bounded checkout-routed
+compatibility shells, and aggregate local storage. Its
 output is redacted: it never reports account email, organization IDs, tokens,
 proxy credentials, arbitrary environment values, prompts, messages, or session
 contents. A required failure exits nonzero with a recovery command.
@@ -316,7 +330,8 @@ npm run smoke:release -- --json
 
 It resolves the enabled `cc-for-pein@pein-local` installation, requires an exact
 checkout/snapshot match, discovers exactly seven installed Skills, launches the
-installed descriptor bootstrap, lists exactly seven MCP tools, and calls
+absolute canonical-checkout descriptor bootstrap, lists exactly seven MCP
+tools, verifies at most two discovery-only compatibility shells, and calls
 `list_agents` with a synthetic root and temporary runtime home. This exercises
 the fresh host-load and protocol boundaries used by a new Codex task without
 claiming to run a paid Codex model turn or touching production Agent state.
@@ -328,9 +343,10 @@ npm run smoke:release -- --real-claude
 ```
 
 That extension announces and uses exactly `claude-haiku-4-5`, effort `low`, and
-`write: false`. It runs at most one task; an explicit subscription, quota,
-credit, or usage-limit failure stops paid CC testing immediately. Generic HTTP
-429 remains distinct.
+`write: false`. It runs at most one read-only Bash `pwd` task to prove the
+headless permission path; an explicit subscription, quota, credit, or
+usage-limit failure stops paid CC testing immediately. Generic HTTP 429 remains
+distinct.
 
 ## Environment
 
@@ -412,13 +428,28 @@ plugin source is the intentionally small `plugins/cc-for-pein/` subtree.
 explicitly rebind a mismatched `pein-local` root to this independent clone. It
 does not remove the plugin. After that:
 
-- Runtime `.mjs` edits in `/data/CoordExp/cc-plugin-codex` are checkout-hot for
-  a newly started MCP process; restart the Codex task if its existing MCP server
-  must be replaced.
-- Skill, skill metadata, manifest, `.mcp.json`, or bootstrap edits use
-  `npm run refresh:local`. It advances the manifest cachebuster, atomically
-  refreshes with `codex plugin add`, and fails closed if the marketplace root
-  drifted. Start a new Codex task to discover refreshed skills and MCP tools.
+- Compatible runtime edits behind `runtime/index.mjs` need no install command.
+  Every MCP operation runs in a fresh worker module graph, so an existing task
+  observes the edit on its next call. Agent/session state remains in the
+  checkout-owned durable runtime and is not duplicated by the worker.
+- Same-generation Skill, metadata, manifest content, `.mcp.json`, annotation,
+  or bootstrap edits use `npm run refresh:local`. It reinstalls the same
+  manifest version and fails closed if the marketplace root drifted. Existing
+  tasks retain their already-discovered Skill/schema snapshot, so use a new
+  task when accepting those discovery changes.
+- Public tool schema, adapter/runtime call-contract, or release changes use
+  `npm run release:local`. It advances one cachebuster and installs a versioned
+  snapshot. Increase `CC_MCP_API_GENERATION` for an incompatible public call
+  contract; a stale task then receives `CC_MCP_RESTART_REQUIRED` before any
+  lifecycle operation and must start a new Codex task.
+
+During local installation, at most two recent non-current Plugin snapshots are
+restored as discovery-only compatibility shells. This prevents an older task
+from failing only because Codex cleaned its resolved version path. The shells
+contain no executable runtime source: both the new absolute descriptor and the
+retained legacy bootstrap route lifecycle execution to
+`/data/CoordExp/cc-plugin-codex`. Older-than-two tasks are outside this bounded
+compatibility promise.
 
 Verify the installed snapshot has exactly the seven Experimental skills and
 one `cc_for_pein` MCP server whose descriptor-only bootstrap delegates only to

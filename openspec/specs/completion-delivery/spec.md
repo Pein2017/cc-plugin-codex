@@ -55,7 +55,7 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **THEN** the runtime rejects the acknowledgement without advancing past unseen events
 
 ### Requirement: Waiting is bounded and durable
-`wait_agent` SHALL first process valid `acknowledge_tokens` from a prior response, then report the oldest already-unread Agent-linked completion or wait for the next current-root Agent completion or safe progress activity up to `timeout_ms`. Every newly returned completion SHALL remain unread until its token is echoed in a later wait. Observation that finds no unread Agent-linked completion or only an already-frozen completion SHALL use the validated inbox snapshot without acquiring the persistence write lock or calling fsync. Reconciliation of an existing byte-equivalent normalized completion fact SHALL likewise return from the validated snapshot without acquiring the persistence write lock or calling fsync, regardless of whether the event has been delivered or acknowledged. Reconciliation of an already-published immutable or acknowledged completion and an already-recorded Agent projection SHALL likewise remain observation-only. A complete wait that times out after all relevant completion, acknowledgement, Agent-projection, and progress-delivery facts are settled SHALL acquire no persistence lock, call no fsync, and write no durable state. First delivery of an unfrozen completion SHALL lock, reread, and durably freeze its public payload before returning. A missing completion event or a genuinely different mutable completion fact SHALL retain lock-and-reread repair. `list_agents` SHALL not participate in completion or progress delivery.
+`wait_agent` SHALL first process valid `acknowledge_tokens` from a prior response, then report the oldest already-unread Agent-linked completion or wait for the next current-root Agent completion up to `timeout_ms`. It SHALL additionally observe safe progress activity only when the caller explicitly sets `wake_on_progress: true`. Every newly returned completion SHALL remain unread until its token is echoed in a later wait. Observation that finds no unread Agent-linked completion or only an already-frozen completion SHALL use the validated inbox snapshot without acquiring the persistence write lock or calling fsync. Reconciliation of an existing byte-equivalent normalized completion fact SHALL likewise return from the validated snapshot without acquiring the persistence write lock or calling fsync, regardless of whether the event has been delivered or acknowledged. Reconciliation of an already-published immutable or acknowledged completion and an already-recorded Agent projection SHALL likewise remain observation-only. A complete wait that times out after all relevant completion, acknowledgement, Agent-projection, and explicitly requested progress-delivery facts are settled SHALL acquire no persistence lock, call no fsync, and write no durable state. First delivery of an unfrozen completion SHALL lock, reread, and durably freeze its public payload before returning. A missing completion event or a genuinely different mutable completion fact SHALL retain lock-and-reread repair. `list_agents` SHALL not participate in completion or progress delivery.
 
 #### Scenario: List reports logical state
 - **WHEN** `list_agents` renders completed Agent state
@@ -73,9 +73,13 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **WHEN** any current-root Agent reaches a terminal state before the timeout
 - **THEN** wait returns one complete completion update and opaque token without same-call acknowledgement
 
-#### Scenario: Progress arrives during wait
-- **WHEN** a current-root Agent publishes safe progress before any completion and before timeout
+#### Scenario: Progress arrives during an opt-in wait
+- **WHEN** a current-root Agent publishes safe progress before any completion and before timeout while `wake_on_progress: true`
 - **THEN** wait returns one advisory progress update without changing completion acknowledgement state
+
+#### Scenario: Progress arrives during an ordinary wait
+- **WHEN** a current-root Agent publishes safe progress before any completion and before timeout while progress wakeup is omitted or false
+- **THEN** wait does not return or claim that progress and continues toward completion or timeout
 
 #### Scenario: Later wait acknowledges the prior update
 - **WHEN** a later wait echoes the valid token for the oldest returned completion update
@@ -86,7 +90,7 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **THEN** a later acknowledgement treats that already-acknowledged prefix idempotently and advances only the exact oldest unread Agent-linked suffix without skipping an event
 
 #### Scenario: Wait times out
-- **WHEN** no current-root Agent produces new progress or completion activity before the deadline
+- **WHEN** no current-root Agent produces a completion or explicitly eligible progress update before the deadline
 - **THEN** wait returns a timeout receipt without changing Agent state or acknowledging future events
 
 #### Scenario: Existing inbox remains quiet
@@ -94,7 +98,7 @@ Each owner root SHALL have a monotonic completion sequence and an atomic cursor 
 - **THEN** each observation returns no completion without acquiring the inbox write lock, calling fsync, or changing durable state
 
 #### Scenario: Settled terminal Agent remains quiet
-- **WHEN** a terminal Agent has no unread completion because its completion is acknowledged, its Agent projection marker is already recorded, and no progress remains eligible before timeout
+- **WHEN** a terminal Agent has no unread completion because its completion is acknowledged, its Agent projection marker is already recorded, and no explicitly requested progress remains eligible before timeout
 - **THEN** the complete wait call returns a timeout without acquiring a persistence lock, calling fsync, or writing durable state
 
 #### Scenario: Registry finalization outruns its job marker

@@ -284,7 +284,9 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-haiku-4-5");
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "low");
     assert.equal(invocation.args[invocation.args.indexOf("--disallowedTools") + 1], "Agent");
+    assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /leaf Agent/i);
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /read and review only/i);
   });
 
   it("launches Fable with canonical model and explicit max effort", () => {
@@ -300,7 +302,9 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-fable-5");
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "max");
     assert.equal(invocation.args.includes("--disallowedTools"), false);
+    assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /join every child/i);
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /read and review only/i);
 
     const followed = run(test, [
       "followup_task", spawned.agent.path, "--json", "fable exact-session follow-up delay=40",
@@ -316,9 +320,14 @@ describe("canonical Agent runtime CLI", () => {
       "fake-session-fable",
     );
     assert.equal(followupInvocation.args.includes("--disallowedTools"), false);
+    assert.equal(followupInvocation.args.includes("--dangerously-skip-permissions"), true);
     assert.match(
       followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1],
       /join every child/i,
+    );
+    assert.match(
+      followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1],
+      /read and review only/i,
     );
   });
 
@@ -397,8 +406,11 @@ describe("canonical Agent runtime CLI", () => {
     const started = waitForJob(test, spawned.turn.jobId, (value) => value.status === "running" && Boolean(value.pid));
     assert.equal(started.agentId, spawned.agent.agentId);
     const sent = run(test, ["send_message", spawned.agent.path, "steer exactly once", "--json"]);
-    assert.equal(sent.delivery, "dispatched_active");
-    assert.equal(sent.turn.jobId, spawned.turn.jobId);
+    assert.deepEqual(sent, {
+      agent_name: spawned.agent.path,
+      delivery: "dispatched_active",
+    });
+    assert.equal(JSON.stringify(sent).includes("steer exactly once"), false);
     const finished = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     assert.ok(finished.mailbox.messages.filter((message) => message.state === "acknowledged").length >= 1);
     assert.equal(finished.mailbox.messages.some((message) => message.state === "dispatched"), false);
@@ -413,8 +425,10 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(terminal.continuation.mode, "exact_session");
     assert.equal(terminal.claudeSessionId, "fake-session-resume");
     const queued = run(test, ["send_message", terminal.path, "queued before follow-up", "--json"]);
-    assert.equal(queued.delivery, "queued_no_turn");
-    assert.equal(queued.turn, null);
+    assert.deepEqual(queued, {
+      agent_name: terminal.path,
+      delivery: "queued_no_turn",
+    });
     const beforeFollowup = agent(test, terminal.path);
     assert.equal(beforeFollowup.mailbox.messages.filter((message) => message.state === "queued").length, 1);
 
@@ -566,7 +580,15 @@ describe("canonical Agent runtime CLI", () => {
     ]);
     waitForJob(test, spawned.turn.jobId, (value) => Number(value.publicProgress?.revision ?? 0) >= 2);
 
-    const progress = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    const completionFirst = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.deepEqual(completionFirst, {
+      message: "Timed out waiting for CC Agent activity.",
+      timedOut: true,
+    });
+
+    const progress = run(test, [
+      "wait_agent", "--timeout-ms", "0", "--wake-on-progress", "--json",
+    ]);
     assert.equal(progress.timedOut, false);
     assert.deepEqual(progress.update, {
       kind: "progress",
@@ -669,7 +691,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(invocations(test), []);
   });
 
-  it("preserves permission-respecting terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
+  it("preserves full-access terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--write=false", "--task-name", "parity", "--model", "opus",
@@ -681,9 +703,10 @@ describe("canonical Agent runtime CLI", () => {
       assert.equal(invocation.args.includes(flag), false, flag);
     }
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-opus-5");
-    assert.equal(invocation.args.includes("--dangerously-skip-permissions"), false);
+    assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.equal(invocation.args[invocation.args.indexOf("--disallowedTools") + 1], "Agent");
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /bounded Claude Agent/i);
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /read and review only/i);
     assert.equal(invocation.args.includes("--system-prompt"), false);
     assert.equal(invocation.args[invocation.args.indexOf("--name") + 1], "parity");
     assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(path.dirname(test.workspace), ".claude"));
@@ -735,15 +758,15 @@ describe("canonical Agent runtime CLI", () => {
     }
   });
 
-  it("adds dangerous permission bypass only for explicit write and inherits it on follow-up", () => {
+  it("always adds dangerous bypass while follow-up can change behavioral write intent", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--task-name", "write_parity",
-      "--model", "sonnet", "--write", "--json", "session=write-parity delay=40",
+      "--model", "sonnet", "--write=false", "--json", "session=write-parity delay=40",
     ]);
     const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     const followup = run(test, [
-      "followup_task", terminal.path, "session=write-parity follow-up", "--json",
+      "followup_task", terminal.path, "--write=true", "session=write-parity follow-up", "--json",
     ]);
     waitForAgent(
       test,
@@ -754,6 +777,14 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(recorded.length, 2);
     assert.equal(recorded[0].args.includes("--dangerously-skip-permissions"), true);
     assert.equal(recorded[1].args.includes("--dangerously-skip-permissions"), true);
+    assert.match(
+      recorded[0].args[recorded[0].args.indexOf("--append-system-prompt") + 1],
+      /read and review only/i,
+    );
+    assert.match(
+      recorded[1].args[recorded[1].args.indexOf("--append-system-prompt") + 1],
+      /task-scoped workspace mutation/i,
+    );
 
     const rejected = command(test, [
       "spawn_agent", "--write=false", "--task-name", "contradictory",

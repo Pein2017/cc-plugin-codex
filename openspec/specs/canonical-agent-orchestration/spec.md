@@ -16,15 +16,15 @@ The installed Plugin SHALL expose exactly `$cc-for-pein:spawn-agent`, `$cc-for-p
 - **THEN** the skill reports the Plugin discovery or startup failure instead of silently invoking the checkout CLI
 
 ### Requirement: Model-facing activation selects write intent deliberately
-The `spawn-agent` skill SHALL classify each requested turn as read/review or authorized mutation and SHALL pass `write: false` or `write: true` explicitly to the typed tool. The `followup-task` skill SHALL explain that omitted write intent inherits the Agent's latest activation and SHALL pass an explicit value whenever the requested follow-up changes that authority. The skills SHALL identify `write: true` as the condition that enables terminal-parity dangerous permission bypass and SHALL NOT describe false or omitted intent as an OS-enforced read-only sandbox.
+The `spawn-agent` skill SHALL classify each requested turn as read/review or authorized mutation and SHALL pass `write: false` or `write: true` explicitly to the typed tool. The `followup-task` skill SHALL explain that omitted write intent inherits the Agent's latest activation and SHALL pass an explicit value whenever the requested follow-up changes that authority. The skills SHALL describe `write` as a behavioral and durable recovery-risk boundary rather than a Claude CLI permission switch. They SHALL explain that terminal parity uses `IS_SANDBOX=1` and `--dangerously-skip-permissions` for both values and SHALL NOT describe false intent as an OS-enforced read-only sandbox.
 
 #### Scenario: Parent delegates a read-only audit
 - **WHEN** the requested Agent should inspect or advise without repository mutation
-- **THEN** `spawn-agent` passes `write: false` and explains that native Claude permissions remain authoritative
+- **THEN** `spawn-agent` passes `write: false` and instructs the fully capable Claude process not to mutate workspace or repository state
 
 #### Scenario: Parent delegates authorized implementation
 - **WHEN** the requested Agent is authorized to modify the workspace
-- **THEN** `spawn-agent` passes `write: true` and terminal-parity may use dangerous permission bypass
+- **THEN** `spawn-agent` passes `write: true` and limits mutations to the delegated task scope
 
 #### Scenario: Follow-up changes authority
 - **WHEN** a follow-up changes from read/review work to authorized mutation or from mutation to read/review work
@@ -174,19 +174,27 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **THEN** reconciliation persists the canonical model and restores exact-session continuation
 
 ### Requirement: send_message never activates an idle Agent
-`send_message` SHALL append to the Agent-level durable mailbox, deliver to an active Agent turn when possible, and leave the message queued without starting a new turn when the Agent is terminal.
+`send_message` SHALL append the complete message and delivery evidence to the Agent-level durable mailbox, deliver to an active Agent turn when possible, and leave the message queued without starting a new turn when the Agent is terminal. A successful model-facing receipt SHALL contain only stable `agent_name` and `delivery`; it SHALL preserve the `dispatched_active`, `activation_pending`, and `queued_no_turn` dispositions while excluding Agent status, the message text, message and Agent IDs, timestamps, assignment, job, steering, model, and delegation metadata. Model-facing guidance SHALL summarize success in one concise disposition-aware sentence and SHALL NOT print raw JSON unless the user explicitly requests debug detail.
 
 #### Scenario: Agent is running
 - **WHEN** a message is sent during an active Claude stream
-- **THEN** it is delivered in durable order at the next supported stream boundary
+- **THEN** it is delivered in durable order at the next supported stream boundary and the public receipt reports `dispatched_active` without internal delivery evidence
 
 #### Scenario: Agent is terminal
 - **WHEN** a message is sent while no turn is active
-- **THEN** it is retained as a `queued` Agent-mailbox entry with a `queued_no_turn` receipt and no Claude process starts
+- **THEN** it is retained as a `queued` Agent-mailbox entry, the public receipt reports `queued_no_turn`, and no Claude process starts
+
+#### Scenario: Agent activation is pending
+- **WHEN** the message is durably assigned to an Agent activation that has not yet reached a supported stream boundary
+- **THEN** the public receipt reports `activation_pending` without exposing its assigned job or mailbox record
 
 #### Scenario: Agent is activation-blocked
 - **WHEN** an errored Agent has `continuation=blocked`
 - **THEN** send rejects the message with the blocking evidence instead of queueing it indefinitely
+
+#### Scenario: Parent presents successful delivery
+- **WHEN** the model receives a successful `send_message` receipt
+- **THEN** it presents one concise sentence reflecting the delivery disposition and does not repeat the message or raw receipt unless the user requested debug detail
 
 ### Requirement: followup_task guarantees activation
 `followup_task` SHALL make the message available to an active Agent promptly or start a new exact-session or receipt-proven safe-fresh turn when the Agent is terminal. It SHALL inherit the Agent's immutable delegation mode and SHALL reject any attempted mode override. Before any path that activates a new turn mutates the mailbox, job store, or steering state, it SHALL synchronously validate the complete inherited mode and requested effort, write, and allowed-tool options. Activation SHALL atomically assign queued Agent-mailbox entries to the winning job.
@@ -212,7 +220,7 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **THEN** follow-up is rejected with the blocking evidence
 
 ### Requirement: wait_agent returns bounded root mailbox activity
-`wait_agent` SHALL accept optional `timeout_ms` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL default its observation upper bound to 600000 ms, SHALL reject values above 3600000 ms, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. Model-facing guidance SHALL make omission of `timeout_ms` the canonical ordinary wait invocation and SHALL reserve an explicit bound for an intentional immediate probe, shorter observation window, or longer bounded wait. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token; a progress update SHALL include only the safe bounded public-progress projection when its adaptive delivery interval is eligible. It SHALL omit raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
+`wait_agent` SHALL accept optional `timeout_ms`, optional `wake_on_progress`, plus the CC durable-delivery extension `acknowledge_tokens`, SHALL default its observation upper bound to 600000 ms, SHALL reject values above 3600000 ms, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. Model-facing guidance SHALL make omission of `timeout_ms` and `wake_on_progress` the canonical ordinary join, SHALL reserve an explicit timeout for an intentional immediate probe, shorter observation window, or longer bounded wait, and SHALL reserve `wake_on_progress: true` for one intentional intermediate observation. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token. A progress update SHALL include only the safe bounded public-progress projection when the caller opted in and its adaptive delivery interval is eligible. It SHALL omit raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
 
 #### Scenario: Unread activity predates wait
 - **WHEN** the root inbox already contains an unread Agent completion
@@ -222,21 +230,25 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **WHEN** a later wait echoes valid tokens for the oldest unread contiguous completion prefix
 - **THEN** the cursor advances across that update and any preceding quarantined legacy sequences before returning or waiting
 
-#### Scenario: Root Agent publishes progress
-- **WHEN** any current-root Agent publishes safe progress before timeout and no completion is unread
+#### Scenario: Root Agent publishes progress during ordinary join
+- **WHEN** a current-root Agent publishes safe progress before timeout, no completion is unread, and the caller omitted or disabled `wake_on_progress`
+- **THEN** wait does not return or acknowledge that progress and continues toward completion or timeout
+
+#### Scenario: Caller requests one progress observation
+- **WHEN** a current-root Agent publishes eligible safe progress before timeout, no completion is unread, and the caller set `wake_on_progress: true`
 - **THEN** wait reports one bounded progress update without returning Claude text or tool inputs
 
 #### Scenario: Root Agent completes
 - **WHEN** any current-root Agent publishes completion activity before timeout
-- **THEN** wait reports completion activity with the complete stored Agent final message
+- **THEN** wait reports completion activity with the complete stored Agent final message regardless of `wake_on_progress`
 
 #### Scenario: Root mailbox remains quiet
-- **WHEN** `timeout_ms` expires without new current-root Agent progress or completion activity
+- **WHEN** `timeout_ms` expires without unread current-root completion or explicitly eligible progress activity
 - **THEN** wait returns an honest timeout without interrupting or changing any Agent
 
-#### Scenario: Ordinary caller omits timeout
-- **WHEN** the parent performs an ordinary wait without a specific scheduling deadline
-- **THEN** model-facing guidance omits `timeout_ms` and the observation deadline is 600000 ms while eligible progress or completion may return earlier
+#### Scenario: Ordinary caller omits timeout and progress wakeup
+- **WHEN** the parent performs an ordinary required join without a specific scheduling deadline
+- **THEN** model-facing guidance omits both optional fields, the observation deadline is 600000 ms, and completion may return earlier
 
 #### Scenario: Caller intentionally overrides timeout
 - **WHEN** the parent needs an immediate probe, shorter observation window, or longer bounded wait
@@ -295,15 +307,19 @@ Each of the seven model-visible CC Agent skills and its discovery metadata SHALL
 - **THEN** every skill is visibly described as Experimental without claiming automatic idle-parent wakeup
 
 ### Requirement: Parent orchestration uses explicit join policy
-The spawn and wait skill contracts SHALL require the parent to classify delegated work as required, parallel-then-join, or explicitly detached. The parent SHALL NOT give its final answer while a required or parallel-then-join result remains undisposed, SHALL continue meaningful non-overlapping work before waiting when possible, and SHALL use detached mode only when the user clearly requests background execution and the result is not needed in the current answer.
+The spawn and wait skill contracts SHALL require the parent to classify delegated work as required, parallel-then-join, or explicitly detached. The parent SHALL NOT give its final answer while a required or parallel-then-join result remains undisposed, SHALL continue meaningful non-overlapping work before waiting when possible, and SHALL use detached mode only when the user clearly requests background execution and the result is not needed in the current answer. The parent SHALL call `wait_agent` sparingly: an ordinary join SHALL omit progress wakeup, while an explicit progress wakeup SHALL be used only for one intentional intermediate observation and SHALL NOT be reflexively repeated.
 
 #### Scenario: Child result is required evidence
 - **WHEN** the parent's conclusion depends on a spawned Agent's result
-- **THEN** the parent waits for and synthesizes that completion before giving its final answer
+- **THEN** the parent performs one completion-first join and synthesizes that completion before giving its final answer
 
 #### Scenario: Independent parent work remains
 - **WHEN** a spawned Agent can run concurrently with meaningful non-overlapping parent work
 - **THEN** the parent performs that work before joining rather than immediately polling by reflex
+
+#### Scenario: Parent intentionally samples progress
+- **WHEN** intermediate Agent activity materially informs scheduling or intervention
+- **THEN** the parent may request one progress wakeup and returns to a completion-first join instead of repeatedly requesting progress
 
 #### Scenario: User explicitly requests background execution
 - **WHEN** the user asks to detach work whose result is not needed for the current answer

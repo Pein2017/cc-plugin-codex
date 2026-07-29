@@ -9,12 +9,13 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { createClaudeRuntime } from "./index.mjs";
+import { CC_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
@@ -32,6 +33,8 @@ const SOURCE_ROOT = fs.realpathSync.native(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 );
 const FIXED_ENV_FILE = path.join(SOURCE_ROOT, "config", "runtime.env");
+const RUNTIME_MODULE_URL = pathToFileURL(path.join(SOURCE_ROOT, "runtime", "index.mjs"));
+const MCP_CALL_WORKER_URL = new URL("./mcp-call-worker.mjs", import.meta.url);
 const MODEL_IDS = [
   "claude-haiku-4-5",
   "claude-sonnet-5",
@@ -49,7 +52,7 @@ const executionFields = {
   allowed_tools: z.array(z.string().trim().min(1)).min(1).optional(),
 };
 const optionalWrite = z.boolean().optional().describe(
-  "Mutation intent. False keeps native Claude permissions; true enables terminal-parity dangerous permission bypass. Omitted follow-up intent inherits."
+  "Behavioral mutation intent. False requires read/review-only behavior; true permits task-scoped writes. Both use full-access terminal parity. Omitted follow-up intent inherits."
 );
 
 const TOOL_DEFINITIONS = Object.freeze({
@@ -62,7 +65,7 @@ const TOOL_DEFINITIONS = Object.freeze({
       description: z.string().trim().min(1).optional(),
       model: z.enum(MODEL_IDS),
       write: z.boolean().describe(
-        "Required mutation intent. False keeps native Claude permissions; true enables terminal-parity dangerous permission bypass."
+        "Required behavioral mutation intent. False requires read/review-only behavior; true permits task-scoped writes. Both use full-access terminal parity."
       ),
       delegation_mode: z.enum(["leaf", "claude_orchestrator"]).optional(),
       ...executionFields,
@@ -83,9 +86,12 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: synchronously wait for current-root CC Agent progress or completion. Omit timeout_ms for the 10-minute default; eligible activity returns early. Cancellation stops only this observation.",
+      "Experimental: synchronously wait for current-root CC Agent completion or timeout. Omit timeout_ms for the 10-minute default; set wake_on_progress only for one intentional intermediate progress observation. Cancellation stops only this observation.",
     inputSchema: z.object({
       timeout_ms: z.number().int().min(0).max(3_600_000).optional(),
+      wake_on_progress: z.boolean().optional().describe(
+        "Opt in for this call to return one eligible safe progress update before completion. Ordinary joins omit this field."
+      ),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -171,11 +177,78 @@ export function runtimeReceiptResult(receipt) {
 
 function sanitizedError(error) {
   const messageText = error instanceof Error ? error.message : String(error);
-  return new Error(messageText.replaceAll("\0", "").slice(0, 8_000) || "CC MCP tool call failed.");
+  const sanitized = new Error(messageText.replaceAll("\0", "").slice(0, 8_000) || "CC MCP tool call failed.");
+  if (typeof /** @type {any} */ (error)?.code === "string") {
+    /** @type {any} */ (sanitized).code = /** @type {any} */ (error).code;
+  }
+  return sanitized;
+}
+
+function workerError(payload) {
+  const error = new Error(payload?.message || "CC MCP isolated runtime call failed.");
+  error.name = payload?.name || "Error";
+  if (typeof payload?.code === "string") /** @type {any} */ (error).code = payload.code;
+  return error;
+}
+
+export function invokeIsolatedRuntimeOperation(options) {
+  const {
+    operation,
+    input,
+    context,
+    signal = null,
+    expectedGeneration = CC_MCP_API_GENERATION,
+    runtimeModuleUrl = RUNTIME_MODULE_URL,
+    workerUrl = MCP_CALL_WORKER_URL,
+  } = options;
+  const { abortSignal: _abortSignal, ...serializableContext } = context;
+  const worker = new Worker(workerUrl, {
+    workerData: {
+      operation,
+      input,
+      context: serializableContext,
+      expectedGeneration,
+      runtimeModuleUrl: runtimeModuleUrl instanceof URL ? runtimeModuleUrl.href : String(runtimeModuleUrl),
+    },
+  });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let abortTimer = null;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      if (abortTimer) clearTimeout(abortTimer);
+      signal?.removeEventListener("abort", onAbort);
+      void worker.terminate();
+      callback(value);
+    };
+    const onAbort = () => {
+      worker.postMessage({ type: "abort" });
+      if (operation === "wait_agent") {
+        abortTimer = setTimeout(() => {
+          const error = new Error("CC MCP wait observation was cancelled.");
+          error.name = "AbortError";
+          finish(reject, error);
+        }, 1_000);
+        abortTimer.unref?.();
+      }
+    };
+    worker.once("message", (message) => {
+      if (message?.ok) finish(resolve, message.receipt);
+      else finish(reject, workerError(message?.error));
+    });
+    worker.once("error", (error) => finish(reject, error));
+    worker.once("exit", (code) => {
+      if (!settled) finish(reject, new Error(`CC MCP isolated runtime worker exited with code ${code}.`));
+    });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
 }
 
 export function createCcMcpServer(options = {}) {
-  const runtimeFactory = options.runtimeFactory ?? createClaudeRuntime;
+  const runtimeFactory = options.runtimeFactory;
+  const runtimeInvoker = options.runtimeInvoker ?? invokeIsolatedRuntimeOperation;
   const server = new McpServer(
     { name: "cc-for-pein", version: PACKAGE_VERSION },
     {
@@ -189,8 +262,10 @@ export function createCcMcpServer(options = {}) {
     const definition = TOOL_DEFINITIONS[name];
     /** @type {any} */ (server).registerTool(name, definition, async (input, extra) => {
       try {
-        const runtime = runtimeFactory(resolveCodexMcpContext(extra._meta, extra.signal));
-        const receipt = await runtime[name](input);
+        const context = resolveCodexMcpContext(extra._meta, extra.signal);
+        const receipt = runtimeFactory
+          ? await runtimeFactory(context)[name](input)
+          : await runtimeInvoker({ operation: name, input, context, signal: extra.signal });
         return runtimeReceiptResult(receipt);
       } catch (error) {
         throw sanitizedError(error);

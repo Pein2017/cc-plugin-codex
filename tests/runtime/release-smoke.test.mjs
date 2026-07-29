@@ -63,6 +63,8 @@ describe("release smoke", () => {
     assert.equal(probeOptions.realClaude, false);
     assert.equal(report.skills.length, 7);
     assert.equal(report.tools.length, 7);
+    assert.equal(report.compatibilityShells.valid, true);
+    assert.equal(report.compatibilityShells.count, 0);
   });
 
   it("passes paid intent only when explicitly selected", async () => {
@@ -87,6 +89,28 @@ describe("release smoke", () => {
     });
     assert.equal(report.zeroModelCost, false);
     assert.deepEqual(paidStart, { model: "claude-haiku-4-5", reasoningEffort: "low", write: false });
+  });
+
+  it("accepts a bounded discovery-only compatibility shell routed to the checkout", async () => {
+    const fixture = matchingSnapshot();
+    const previous = path.join(path.dirname(fixture.snapshotRoot), "0.6.0+codex.previous");
+    fs.cpSync(path.join(SOURCE_ROOT, "plugins", "cc-for-pein"), previous, { recursive: true });
+    const report = await runReleaseSmoke({
+      installed: fixture.installed,
+      probeMcp: async () => ({
+        healthy: true,
+        tools: [
+          "spawn_agent", "send_message", "followup_task", "wait_agent",
+          "interrupt_agent", "list_agents", "read_agent_messages",
+        ],
+        agentCount: 0,
+        paid: { requested: false, status: "skipped" },
+      }),
+    });
+    assert.equal(report.compatibilityShells.valid, true);
+    assert.equal(report.compatibilityShells.count, 1);
+    assert.equal(report.compatibilityShells.versions[0].canonicalRoute, true);
+    assert.equal(report.compatibilityShells.versions[0].cachedRuntimeAbsent, true);
   });
 
   it("launches the descriptor MCP with isolated list_agents and no model", async () => {

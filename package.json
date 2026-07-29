@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein-runtime",
-  "version": "0.5.0",
+  "version": "0.9.0",
   "description": "Checkout-owned durable Claude Agent runtime for Codex",
   "private": true,
   "type": "module",
@@ -27,7 +27,8 @@
   "scripts": {
     "doctor": "node scripts/doctor.mjs",
     "install:local": "node scripts/local-plugin-install.mjs --initial",
-    "refresh:local": "node scripts/update-plugin-cachebuster.mjs && node scripts/local-plugin-install.mjs --refresh-only",
+    "refresh:local": "node scripts/local-plugin-install.mjs --refresh-only",
+    "release:local": "node scripts/update-plugin-cachebuster.mjs && node scripts/local-plugin-install.mjs --refresh-only",
     "smoke:release": "node scripts/release-smoke.mjs",
     "lint": "eslint runtime scripts tests/runtime",
     "typecheck": "tsc -p tsconfig.json",

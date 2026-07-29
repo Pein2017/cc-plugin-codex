@@ -268,7 +268,10 @@ describe("Agent message delivery idempotency", () => {
     const second = runtime.sendMessage({ target: agent.agentId, message: "second pre-Claude message" });
     assert.equal(first.delivery, "activation_pending");
     assert.equal(second.delivery, "activation_pending");
-    assert.deepEqual(first.turn, { jobId, steeringSequence: null });
+    assert.deepEqual(Object.keys(first).sort(), ["agent_name", "delivery"]);
+    const firstStoredMessage = runtime.store.listMessages(agent.agentId)
+      .find((message) => message.text === "first pre-Claude message");
+    assert.ok(firstStoredMessage);
     const followup = await runtime.followupTask({
       target: agent.agentId,
       message: "follow-up while activation remains unbound",
@@ -285,7 +288,7 @@ describe("Agent message delivery idempotency", () => {
 
     // Model the old crash state in which a pre-Claude message had already
     // received an Agent dispatch receipt before the process died.
-    runtime.store.markMessageDispatched(agent.agentId, first.message.messageId, {
+    runtime.store.markMessageDispatched(agent.agentId, firstStoredMessage.messageId, {
       jobId,
       receipt: { delivery: "durable_stream_input", steeringSequence: 1 },
     });

@@ -119,8 +119,8 @@ describe("native plugin contract", () => {
     assert.deepEqual(config.mcpServers.cc_for_pein, {
       type: "stdio",
       command: "node",
-      args: ["--", "bootstrap/cc-mcp.mjs"],
-      cwd: ".",
+      args: ["--", "/data/CoordExp/cc-plugin-codex/plugins/cc-for-pein/bootstrap/cc-mcp.mjs"],
+      cwd: "/data/CoordExp/cc-plugin-codex",
       required: true,
       supports_parallel_tool_calls: true,
       startup_timeout_sec: 30,
@@ -143,6 +143,8 @@ describe("native plugin contract", () => {
     assert.match(server, /missing _meta\.threadId/);
     assert.match(server, /sandboxCwd/);
     assert.doesNotMatch(server, /background terminal|exec_command|write_stdin/);
+    assert.match(server, /invokeIsolatedRuntimeOperation/);
+    assert.match(server, /mcp-call-worker\.mjs/);
   });
 
   it("pins the installed bootstrap and Claude envelope to the canonical checkout", () => {
@@ -218,8 +220,9 @@ describe("native plugin contract", () => {
     assert.match(text, /subscription[\s\S]*usage[\s\S]*weekly\/monthly[\s\S]*credits[\s\S]*quota[\s\S]*stop all subsequent[\s\S]*real Claude/i);
     assert.match(text, /generic[\s\S]*HTTP 429[\s\S]*bounded reconnect/i);
     assert.match(text, /--max-budget-usd[\s\S]*not subscription exhaustion/i);
-    assert.match(text, /Pass `write: false`[\s\S]*omits `--dangerously-skip-permissions`/i);
-    assert.match(text, /Pass `write: true`[\s\S]*adds[\s\S]*`--dangerously-skip-permissions`/i);
+    assert.match(text, /Pass `write: false`[\s\S]*behavioral[\s\S]*not an OS-enforced read-only sandbox/i);
+    assert.match(text, /Pass `write: true`[\s\S]*supplied task/i);
+    assert.match(text, /both values[\s\S]*`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);
     assert.match(text, /Never omit `write` from a model-facing spawn/i);
     assert.match(text, /delegation_mode: "leaf"[\s\S]*claude_orchestrator[\s\S]*claude-fable-5/i);
     assert.match(text, /disables Claude Code's native `Agent` tool/i);
@@ -234,7 +237,22 @@ describe("native plugin contract", () => {
     );
     assert.match(text, /Omitted `write` inherits[\s\S]*latest activation intent/i);
     assert.match(text, /`write: false`[\s\S]*`write: true`/i);
+    assert.match(text, /both values[\s\S]*`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);
     assert.match(text, /not an OS-enforced read-only sandbox/i);
+  });
+
+  it("keeps send-message receipts and presentation compact", () => {
+    const skillRoot = path.join(root, "plugins", "cc-for-pein", "skills", "send-message");
+    const text = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+    assert.match(text, /successful receipt[\s\S]*`agent_name`[\s\S]*`delivery`/i);
+    assert.match(text, /one concise disposition-aware sentence/i);
+    assert.match(text, /never print[\s\S]*raw JSON[\s\S]*repeat the sent message/i);
+    assert.match(text, /queued_no_turn[\s\S]*followup-task[\s\S]*activate the idle Agent/i);
+    assert.doesNotMatch(text, /Present the delivery receipt exactly as returned/);
+
+    const metadata = fs.readFileSync(path.join(skillRoot, "agents", "openai.yaml"), "utf8");
+    assert.match(metadata, /one concise disposition-aware sentence/i);
+    assert.match(metadata, /never raw JSON or repeated message text/i);
   });
 
   it("keeps list and wait guidance intentional by default", () => {
@@ -248,16 +266,20 @@ describe("native plugin contract", () => {
       if (name === "list-agents") assert.match(text, /final Claude output/i);
       else {
         assert.match(text, /complete stored[\s\S]*completion_message/i);
-        assert.match(text, /ordinary required join[\s\S]*omit `timeout_ms`/i);
+        assert.match(text, /ordinary required join[\s\S]*omit both `timeout_ms` and[\s\S]*`wake_on_progress`/i);
         assert.match(text, /600000 ms/);
         assert.match(text, /3600000 ms/);
         assert.match(text, /5 to 10, 20, and[\s\S]*30 seconds/);
+        assert.match(text, /Call wait sparingly/i);
+        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate observation/i);
+        assert.match(text, /do not reflexively request progress again/i);
 
         const metadata = fs.readFileSync(
           path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
           "utf8",
         );
-        assert.match(metadata, /ordinary wait[\s\S]*omit timeout_ms[\s\S]*10-minute runtime default/i);
+        assert.match(metadata, /ordinary join[\s\S]*omit timeout_ms and wake_on_progress[\s\S]*10-minute completion-first default/i);
+        assert.match(metadata, /wake_on_progress[\s\S]*one intentional intermediate observation/i);
       }
     }
   });

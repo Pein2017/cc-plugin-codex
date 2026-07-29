@@ -22,9 +22,10 @@ Plugin discovery/startup failure instead of silently running a shell fallback.
 - Omitted `write` inherits the Agent's latest activation intent. Pass
   `write: false` whenever a new read/review follow-up reduces authority, and
   pass `write: true` only when a new mutation follow-up is explicitly
-  authorized. Under default terminal parity, false omits
-  `--dangerously-skip-permissions`; true adds it. False is governed by native
-  Claude permissions and is not an OS-enforced read-only sandbox.
+  authorized. This changes the runtime's behavioral delegation prompt, not the
+  Claude process capability. Under default terminal parity, both values use
+  `IS_SANDBOX=1` and `--dangerously-skip-permissions`; false remains a
+  prompt-enforced read/review boundary, not an OS-enforced read-only sandbox.
 - Delegation mode is immutable Agent identity metadata. Do not send a mode or
   model override: the follow-up inherits the Agent's existing leaf or Fable
   orchestrator boundary across exact-session resume and safe-fresh recovery.

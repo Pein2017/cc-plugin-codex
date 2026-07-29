@@ -37,6 +37,12 @@ if (args.join(" ") === "plugin marketplace list --json") {
   process.stdout.write(JSON.stringify({ marketplaces: root ? [{ name: "pein-local", root }] : [] }));
 } else if (args.join(" ") === "plugin list --json") {
   process.stdout.write(JSON.stringify({ installed: [{ pluginId: "cc-for-pein@pein-local", version: process.env.FAKE_PLUGIN_VERSION, enabled: true }] }));
+} else if (args.join(" ") === "plugin add cc-for-pein@pein-local --json") {
+  if (process.env.FAKE_DELETE_CACHE === "1") {
+    fs.rmSync(process.env.FAKE_PLUGIN_CACHE_ROOT, { recursive: true, force: true });
+  }
+  if (process.env.FAKE_INSTALL_FAILURE === "1") process.exit(17);
+  process.stdout.write(JSON.stringify({ ok: true }));
 } else {
   process.stdout.write(JSON.stringify({ ok: true }));
 }
@@ -45,8 +51,11 @@ if (args.join(" ") === "plugin marketplace list --json") {
   return binDirectory;
 }
 
-function invokeInstall({ mode, marketplaceRoot }) {
+function invokeInstall({ mode, marketplaceRoot, configure = () => ({}) }) {
   const directory = temporaryDirectory();
+  const codexHome = path.join(directory, "codex-home");
+  const pluginCacheRoot = path.join(codexHome, "plugins", "cache", "pein-local", "cc-for-pein");
+  fs.mkdirSync(pluginCacheRoot, { recursive: true });
   const logFile = path.join(directory, "calls.jsonl");
   const binDirectory = fakeCodex(directory);
   const manifest = JSON.parse(
@@ -60,13 +69,16 @@ function invokeInstall({ mode, marketplaceRoot }) {
       FAKE_CODEX_LOG: logFile,
       FAKE_MARKETPLACE_ROOT: marketplaceRoot ?? "",
       FAKE_PLUGIN_VERSION: manifest.version,
+      FAKE_PLUGIN_CACHE_ROOT: pluginCacheRoot,
+      CODEX_HOME: codexHome,
       PATH: `${binDirectory}:${process.env.PATH}`,
+      ...configure({ directory, codexHome, pluginCacheRoot, manifest }),
     },
   });
   const calls = fs.existsSync(logFile)
     ? fs.readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
-  return { calls, result };
+  return { calls, result, directory, codexHome, pluginCacheRoot, manifest };
 }
 
 describe("local plugin installation", () => {
@@ -115,6 +127,45 @@ describe("local plugin installation", () => {
       ["plugin", "add", "cc-for-pein@pein-local", "--json"],
       ["plugin", "list", "--json"],
     ]);
+  });
+
+  it("restores only the two most-recent discovery shells after Codex cleanup", () => {
+    const { result, pluginCacheRoot } = invokeInstall({
+      mode: "--refresh-only",
+      marketplaceRoot: root,
+      configure: ({ pluginCacheRoot }) => {
+        for (const [index, version] of ["0.2.0+codex.old", "0.3.0+codex.middle", "0.4.0+codex.recent"].entries()) {
+          const snapshot = path.join(pluginCacheRoot, version);
+          fs.mkdirSync(snapshot, { recursive: true });
+          fs.writeFileSync(path.join(snapshot, "marker"), version);
+          const stamp = new Date(1_700_000_000_000 + index * 1_000);
+          fs.utimesSync(snapshot, stamp, stamp);
+        }
+        return { FAKE_DELETE_CACHE: "1" };
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.2.0+codex.old")), false);
+    assert.equal(fs.readFileSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", "marker"), "utf8"), "0.3.0+codex.middle");
+    assert.equal(fs.readFileSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", "marker"), "utf8"), "0.4.0+codex.recent");
+  });
+
+  it("restores selected discovery shells when Codex installation fails", () => {
+    const { result, pluginCacheRoot } = invokeInstall({
+      mode: "--refresh-only",
+      marketplaceRoot: root,
+      configure: ({ pluginCacheRoot }) => {
+        const snapshot = path.join(pluginCacheRoot, "0.5.0+codex.previous");
+        fs.mkdirSync(snapshot, { recursive: true });
+        fs.writeFileSync(path.join(snapshot, "marker"), "preserved");
+        return { FAKE_DELETE_CACHE: "1", FAKE_INSTALL_FAILURE: "1" };
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.equal(
+      fs.readFileSync(path.join(pluginCacheRoot, "0.5.0+codex.previous", "marker"), "utf8"),
+      "preserved",
+    );
   });
 
   it("replaces only the Codex cachebuster suffix", () => {

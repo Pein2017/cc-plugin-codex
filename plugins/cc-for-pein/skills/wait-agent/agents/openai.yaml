@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Wait Agent"
-  short_description: "Experimental: wait for bounded Agent progress or completion"
-  default_prompt: "Experimental: use $cc-for-pein:wait-agent and invoke mcp__cc_for_pein__wait_agent only when blocked on current-root Agent activity; never fall back to a shell command. For an ordinary wait omit timeout_ms and use the 10-minute runtime default, overriding it only for an intentional probe or different bounded window. Synthesize required completion before final because waiting cannot reactivate an idle Codex parent."
+  short_description: "Experimental: sparsely join Agent completion"
+  default_prompt: "Experimental: use $cc-for-pein:wait-agent and invoke mcp__cc_for_pein__wait_agent sparingly when blocked on current-root Agent completion; never fall back to a shell command. For an ordinary join omit timeout_ms and wake_on_progress, using the 10-minute completion-first default. Set wake_on_progress only for one intentional intermediate observation, then return to useful work or a completion-first join. Synthesize required completion before final because waiting cannot reactivate an idle Codex parent."

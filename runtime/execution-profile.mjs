@@ -25,6 +25,17 @@ const COMMON_DELEGATION_PROMPT = [
   "Return one self-contained final result containing the evidence and conclusions the lead needs.",
 ].join(" ");
 
+const READ_ONLY_AUTHORITY_PROMPT = [
+  "Authority: read and review only.",
+  "Full Claude CLI permissions are granted only to avoid headless permission prompts.",
+  "Do not create, edit, delete, rename, move, or otherwise mutate workspace files, repository state, or external systems.",
+].join(" ");
+
+const WRITE_AUTHORITY_PROMPT = [
+  "Authority: task-scoped workspace mutation is allowed.",
+  "Change only what the supplied task requires and preserve unrelated user work.",
+].join(" ");
+
 const LEAF_DELEGATION_PROMPT = [
   COMMON_DELEGATION_PROMPT,
   "Act as a leaf Agent: do not delegate work or invoke the native Agent tool.",
@@ -48,10 +59,11 @@ function isNativeAgentTool(value) {
   return /^Agent(?:\(|$)/.test(String(value ?? "").trim());
 }
 
-function delegationPrompt(mode) {
-  return mode === "claude_orchestrator"
+function delegationPrompt(mode, write) {
+  const rolePrompt = mode === "claude_orchestrator"
     ? CLAUDE_ORCHESTRATOR_PROMPT
     : LEAF_DELEGATION_PROMPT;
+  return [rolePrompt, write ? WRITE_AUTHORITY_PROMPT : READ_ONLY_AUTHORITY_PROMPT].join(" ");
 }
 
 export function normalizeProfileName(value) {
@@ -70,7 +82,6 @@ export function normalizeProfileName(value) {
  */
 export function validateExecutionProfileOptions(options = {}) {
   const name = normalizeProfileName(options.profile);
-  const write = Boolean(options.write);
   const requestedDangerousBypass = Boolean(options.dangerouslySkipPermissions);
   const requestedModel = String(options.model ?? "").trim();
   if (!requestedModel) {
@@ -96,11 +107,6 @@ export function validateExecutionProfileOptions(options = {}) {
       "--dangerously-skip-permissions requires --profile terminal-parity; safe must remain sandboxed."
     );
   }
-  if (requestedDangerousBypass && !write) {
-    throw new Error(
-      "--dangerously-skip-permissions requires explicit write access."
-    );
-  }
   if (name === "terminal-parity" && options.permissionMode) {
     throw new Error(
       "--dangerously-skip-permissions cannot be combined with --permission-mode."
@@ -110,7 +116,7 @@ export function validateExecutionProfileOptions(options = {}) {
   const effort = name === "terminal-parity"
     ? resolveEffort(options.effort)
     : resolveEffort(resolveDefaultEffort(model, options.effort));
-  const dangerouslySkipPermissions = name === "terminal-parity" && write;
+  const dangerouslySkipPermissions = name === "terminal-parity";
   return { name, model, effort, delegationMode, dangerouslySkipPermissions };
 }
 
@@ -124,12 +130,10 @@ export function createExecutionProfile(options = {}) {
     const claudeOptions = {
       env,
       model,
-      appendSystemPrompt: delegationPrompt(delegationMode),
+      appendSystemPrompt: delegationPrompt(delegationMode, Boolean(options.write)),
     };
     if (delegationMode === "leaf") claudeOptions.disallowedTools = ["Agent"];
-    if (validated.dangerouslySkipPermissions) {
-      claudeOptions.dangerouslySkipPermissions = true;
-    }
+    claudeOptions.dangerouslySkipPermissions = true;
     if (effort) claudeOptions.effort = effort;
     if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
       claudeOptions.allowedTools = options.allowedTools;
@@ -154,7 +158,7 @@ export function createExecutionProfile(options = {}) {
     env,
     model,
     effort,
-    appendSystemPrompt: delegationPrompt(delegationMode),
+    appendSystemPrompt: delegationPrompt(delegationMode, Boolean(options.write)),
     settingsFile,
     permissionMode: options.permissionMode ?? (options.write
       ? runningAsRoot ? undefined : "bypassPermissions"

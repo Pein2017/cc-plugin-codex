@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Breaking:** shrink successful `send_message` receipts to only stable
+  `agent_name` and `delivery`. Keep complete mailbox,
+  assignment, job, and steering evidence durable for operator diagnosis, while
+  directing the parent to give one concise disposition-aware confirmation
+  instead of repeating raw JSON or message text.
+- Make `wait_agent` completion-first by default so advisory progress no longer
+  wakes the lead every 5 to 30 seconds. Add call-local `wake_on_progress` for
+  one intentional bounded progress observation, preserve progress cursors
+  during ordinary joins, and align Skill guidance with sparse Codex V2 waits.
+- Add compatible live runtime refresh for existing Codex tasks: every accepted
+  MCP lifecycle call now loads `runtime/index.mjs` and its transitive modules in
+  a fresh isolated worker while the MCP adapter remains stateless. Pin new MCP
+  descriptors directly to the canonical checkout, fail stale public API
+  generations with `CC_MCP_RESTART_REQUIRED`, split no-cachebuster
+  `refresh:local` from versioned `release:local`, and retain at most two recent
+  discovery-only Plugin shells so a release does not strand older tasks on a
+  deleted Cache path.
+- **Breaking:** decouple behavioral write intent from Claude CLI permissions.
+  Default terminal parity now sets `IS_SANDBOX=1` and always passes
+  `--dangerously-skip-permissions` for both read/review and mutation turns so
+  headless Bash, MCP, hooks, and native tools do not stall. Keep `write` as an
+  explicit durable authority boundary and append a read-only or task-scoped
+  mutation instruction to every Claude turn.
 - **Breaking:** slim public spawn to required `task_name`, `message`, `model`,
   and `write`; remove public `fork_turns` and execution-profile selectors.
   Default every Agent to an immutable leaf with an appended Codex-lead envelope
@@ -17,12 +40,6 @@
   one-turn Haiku 4.5/low paid extension, derive runtime/Plugin versions from the
   package base, and replace missing dependency loader stacks with an actionable
   checkout `npm install` recovery.
-- Bind terminal-parity authority to the public `write` intent: false or omitted
-  intent now respects native Claude permissions without
-  `--dangerously-skip-permissions`, while explicit `write: true` enables the
-  bypass. Require model-facing spawn guidance to choose the intent, preserve
-  follow-up inheritance, reject contradictory direct bypass requests, and mark
-  reconciliation-capable `list_agents` as non-read-only but idempotent.
 - Add one checkout-owned `cc_for_pein` stdio MCP server with exactly seven
   typed lifecycle tools. Bind calls to trusted Codex thread/workspace metadata,
   keep spawn/follow-up background handoff asynchronous, keep wait as the

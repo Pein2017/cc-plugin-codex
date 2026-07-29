@@ -910,20 +910,14 @@ class AgentRuntime {
     const delivery = queued.delivery === "assigned_active"
       ? this.deliverAssignedMessage(queued.agent, queued.message)
       : { delivered: false, reason: "queued_no_turn" };
+    const current = this.store.resolveTarget(agent.agentId);
     return {
-      agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-      message: queued.message,
+      agent_name: current.path,
       delivery: delivery.delivered
         ? "dispatched_active"
         : delivery.reason === "activation_pending"
           ? "activation_pending"
           : "queued_no_turn",
-      turn: delivery.delivered || delivery.reason === "activation_pending"
-        ? {
-            jobId: delivery.jobId,
-            steeringSequence: delivery.delivered ? delivery.steeringSequence : null,
-          }
-        : null,
     };
   }
 
@@ -1163,6 +1157,10 @@ class AgentRuntime {
     if (!Number.isFinite(timeout) || timeout < 0 || timeout > MAX_AGENT_WAIT_TIMEOUT_MS) {
       throw new Error("wait_agent timeout_ms must be between 0 and 3600000 milliseconds.");
     }
+    if (input.wake_on_progress != null && typeof input.wake_on_progress !== "boolean") {
+      throw new Error("wait_agent wake_on_progress must be a boolean when provided.");
+    }
+    const wakeOnProgress = input.wake_on_progress === true;
     const acknowledgeTokens = Array.isArray(input.acknowledge_tokens)
       ? input.acknowledge_tokens
       : [];
@@ -1177,6 +1175,7 @@ class AgentRuntime {
     const waited = await this.jobs.wait(null, {
       timeoutMs: timeout,
       acknowledgeTokens,
+      wakeOnProgress,
       progressJobIds,
       signal: this.abortSignal,
     });

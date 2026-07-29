@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
-import { inspectInstalledPluginParity } from "./plugin-installation.mjs";
+import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
 import { SOURCE_ROOT } from "./version.mjs";
 
 const REAL_SMOKE_MODEL = "claude-haiku-4-5";
@@ -51,11 +51,12 @@ async function runPaidSmoke(client, meta, options = {}) {
       name: "spawn_agent",
       arguments: {
         task_name: taskName,
-        message: "Reply exactly CC_RELEASE_SMOKE_OK. Do not use tools.",
+        message: "Use the Bash tool to run pwd without modifying anything. Then reply exactly CC_RELEASE_SMOKE_OK.",
         description: "Explicit paid release acceptance smoke",
         model: REAL_SMOKE_MODEL,
         reasoning_effort: REAL_SMOKE_EFFORT,
         write: false,
+        allowed_tools: ["Bash"],
       },
       _meta: meta,
     }, undefined, callOptions(60_000));
@@ -115,10 +116,17 @@ export async function probeInstalledMcp(options = {}) {
     threadId,
     [CODEX_SANDBOX_META_KEY]: { sandboxCwd: pathToFileURL(workspace).href },
   };
+  const descriptor = JSON.parse(fs.readFileSync(path.join(snapshotRoot, ".mcp.json"), "utf8"))?.mcpServers?.cc_for_pein;
+  if (
+    descriptor?.cwd !== SOURCE_ROOT ||
+    descriptor?.args?.[1] !== path.join(SOURCE_ROOT, "plugins", "cc-for-pein", "bootstrap", "cc-mcp.mjs")
+  ) {
+    throw new Error("Installed MCP descriptor does not launch the canonical checkout bootstrap directly.");
+  }
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: ["--", "bootstrap/cc-mcp.mjs"],
-    cwd: snapshotRoot,
+    command: descriptor.command === "node" ? process.execPath : descriptor.command,
+    args: descriptor.args,
+    cwd: descriptor.cwd,
     env: {
       ...(options.env ?? process.env),
       CC_RUNTIME_HOME: runtimeHome,
@@ -180,7 +188,10 @@ export async function runReleaseSmoke(options = {}) {
     installed: options.installed,
   });
   if (!parity.parity) {
-    throw new Error("Installed Plugin snapshot is stale. Run npm run refresh:local before release smoke.");
+    throw new Error(
+      "Installed Plugin snapshot is stale. Run npm run refresh:local for same-generation discovery edits, " +
+      "or npm run release:local after a release/API-generation change."
+    );
   }
   const skills = installedSkills(parity.installed.snapshotRoot);
   const expectedSkills = [
@@ -194,6 +205,13 @@ export async function runReleaseSmoke(options = {}) {
   ];
   if (JSON.stringify(skills) !== JSON.stringify(expectedSkills)) {
     throw new Error(`Installed Plugin does not expose exactly seven canonical Skills: ${skills.join(", ")}.`);
+  }
+  const compatibilityShells = inspectCompatibilityShells({
+    snapshotRoot: parity.installed.snapshotRoot,
+    currentVersion: parity.installed.version,
+  });
+  if (!compatibilityShells.valid) {
+    throw new Error("Plugin compatibility shells are unbounded or do not delegate exclusively to the canonical checkout.");
   }
   const mcp = await (options.probeMcp ?? probeInstalledMcp)({
     snapshotRoot: parity.installed.snapshotRoot,
@@ -214,6 +232,7 @@ export async function runReleaseSmoke(options = {}) {
     skills,
     tools: mcp.tools,
     listAgents: { isolated: true, agentCount: mcp.agentCount },
+    compatibilityShells,
     paid: mcp.paid,
   };
 }

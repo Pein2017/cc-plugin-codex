@@ -22,7 +22,7 @@ function parseArguments(argv) {
     } else if (argument === "--help" || argument === "-h") {
       process.stdout.write(
         "Usage: npm run smoke:release -- [--json] [--workspace <path>] [--real-claude]\n" +
-        "Default is zero-model-cost. --real-claude explicitly adds one Haiku 4.5 low read-only turn.\n",
+        "Default is zero-model-cost. --real-claude explicitly adds one Haiku 4.5 low read-only Bash/pwd turn.\n",
       );
       process.exit(0);
     } else throw new Error(`Unknown option: ${argument}`);

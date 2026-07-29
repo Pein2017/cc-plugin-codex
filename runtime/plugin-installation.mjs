@@ -131,3 +131,50 @@ export function inspectInstalledPluginParity(options = {}) {
     parity: sourceMatches && versionMatches && contentMatches,
   };
 }
+
+export function inspectCompatibilityShells(options = {}) {
+  const currentSnapshot = path.resolve(options.snapshotRoot);
+  const currentVersion = options.currentVersion ?? path.basename(currentSnapshot);
+  const versionsRoot = path.dirname(currentSnapshot);
+  if (!fs.existsSync(versionsRoot)) {
+    return { versionsRoot, count: 0, limit: 2, bounded: true, valid: true, versions: [] };
+  }
+  const versions = fs.readdirSync(versionsRoot, { withFileTypes: true })
+    .filter((entry) => (
+      entry.isDirectory() &&
+      path.resolve(versionsRoot, entry.name) !== currentSnapshot &&
+      entry.name !== currentVersion
+    ))
+    .map((entry) => entry.name)
+    .sort();
+  const details = versions.map((version) => {
+    const root = path.join(versionsRoot, version);
+    const mcpFile = path.join(root, ".mcp.json");
+    const cachedRuntimeAbsent = !fs.existsSync(path.join(root, "runtime"));
+    let canonicalRoute = false;
+    try {
+      const descriptor = JSON.parse(fs.readFileSync(mcpFile, "utf8"))?.mcpServers?.cc_for_pein;
+      const absoluteRoute = (
+        descriptor?.cwd === SOURCE_ROOT &&
+        descriptor?.args?.[1] === path.join(SOURCE_ROOT, "plugins", PLUGIN_NAME, "bootstrap", "cc-mcp.mjs")
+      );
+      const legacyBootstrap = path.join(root, "bootstrap", "cc-mcp.mjs");
+      const legacyRoute = (
+        descriptor?.cwd === "." &&
+        descriptor?.args?.[1] === "bootstrap/cc-mcp.mjs" &&
+        fs.existsSync(legacyBootstrap) &&
+        fs.readFileSync(legacyBootstrap, "utf8").includes(`FIXED_RUNTIME_CHECKOUT = "${SOURCE_ROOT}"`)
+      );
+      canonicalRoute = absoluteRoute || legacyRoute;
+    } catch {}
+    return { version, cachedRuntimeAbsent, canonicalRoute };
+  });
+  return {
+    versionsRoot,
+    count: versions.length,
+    limit: 2,
+    bounded: versions.length <= 2,
+    valid: versions.length <= 2 && details.every((entry) => entry.cachedRuntimeAbsent && entry.canonicalRoute),
+    versions: details,
+  };
+}

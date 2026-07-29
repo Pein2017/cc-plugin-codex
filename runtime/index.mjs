@@ -6,6 +6,8 @@
  */
 import { createAgentRuntime } from "./agent-runtime.mjs";
 
+export { CC_MCP_API_GENERATION } from "./mcp-api.mjs";
+
 /**
  * @typedef {object} AgentRuntimeLifecycle
  * @property {(input: object) => Promise<object>} spawn_agent

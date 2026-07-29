@@ -96,6 +96,12 @@ describe("Agent progress projection", () => {
     });
 
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), {
+      message: "Timed out waiting for CC Agent activity.",
+      timedOut: true,
+    });
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 0);
+
+    assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true }), {
       message: "CC Agent progress is available.",
       timedOut: false,
       update: {
@@ -111,7 +117,7 @@ describe("Agent progress projection", () => {
         },
       },
     });
-    assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), {
+    assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true }), {
       message: "Timed out waiting for CC Agent activity.",
       timedOut: true,
     });
@@ -119,7 +125,7 @@ describe("Agent progress projection", () => {
 
   it("adaptively backs off routine progress while urgent phase changes reset delivery", async () => {
     const { runtime, workspace } = setup();
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.progress.revision, 3);
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 3);
     let job = readJobFile(workspace, "cc-progress");
     assert.equal(job.publicProgressDeliveryIntervalMs, 5_000);
 
@@ -133,14 +139,14 @@ describe("Agent progress projection", () => {
         updatedAt: "2026-07-26T00:00:04.000Z",
       },
     });
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).timedOut, true);
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).timedOut, true);
 
     job = readJobFile(workspace, "cc-progress");
     writeJobFile(workspace, "cc-progress", {
       ...job,
       publicProgressNextDeliveryAt: new Date(Date.now() - 1).toISOString(),
     });
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.progress.revision, 4);
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 4);
     job = readJobFile(workspace, "cc-progress");
     assert.equal(job.publicProgressDeliveryIntervalMs, 10_000);
 
@@ -154,7 +160,7 @@ describe("Agent progress projection", () => {
         updatedAt: "2026-07-26T00:00:05.000Z",
       },
     });
-    const urgent = await runtime.waitAgent({ timeout_ms: 0 });
+    const urgent = await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true });
     assert.equal(urgent.update.progress.activity, "retrying");
     assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveryIntervalMs, 5_000);
   });
@@ -167,10 +173,19 @@ describe("Agent progress projection", () => {
     );
   });
 
+  it("rejects a non-boolean progress wakeup before changing delivery state", async () => {
+    const { runtime, workspace } = setup();
+    await assert.rejects(
+      runtime.waitAgent({ timeout_ms: 0, wake_on_progress: "yes" }),
+      /wake_on_progress must be a boolean/
+    );
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 0);
+  });
+
   it("cancels only the current wait observation", async () => {
     const controller = new AbortController();
     const { runtime, workspace, agent } = setup({ abortSignal: controller.signal });
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.kind, "progress");
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.kind, "progress");
     const waiting = runtime.waitAgent({ timeout_ms: 60_000 });
     controller.abort();
     await assert.rejects(waiting, (error) => error?.name === "AbortError");
@@ -180,7 +195,7 @@ describe("Agent progress projection", () => {
 
   it("prioritizes a durable completion over pending progress", async () => {
     const { runtime, workspace, ownerRootId, agent } = setup();
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update.kind, "progress");
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.kind, "progress");
     writeJobFile(workspace, "cc-progress", {
       ...readJobFile(workspace, "cc-progress"),
       publicProgress: {
@@ -208,7 +223,7 @@ describe("Agent progress projection", () => {
       resultPointer: "cc-progress",
     });
 
-    const waited = await runtime.waitAgent({ timeout_ms: 0 });
+    const waited = await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true });
     assert.equal(waited.update.kind, "completion");
     assert.equal(waited.update.completion_message, "authoritative completion");
   });
@@ -216,8 +231,8 @@ describe("Agent progress projection", () => {
   it("atomically claims one progress revision across concurrent waits", async () => {
     const { runtime, workspace } = setup();
     const waits = await Promise.all([
-      runtime.waitAgent({ timeout_ms: 0 }),
-      runtime.waitAgent({ timeout_ms: 0 }),
+      runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true }),
+      runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true }),
     ]);
     assert.equal(waits.filter((receipt) => receipt.update?.kind === "progress").length, 1);
     assert.equal(waits.filter((receipt) => receipt.timedOut).length, 1);
@@ -230,7 +245,7 @@ describe("Agent progress projection", () => {
       ...readJobFile(workspace, "cc-progress"),
       publicProgressDeliveredRevision: 3,
     });
-    const waiting = runtime.waitAgent({ timeout_ms: 1_000 });
+    const waiting = runtime.waitAgent({ timeout_ms: 1_000, wake_on_progress: true });
     await new Promise((resolve) => setTimeout(resolve, 75));
     const lateAgent = runtime.store.createAgent({
       task_name: "late_progress",
@@ -299,8 +314,8 @@ describe("Agent progress projection", () => {
     });
 
     const receipts = await Promise.all([
-      runtime.waitAgent({ timeout_ms: 1_000 }),
-      runtime.waitAgent({ timeout_ms: 1_000 }),
+      runtime.waitAgent({ timeout_ms: 1_000, wake_on_progress: true }),
+      runtime.waitAgent({ timeout_ms: 1_000, wake_on_progress: true }),
     ]);
     assert.equal(receipts.filter((receipt) => receipt.update?.kind === "progress").length, 2);
     assert.deepEqual(

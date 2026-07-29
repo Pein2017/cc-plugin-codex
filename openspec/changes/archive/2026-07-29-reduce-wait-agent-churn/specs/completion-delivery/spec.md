@@ -1,0 +1,68 @@
+## MODIFIED Requirements
+
+### Requirement: Waiting is bounded and durable
+`wait_agent` SHALL first process valid `acknowledge_tokens` from a prior response, then report the oldest already-unread Agent-linked completion or wait for the next current-root Agent completion up to `timeout_ms`. It SHALL additionally observe safe progress activity only when the caller explicitly sets `wake_on_progress: true`. Every newly returned completion SHALL remain unread until its token is echoed in a later wait. Observation that finds no unread Agent-linked completion or only an already-frozen completion SHALL use the validated inbox snapshot without acquiring the persistence write lock or calling fsync. Reconciliation of an existing byte-equivalent normalized completion fact SHALL likewise return from the validated snapshot without acquiring the persistence write lock or calling fsync, regardless of whether the event has been delivered or acknowledged. Reconciliation of an already-published immutable or acknowledged completion and an already-recorded Agent projection SHALL likewise remain observation-only. A complete wait that times out after all relevant completion, acknowledgement, Agent-projection, and explicitly requested progress-delivery facts are settled SHALL acquire no persistence lock, call no fsync, and write no durable state. First delivery of an unfrozen completion SHALL lock, reread, and durably freeze its public payload before returning. A missing completion event or a genuinely different mutable completion fact SHALL retain lock-and-reread repair. `list_agents` SHALL not participate in completion or progress delivery.
+
+#### Scenario: List reports logical state
+- **WHEN** `list_agents` renders completed Agent state
+- **THEN** it returns `completed: null` without reading, returning, or acknowledging completion messages or progress updates
+
+#### Scenario: Repeated list observes an identical unread Agent completion
+- **WHEN** repeated `list_agents` calls reconcile a terminal Agent job whose deterministic unread and unfrozen completion event already contains the exact normalized fact and whose Agent projection is recorded
+- **THEN** each call returns the logical Agent state without acquiring a completion-inbox persistence lock, calling fsync, writing durable state, or changing completion delivery state
+
+#### Scenario: Repeated list observes identical quarantined legacy evidence
+- **WHEN** repeated `list_agents` calls encounter a retained terminal legacy job whose deterministic unowned completion event already contains the exact normalized fact
+- **THEN** each call leaves that quarantined event unchanged without acquiring its completion-inbox persistence lock, calling fsync, or writing durable state
+
+#### Scenario: Completion arrives during wait
+- **WHEN** any current-root Agent reaches a terminal state before the timeout
+- **THEN** wait returns one complete completion update and opaque token without same-call acknowledgement
+
+#### Scenario: Progress arrives during an opt-in wait
+- **WHEN** a current-root Agent publishes safe progress before any completion and before timeout while `wake_on_progress: true`
+- **THEN** wait returns one advisory progress update without changing completion acknowledgement state
+
+#### Scenario: Progress arrives during an ordinary wait
+- **WHEN** a current-root Agent publishes safe progress before any completion and before timeout while progress wakeup is omitted or false
+- **THEN** wait does not return or claim that progress and continues toward completion or timeout
+
+#### Scenario: Later wait acknowledges the prior update
+- **WHEN** a later wait echoes the valid token for the oldest returned completion update
+- **THEN** the cursor advances before returning or waiting for subsequent Agent activity
+
+#### Scenario: Partial acknowledgement races a frozen batch snapshot
+- **WHEN** a diagnostic multi-event snapshot is returned while another waiter has already acknowledged only its leading token prefix
+- **THEN** a later acknowledgement treats that already-acknowledged prefix idempotently and advances only the exact oldest unread Agent-linked suffix without skipping an event
+
+#### Scenario: Wait times out
+- **WHEN** no current-root Agent produces a completion or explicitly eligible progress update before the deadline
+- **THEN** wait returns a timeout receipt without changing Agent state or acknowledging future events
+
+#### Scenario: Existing inbox remains quiet
+- **WHEN** repeated wait polls find no unread Agent-linked completion in an existing validated inbox
+- **THEN** each observation returns no completion without acquiring the inbox write lock, calling fsync, or changing durable state
+
+#### Scenario: Settled terminal Agent remains quiet
+- **WHEN** a terminal Agent has no unread completion because its completion is acknowledged, its Agent projection marker is already recorded, and no explicitly requested progress remains eligible before timeout
+- **THEN** the complete wait call returns a timeout without acquiring a persistence lock, calling fsync, or writing durable state
+
+#### Scenario: Registry finalization outruns its job marker
+- **WHEN** recovery finds that the Agent registry already finalized a terminal job but that job lacks `agentProjectionReconciledAt`
+- **THEN** reconciliation repairs the missing marker once so normal retention can prune the detailed job before later settled waits become observation-only
+
+#### Scenario: Frozen completion is redelivered
+- **WHEN** an unread Agent-linked completion already has an immutable first-delivery payload
+- **THEN** wait returns the identical token and complete frozen payload from the validated snapshot without acquiring the inbox write lock or calling fsync
+
+#### Scenario: Completion requires first-delivery freezing
+- **WHEN** an unread Agent-linked completion has not been exposed before
+- **THEN** wait acquires the inbox lock, rereads current state, durably freezes the complete public payload, and returns the resulting token and payload
+
+#### Scenario: Missing completion requires repair
+- **WHEN** reconciliation finds a terminal Agent job whose deterministic completion event is absent
+- **THEN** it acquires the required persistence lock and durably appends the event before delivery
+
+#### Scenario: Mutable completion fact requires correction
+- **WHEN** reconciliation finds an existing unread and unfrozen completion event whose normalized durable fields differ from the current terminal job fact
+- **THEN** it acquires the completion-inbox lock, rereads the latest state, and durably corrects the event without changing its deterministic identity or sequence

@@ -25,7 +25,7 @@ function usage() {
     "  node runtime/cli.mjs spawn_agent --task-name <name> --model <haiku|sonnet|opus|fable> --write=<true|false> [options] <message>",
     "  node runtime/cli.mjs send_message <exact-target> <message>",
     "  node runtime/cli.mjs followup_task <exact-target> <message>",
-    "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
+    "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--wake-on-progress] [--acknowledge-tokens <csv>]",
     "  node runtime/cli.mjs interrupt_agent <exact-target>",
     "  node runtime/cli.mjs read_agent_messages <exact-target> [--before <message-id>] [--limit <1-20>]",
     "  node runtime/cli.mjs list_agents [--path-prefix </root/prefix>]",
@@ -152,12 +152,16 @@ async function waitAgent(argv) {
   rejectForbiddenPublicArgs(argv);
   const { options, positionals } = parse(argv, {
     valueOptions: ["timeout-ms", "acknowledge-tokens"],
+    booleanOptions: ["wake-on-progress"],
   });
   if (positionals.length > 0) {
     throw new Error("wait_agent is root-scoped and does not accept an Agent target.");
   }
   const receipt = await createClaudeRuntime(runtimeOptions(options)).wait_agent({
     timeout_ms: options["timeout-ms"],
+    wake_on_progress: Object.hasOwn(options, "wake-on-progress")
+      ? Boolean(options["wake-on-progress"])
+      : undefined,
     acknowledge_tokens: String(options["acknowledge-tokens"] ?? "")
       .split(",")
       .map((value) => value.trim())

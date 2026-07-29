@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, it } from "node:test";
@@ -11,6 +13,7 @@ import {
   CC_MCP_TOOL_NAMES,
   CODEX_SANDBOX_META_KEY,
   createCcMcpServer,
+  invokeIsolatedRuntimeOperation,
 } from "../../runtime/mcp-server.mjs";
 import { PACKAGE_VERSION } from "../../runtime/version.mjs";
 
@@ -34,8 +37,12 @@ async function inMemoryClient(runtimeFactory) {
 }
 
 const closers = [];
+const temporaryDirectories = [];
 afterEach(async () => {
   await Promise.allSettled(closers.splice(0).map((close) => close()));
+  while (temporaryDirectories.length > 0) {
+    fs.rmSync(temporaryDirectories.pop(), { recursive: true, force: true });
+  }
 });
 
 describe("typed CC MCP server", () => {
@@ -58,7 +65,53 @@ describe("typed CC MCP server", () => {
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "fork_turns"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
     assert.deepEqual(spawn.inputSchema.properties.delegation_mode.enum, ["leaf", "claude_orchestrator"]);
-    assert.match(spawn.inputSchema.properties.write.description, /Required[\s\S]*False[\s\S]*true enables/i);
+    assert.match(spawn.inputSchema.properties.write.description, /Required[\s\S]*False[\s\S]*true permits[\s\S]*full-access terminal parity/i);
+    const wait = listed.tools.find((tool) => tool.name === "wait_agent");
+    assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
+    assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
+    assert.match(wait.description, /completion[\s\S]*wake_on_progress[\s\S]*one intentional/i);
+  });
+
+  it("forwards an explicit one-shot progress wakeup without making it required", async () => {
+    const calls = [];
+    const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
+      calls.push({ name, input });
+      return { accepted: true };
+    }));
+    closers.push(() => client.close(), () => server.close());
+
+    await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
+    await client.callTool({
+      name: "wait_agent",
+      arguments: { wake_on_progress: true },
+      _meta: meta,
+    });
+
+    assert.deepEqual(calls, [
+      { name: "wait_agent", input: {} },
+      { name: "wait_agent", input: { wake_on_progress: true } },
+    ]);
+  });
+
+  it("preserves a compact send receipt without reconstructing internal evidence", async () => {
+    const receipt = {
+      agent_name: "/root/compact_send",
+      delivery: "dispatched_active",
+    };
+    const { client, server } = await inMemoryClient(() => runtimeMethods((name) => {
+      assert.equal(name, "send_message");
+      return receipt;
+    }));
+    closers.push(() => client.close(), () => server.close());
+
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: { target: "/root/compact_send", message: "private repeated text" },
+      _meta: meta,
+    });
+    assert.deepEqual(result.structuredContent, receipt);
+    assert.deepEqual(JSON.parse(result.content[0].text), receipt);
+    assert.equal(JSON.stringify(result).includes("private repeated text"), false);
   });
 
   it("requires spawn write intent and preserves explicit false and true without another switch", async () => {
@@ -201,11 +254,65 @@ describe("typed CC MCP server", () => {
     assert.equal(mutations, 0);
   });
 
+  it("loads compatible runtime implementation edits in a fresh worker on every call", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-mcp-hot-load-"));
+    temporaryDirectories.push(directory);
+    const runtimeFile = path.join(directory, "runtime.mjs");
+    const writeRuntime = (revision) => fs.writeFileSync(runtimeFile, `
+export const CC_MCP_API_GENERATION = 1;
+export function createClaudeRuntime() {
+  return { list_agents() { return { revision: ${JSON.stringify(revision)} }; } };
+}
+`);
+    const context = { cwd: root, envFile: path.join(root, "config", "runtime.env"), env: {} };
+    writeRuntime("first");
+    const first = await invokeIsolatedRuntimeOperation({
+      operation: "list_agents",
+      input: {},
+      context,
+      runtimeModuleUrl: pathToFileURL(runtimeFile),
+    });
+    writeRuntime("second");
+    const second = await invokeIsolatedRuntimeOperation({
+      operation: "list_agents",
+      input: {},
+      context,
+      runtimeModuleUrl: pathToFileURL(runtimeFile),
+    });
+    assert.deepEqual(first, { revision: "first" });
+    assert.deepEqual(second, { revision: "second" });
+  });
+
+  it("rejects a stale MCP generation before invoking the current runtime", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-mcp-generation-"));
+    temporaryDirectories.push(directory);
+    const marker = path.join(directory, "called");
+    const runtimeFile = path.join(directory, "runtime.mjs");
+    fs.writeFileSync(runtimeFile, `
+import fs from "node:fs";
+export const CC_MCP_API_GENERATION = 2;
+export function createClaudeRuntime() {
+  fs.writeFileSync(${JSON.stringify(marker)}, "called");
+  return { list_agents() { return {}; } };
+}
+`);
+    await assert.rejects(
+      invokeIsolatedRuntimeOperation({
+        operation: "list_agents",
+        input: {},
+        context: { cwd: root, envFile: path.join(root, "config", "runtime.env"), env: {} },
+        runtimeModuleUrl: pathToFileURL(runtimeFile),
+      }),
+      (error) => error?.code === "CC_MCP_RESTART_REQUIRED" && /release:local.*new Codex task/i.test(error.message),
+    );
+    assert.equal(fs.existsSync(marker), false);
+  });
+
   it("starts through the descriptor bootstrap and preserves stdio framing", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["--", "bootstrap/cc-mcp.mjs"],
-      cwd: pluginRoot,
+      args: ["--", path.join(pluginRoot, "bootstrap", "cc-mcp.mjs")],
+      cwd: root,
       stderr: "pipe",
     });
     const client = new Client({ name: "cc-mcp-stdio-test", version: "1.0.0" });

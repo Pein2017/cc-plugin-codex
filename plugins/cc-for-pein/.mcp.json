@@ -5,9 +5,9 @@
       "command": "node",
       "args": [
         "--",
-        "bootstrap/cc-mcp.mjs"
+        "/data/CoordExp/cc-plugin-codex/plugins/cc-for-pein/bootstrap/cc-mcp.mjs"
       ],
-      "cwd": ".",
+      "cwd": "/data/CoordExp/cc-plugin-codex",
       "required": true,
       "supports_parallel_tool_calls": true,
       "startup_timeout_sec": 30,

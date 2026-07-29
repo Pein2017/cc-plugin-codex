@@ -192,6 +192,7 @@ describe("operator doctor", () => {
     assert.equal(report.status, "pass");
     assert.equal(report.checks.find((check) => check.id === "checkout").details.packageVersion, PACKAGE_VERSION);
     assert.equal(report.checks.find((check) => check.id === "claude-auth").details.subscriptionType, "max");
+    assert.equal(report.checks.find((check) => check.id === "plugin-compatibility-shells").status, "pass");
     assert.doesNotMatch(JSON.stringify(report), new RegExp(secretEmail));
     assert.doesNotMatch(JSON.stringify(report), /private-org/);
     assert.equal(fs.existsSync(path.join(codexHome, "plugins", "data", "cc", "state")), false);

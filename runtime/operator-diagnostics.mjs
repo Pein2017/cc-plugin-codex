@@ -17,6 +17,7 @@ import {
 import { diagnoseClaudeCompatibility } from "./claude-version-compatibility.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import {
+  inspectCompatibilityShells,
   inspectInstalledPluginParity,
 } from "./plugin-installation.mjs";
 import { PACKAGE_VERSION, SOURCE_ROOT } from "./version.mjs";
@@ -407,10 +408,42 @@ export async function runDoctor(options = {}) {
         checkoutFiles: installation.checkoutFileCount,
         snapshotFiles: installation.snapshotFileCount,
       },
-      installation.parity ? null : "Run npm run refresh:local, then start a new Codex task.",
+      installation.parity
+        ? null
+        : "Run npm run refresh:local for same-generation discovery edits, or npm run release:local after a release/API-generation change; then start a new Codex task.",
     ));
   } catch (error) {
     checks.push(failedCheck("plugin-installation", error, "Run npm run install:local or npm run refresh:local."));
+  }
+
+  if (installation?.installed) {
+    try {
+      const shells = inspectCompatibilityShells({
+        snapshotRoot: installation.installed.snapshotRoot,
+        currentVersion: installation.installed.version,
+      });
+      checks.push(makeCheck(
+        "plugin-compatibility-shells",
+        shells.valid ? "pass" : "fail",
+        shells.valid
+          ? `${shells.count} retained discovery shell(s) are bounded and checkout-routed.`
+          : "Retained Plugin discovery shells are unbounded or contain an invalid runtime route.",
+        shells,
+        shells.valid ? null : "Run npm run release:local and inspect the local Plugin cache compatibility shells.",
+      ));
+    } catch (error) {
+      checks.push(failedCheck(
+        "plugin-compatibility-shells",
+        error,
+        "Run npm run release:local and inspect the local Plugin cache compatibility shells.",
+      ));
+    }
+  } else {
+    checks.push(makeCheck(
+      "plugin-compatibility-shells",
+      "fail",
+      "Compatibility-shell check skipped because the installed Plugin could not be resolved.",
+    ));
   }
 
   try {

@@ -1342,6 +1342,7 @@ class ClaudeRuntime {
     const acknowledgeTokens = Array.isArray(options.acknowledgeTokens)
       ? options.acknowledgeTokens
       : [];
+    const wakeOnProgress = options.wakeOnProgress === true;
     const resolveProgressJobIds = () => {
       const values = typeof options.progressJobIds === "function"
         ? options.progressJobIds()
@@ -1361,12 +1362,14 @@ class ClaudeRuntime {
       throwIfWaitAborted(signal);
       inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
       if (inbox.events.length > 0) break;
-      const progress = pendingPublicProgress(
-        this.cwd,
-        ownerRootId,
-        jobId,
-        resolveProgressJobIds()
-      );
+      const progress = wakeOnProgress
+        ? pendingPublicProgress(
+            this.cwd,
+            ownerRootId,
+            jobId,
+            resolveProgressJobIds()
+          )
+        : null;
       if (!progress) {
         job = jobId ? this.status(jobId) : null;
         if ((job && !ACTIVE_JOB_STATUSES.has(job.status)) || Date.now() >= deadline) break;

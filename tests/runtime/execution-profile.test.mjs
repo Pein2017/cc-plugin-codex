@@ -44,7 +44,7 @@ describe("execution profiles", () => {
         model: "claude-sonnet-5",
         effort: undefined,
         delegationMode: "leaf",
-        dangerouslySkipPermissions: false,
+        dangerouslySkipPermissions: true,
       },
     );
     assert.equal(
@@ -57,7 +57,7 @@ describe("execution profiles", () => {
     );
   });
 
-  it("binds terminal-parity bypass to write intent while keeping model and effort explicit", () => {
+  it("always applies terminal-parity bypass while keeping model and effort explicit", () => {
     const profile = createExecutionProfile({
       model: "sonnet",
       write: true,
@@ -92,8 +92,13 @@ describe("execution profiles", () => {
     });
     assert.equal(haiku.claudeOptions.model, "claude-haiku-4-5");
     assert.equal(haiku.claudeOptions.effort, undefined);
-    assert.equal(haiku.claudeOptions.dangerouslySkipPermissions, undefined);
-    assert.deepEqual(haiku.receipt.addedOverrides, ["model", "appendSystemPrompt", "disallowedTools"]);
+    assert.equal(haiku.claudeOptions.dangerouslySkipPermissions, true);
+    assert.deepEqual(haiku.receipt.addedOverrides, [
+      "model",
+      "appendSystemPrompt",
+      "disallowedTools",
+      "dangerouslySkipPermissions",
+    ]);
 
     const explicitLowHaiku = createExecutionProfile({
       profile: "terminal-parity",
@@ -104,7 +109,7 @@ describe("execution profiles", () => {
     assert.equal(explicitLowHaiku.claudeOptions.effort, "low");
     assert.deepEqual(
       explicitLowHaiku.receipt.addedOverrides,
-      ["model", "appendSystemPrompt", "disallowedTools", "effort"],
+      ["model", "appendSystemPrompt", "disallowedTools", "dangerouslySkipPermissions", "effort"],
     );
 
     const fable = createExecutionProfile({ profile: "safe", model: "fable", env: {} });
@@ -124,6 +129,7 @@ describe("execution profiles", () => {
     assert.deepEqual(profile.receipt.addedOverrides.sort(), [
       "allowedTools",
       "appendSystemPrompt",
+      "dangerouslySkipPermissions",
       "disallowedTools",
       "model",
     ]);
@@ -162,14 +168,13 @@ describe("execution profiles", () => {
       }),
       /safe must remain sandboxed/
     );
-    assert.throws(
-      () => createExecutionProfile({
-        profile: "terminal-parity",
-        model: "opus",
-        dangerouslySkipPermissions: true,
-      }),
-      /requires explicit write access/
-    );
+    const explicitReadBypass = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "opus",
+      dangerouslySkipPermissions: true,
+    });
+    assert.equal(explicitReadBypass.claudeOptions.dangerouslySkipPermissions, true);
+    assert.match(explicitReadBypass.claudeOptions.appendSystemPrompt, /read and review only/i);
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
@@ -203,7 +208,18 @@ describe("execution profiles", () => {
     });
     assert.match(leaf.claudeOptions.appendSystemPrompt, /Codex lead/i);
     assert.match(leaf.claudeOptions.appendSystemPrompt, /leaf Agent/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /read and review only/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /full Claude CLI permissions/i);
     assert.deepEqual(leaf.claudeOptions.disallowedTools, ["Agent"]);
+
+    const writingLeaf = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "sonnet",
+      write: true,
+      env: {},
+    });
+    assert.match(writingLeaf.claudeOptions.appendSystemPrompt, /task-scoped workspace mutation/i);
+    assert.doesNotMatch(writingLeaf.claudeOptions.appendSystemPrompt, /read and review only/i);
 
     for (const tool of ["Agent", "Agent(explore)", "Agent(plan, explore)"]) {
       assert.throws(

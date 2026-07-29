@@ -24,4 +24,11 @@ discovery/startup failure instead of silently running a shell fallback.
   it.
 - A blocked Agent rejects the message with its continuation evidence rather
   than queueing work that cannot run.
-- Present the delivery receipt exactly as returned.
+- A successful receipt contains only `agent_name` and `delivery`. Present it as
+  one concise disposition-aware sentence; never print
+  raw JSON or repeat the sent message unless the user explicitly requests
+  debug detail.
+- For `dispatched_active`, confirm that the message was sent. For
+  `activation_pending`, confirm that it was durably accepted by the pending
+  activation. For `queued_no_turn`, say that it was queued and that
+  `$cc-for-pein:followup-task` is required to activate the idle Agent.

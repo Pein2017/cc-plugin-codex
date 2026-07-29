@@ -585,7 +585,10 @@ describe("Agent durable launch boundary", () => {
 
     const sent = runtime.sendMessage({ target: agent.agentId, message: "keep this pending input" });
     assert.equal(sent.delivery, "activation_pending");
-    runtime.store.markMessageDispatched(agent.agentId, sent.message.messageId, {
+    const storedMessage = runtime.store.listMessages(agent.agentId)
+      .find((message) => message.text === "keep this pending input");
+    assert.ok(storedMessage);
+    runtime.store.markMessageDispatched(agent.agentId, storedMessage.messageId, {
       jobId: prepared.jobId,
       receipt: { delivery: "stale_prelaunch_receipt", steeringSequence: 1 },
     });
