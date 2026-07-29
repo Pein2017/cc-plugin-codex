@@ -29,6 +29,7 @@ const LOCK_RETRY_MS = 10;
 const FINALIZED_JOB_ID_LIMIT = 128;
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const AGENT_STATUSES = new Set(["pending_init", "running", "completed", "interrupted", "errored"]);
+const DELEGATION_MODES = new Set(["leaf", "claude_orchestrator"]);
 const CONTINUATION_MODES = new Set(["exact_session", "safe_fresh", "blocked"]);
 const MESSAGE_STATES = new Set(["queued", "assigned", "dispatched", "acknowledged"]);
 
@@ -327,6 +328,9 @@ function validateAgent(agent, rootThreadId, workspaceRoot) {
   if (agent.activeJobId != null) assertText(agent.activeJobId, "Agent active job ID");
   if (agent.latestJobId != null) assertText(agent.latestJobId, "Agent latest job ID");
   if (agent.selectedModel != null) assertText(agent.selectedModel, "Agent selected model");
+  if (!DELEGATION_MODES.has(agent.delegationMode)) {
+    throw new Error(`Invalid Agent delegation mode: ${agent.delegationMode}.`);
+  }
   if (agent.finalizedJobIds != null) {
     if (!Array.isArray(agent.finalizedJobIds) || agent.finalizedJobIds.length > FINALIZED_JOB_ID_LIMIT) {
       throw new Error("Agent finalized job IDs must be a bounded array.");
@@ -367,11 +371,17 @@ function validateRegistry(registry, rootThreadId, workspaceRoot, directory) {
     throw new Error("Agent registry name index is invalid.");
   }
   const expectedNames = {};
+  const normalizedAgents = {};
   for (const [agentId, agent] of Object.entries(registry.agents)) {
     if (agentId !== agent.agentId) throw new Error("Agent registry ID index is invalid.");
-    validateAgent(agent, root, workspaceRoot);
-    if (expectedNames[agent.normalizedName]) throw new Error("Agent registry contains duplicate normalized names.");
-    expectedNames[agent.normalizedName] = agentId;
+    const normalizedAgent = {
+      ...agent,
+      delegationMode: agent.delegationMode ?? "leaf",
+    };
+    validateAgent(normalizedAgent, root, workspaceRoot);
+    if (expectedNames[normalizedAgent.normalizedName]) throw new Error("Agent registry contains duplicate normalized names.");
+    expectedNames[normalizedAgent.normalizedName] = agentId;
+    normalizedAgents[agentId] = normalizedAgent;
   }
   if (JSON.stringify(Object.keys(expectedNames).sort()) !== JSON.stringify(Object.keys(registry.nameIndex).sort())) {
     throw new Error("Agent registry name index does not match records.");
@@ -379,7 +389,11 @@ function validateRegistry(registry, rootThreadId, workspaceRoot, directory) {
   for (const [name, agentId] of Object.entries(registry.nameIndex)) {
     if (expectedNames[name] !== agentId) throw new Error("Agent registry name index entry is invalid.");
   }
-  return { ...registry, protection: registry.protection ?? protection(directory) };
+  return {
+    ...registry,
+    agents: normalizedAgents,
+    protection: registry.protection ?? protection(directory),
+  };
 }
 
 function sessionKey(configDir, sessionId) {
@@ -451,6 +465,7 @@ function publicAgent(agent) {
     name: agent.name,
     description: agent.description,
     selectedModel: agent.selectedModel ?? null,
+    delegationMode: agent.delegationMode ?? "leaf",
     rootThreadId: agent.rootThreadId,
     workspaceRoot: agent.workspaceRoot,
     activeJobId: agent.activeJobId,
@@ -522,6 +537,7 @@ function recordFromInput(input, rootThreadId, workspaceRoot) {
     selectedModel: input?.selectedModel == null
       ? null
       : assertText(input.selectedModel, "Agent selected model"),
+    delegationMode: input?.delegationMode ?? "leaf",
     activeJobId: null,
     latestJobId: null,
     claudeSessionId: null,
@@ -602,6 +618,7 @@ function redactedAgent(agent) {
     name: agent.name,
     rootHash: rootHash(agent.rootThreadId),
     status: agent.status,
+    delegationMode: agent.delegationMode ?? "leaf",
     activeJobId: agent.activeJobId,
     latestJobId: agent.latestJobId,
     continuation: { mode: agent.continuation.mode },
@@ -698,7 +715,16 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
       if (!next || typeof next !== "object" || Array.isArray(next)) {
         throw new Error("Agent updater must return an Agent record.");
       }
-      const immutable = ["agentId", "rootThreadId", "workspaceRoot", "name", "normalizedName", "path", "createdAt"];
+      const immutable = [
+        "agentId",
+        "rootThreadId",
+        "workspaceRoot",
+        "name",
+        "normalizedName",
+        "path",
+        "delegationMode",
+        "createdAt",
+      ];
       for (const key of immutable) {
         if (next[key] !== current[key]) throw new Error(`Agent updater must not change immutable field ${key}.`);
       }

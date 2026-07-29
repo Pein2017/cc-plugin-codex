@@ -49,6 +49,19 @@ function terminalJob(agent, id, overrides = {}) {
   };
 }
 
+function findRegistryFile(root) {
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(candidate);
+      if (entry.isFile() && entry.name === "registry.json") return candidate;
+    }
+  }
+  throw new Error("Agent registry fixture was not created.");
+}
+
 const storeUrl = new URL("../../runtime/agent-store.mjs", import.meta.url).href;
 
 function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, target, start, count) {
@@ -91,6 +104,35 @@ describe("Agent durable store", () => {
     assert.deepEqual(store.listAgents().map((agent) => agent.agentId), [created.agentId]);
     assert.equal(store.listAllAgents().length, 2);
     assert.ok(store.listAllAgents().every((agent) => agent.rootHash && agent.claudeSessionId === undefined));
+  });
+
+  it("persists immutable delegation mode and normalizes legacy records to leaf", () => {
+    const { workspace, ownerRootId, claudeConfigDir, store } = setup();
+    const orchestrator = store.createAgent({
+      task_name: "fable_orchestrator",
+      selectedModel: "claude-fable-5",
+      delegationMode: "claude_orchestrator",
+    });
+    assert.equal(orchestrator.delegationMode, "claude_orchestrator");
+    assert.throws(
+      () => store.updateAgent(orchestrator.agentId, (current) => ({
+        ...current,
+        delegationMode: "leaf",
+      })),
+      /immutable field delegationMode/,
+    );
+
+    const legacy = store.createAgent({ task_name: "legacy_leaf" });
+    const registryFile = findRegistryFile(process.env.CC_RUNTIME_HOME);
+    const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    delete registry.agents[legacy.agentId].delegationMode;
+    fs.writeFileSync(registryFile, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+
+    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    assert.equal(restarted.resolveTarget(legacy.agentId).delegationMode, "leaf");
+    restarted.updateAgent(legacy.agentId, (current) => ({ ...current, status: "completed" }));
+    const normalized = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    assert.equal(normalized.agents[legacy.agentId].delegationMode, "leaf");
   });
 
   it("uses exact ID, path, or normalized-name targeting and reserves one active turn", () => {

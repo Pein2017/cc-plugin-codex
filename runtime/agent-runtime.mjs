@@ -67,13 +67,13 @@ function internalOptions(input, fallback = {}) {
   const requestedModel = input.model ?? fallback.model;
   return {
     write: input.write ?? fallback.write,
-    profile: input.execution_profile ?? fallback.profile,
+    profile: fallback.profile ?? "terminal-parity",
     model: requestedModel,
     effort: input.reasoning_effort ?? fallback.effort,
-    permissionMode: input.permission_mode ?? fallback.permissionMode,
-    dangerouslySkipPermissions:
-      input.dangerously_skip_permissions ?? fallback.dangerouslySkipPermissions,
+    permissionMode: fallback.permissionMode,
+    dangerouslySkipPermissions: fallback.dangerouslySkipPermissions,
     allowedTools: normalizeAllowedTools(input.allowed_tools ?? fallback.allowedTools),
+    delegationMode: input.delegation_mode ?? fallback.delegationMode,
   };
 }
 
@@ -85,6 +85,7 @@ function validatedInternalOptions(input, fallback = {}) {
     profile: validated.name,
     model: validated.model,
     effort: validated.effort,
+    delegationMode: validated.delegationMode,
     dangerouslySkipPermissions: validated.dangerouslySkipPermissions,
   };
 }
@@ -252,29 +253,41 @@ function observedModelFromClaudeArtifact(claudeConfigDir, sessionId, artifacts =
 function canonicalAgentStatus(agent) {
   switch (agent.status) {
     case "pending_init":
+      return "starting";
     case "running":
+      return "working";
     case "interrupted":
-      return agent.status;
+      return "interrupted";
     case "completed":
-      return { completed: null };
+      return "completed";
     case "errored":
-      return { errored: "Claude Agent execution failed." };
+      return "failed";
     default:
-      return { errored: "Claude Agent entered an unknown lifecycle state." };
+      return "failed";
   }
 }
 
 function canonicalFrozenAgentStatus(status) {
   switch (status) {
     case "completed":
-      return { completed: null };
+      return "completed";
     case "interrupted":
       return "interrupted";
     case "errored":
-      return { errored: "Claude Agent execution failed." };
+      return "failed";
     default:
-      return { errored: "Claude Agent entered an unknown terminal state." };
+      return "failed";
   }
+}
+
+function publicAgentReceipt(agent) {
+  return {
+    agentId: agent.agentId,
+    path: agent.path,
+    selectedModel: agent.selectedModel,
+    delegationMode: agent.delegationMode,
+    status: canonicalAgentStatus(agent),
+  };
 }
 
 function publicCompletionUpdate(summary, agents) {
@@ -297,7 +310,7 @@ function publicProgressUpdate(update, agents) {
   return {
     kind: "progress",
     agent_name: agent?.path ?? update.agentId,
-    agent_status: agent ? canonicalAgentStatus(agent) : { errored: "Claude Agent record is unavailable." },
+    agent_status: agent ? canonicalAgentStatus(agent) : "failed",
     progress: {
       revision: update.progress.revision,
       activity: update.progress.activity,
@@ -748,7 +761,17 @@ class AgentRuntime {
 
   async spawnAgent(inputValue) {
     const input = assertObject(inputValue, "spawn_agent input");
-    for (const key of ["agent_type", "service_tier", "session_id", "claude_session_id", "resume_session_id"]) {
+    for (const key of [
+      "agent_type",
+      "service_tier",
+      "session_id",
+      "claude_session_id",
+      "resume_session_id",
+      "fork_turns",
+      "execution_profile",
+      "permission_mode",
+      "dangerously_skip_permissions",
+    ]) {
       if (input[key] != null) throw new Error(`spawn_agent does not support ${key}.`);
     }
     const taskName = assertText(input.task_name, "spawn_agent task_name");
@@ -756,14 +779,20 @@ class AgentRuntime {
       throw new Error("spawn_agent task_name must match [a-z0-9_]+.");
     }
     const message = assertText(input.message, "spawn_agent message");
-    if (input.fork_turns !== "none") {
-      throw new Error(
-        "spawn_agent requires fork_turns=none; Codex context inheritance cannot be reproduced as a native Claude session."
-      );
+    if (typeof input.write !== "boolean") {
+      throw new Error("spawn_agent requires explicit boolean write intent.");
     }
     // Validate the caller-owned model decision before readiness checks or any
     // durable Agent reservation. There is no implicit or fallback model.
     const requestedModel = requiredSpawnModel(input);
+    if (
+      input.delegation_mode === "claude_orchestrator" &&
+      requestedModel !== "claude-fable-5"
+    ) {
+      throw new Error(
+        "claude_orchestrator delegation requires exact model claude-fable-5."
+      );
+    }
     const executionOptions = validatedInternalOptions({ ...input, model: requestedModel });
     const model = executionOptions.model;
 
@@ -775,6 +804,7 @@ class AgentRuntime {
       task_name: taskName,
       description: input.description,
       selectedModel: model,
+      delegationMode: executionOptions.delegationMode,
       initialMessage: message,
     });
     const initialMessage = this.store.listMessages(agent.agentId)[0];
@@ -813,7 +843,7 @@ class AgentRuntime {
       const turn = await this.jobs.launchPreparedStart(attached, messageText(assigned));
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
       return {
-        agent: this.store.resolveTarget(agent.agentId),
+        agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
         turn,
         topology: "flat",
         residency: "ephemeral_turn",
@@ -881,7 +911,7 @@ class AgentRuntime {
       ? this.deliverAssignedMessage(queued.agent, queued.message)
       : { delivered: false, reason: "queued_no_turn" };
     return {
-      agent: this.store.resolveTarget(agent.agentId),
+      agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
       message: queued.message,
       delivery: delivery.delivered
         ? "dispatched_active"
@@ -931,6 +961,15 @@ class AgentRuntime {
     if (input.model != null) {
       throw new Error("followup_task inherits the Agent's selected model and does not accept a model override.");
     }
+    for (const key of [
+      "delegation_mode",
+      "fork_turns",
+      "execution_profile",
+      "permission_mode",
+      "dangerously_skip_permissions",
+    ]) {
+      if (input[key] != null) throw new Error(`followup_task does not support ${key}.`);
+    }
     // Resolve and validate against a read-only snapshot before reconciliation:
     // invalid caller options must not repair an unrelated terminal receipt,
     // publish completion, or otherwise mutate durable state before rejection.
@@ -949,6 +988,7 @@ class AgentRuntime {
     const executionOptions = validatedInternalOptions(input, {
       ...(validationLatestJob?.request ?? {}),
       model: validationLatestJob?.request?.model ?? agent.selectedModel,
+      delegationMode: agent.delegationMode,
     });
     this.reconcile();
     agent = this.store.resolveTarget(agent.agentId);
@@ -970,7 +1010,7 @@ class AgentRuntime {
       const delivery = await this.waitForAssignedDelivery(agent, queued.message);
       if (delivery.delivered) {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "dispatched_active",
           turn: { jobId: delivery.jobId, steeringSequence: delivery.steeringSequence },
@@ -978,7 +1018,7 @@ class AgentRuntime {
       }
       if (delivery.reason === "activation_pending") {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "activation_pending",
           turn: { jobId: delivery.jobId, steeringSequence: null },
@@ -986,7 +1026,7 @@ class AgentRuntime {
       }
       if (delivery.reason === "initial_prompt") {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "already_active_initial_prompt",
           turn: { jobId: delivery.jobId, steeringSequence: null },
@@ -1040,7 +1080,7 @@ class AgentRuntime {
         );
       if (message?.deliveryIntent === "initial_prompt") {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "already_active_initial_prompt",
           turn: { jobId: latest.activeJobId, steeringSequence: null },
@@ -1048,7 +1088,7 @@ class AgentRuntime {
       }
       if (message?.state === "dispatched" || message?.state === "acknowledged") {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "already_active_dispatched",
           turn: {
@@ -1062,7 +1102,7 @@ class AgentRuntime {
         : { delivered: false };
       if (delivery.delivered) {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "dispatched_active",
           turn: { jobId: delivery.jobId, steeringSequence: delivery.steeringSequence },
@@ -1070,7 +1110,7 @@ class AgentRuntime {
       }
       if (delivery.reason === "activation_pending") {
         return {
-          agent: this.store.resolveTarget(agent.agentId),
+          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
           activated: false,
           delivery: "activation_pending",
           turn: { jobId: delivery.jobId, steeringSequence: null },
@@ -1092,7 +1132,7 @@ class AgentRuntime {
       const turn = await this.jobs.launchPreparedStart(attached, prompt);
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
       return {
-        agent: this.store.resolveTarget(agent.agentId),
+        agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
         activated: true,
         delivery: "new_turn",
         turn,
@@ -1159,12 +1199,17 @@ class AgentRuntime {
     this.reconcile();
     const agent = this.store.resolveTarget(assertText(input.target, "interrupt_agent target"));
     if (!agent.activeJobId) {
-      return { agent, interrupted: false, status: "no_active_turn", turn: null };
+      return {
+        agent: publicAgentReceipt(agent),
+        interrupted: false,
+        status: "no_active_turn",
+        turn: null,
+      };
     }
     const turn = await this.jobs.interrupt(agent.activeJobId);
     const reconciliation = this.reconcile();
     return {
-      agent: this.store.resolveTarget(agent.agentId),
+      agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
       interrupted: turn.interrupted,
       status: turn.status,
       turn,
@@ -1206,6 +1251,7 @@ class AgentRuntime {
     const agents = this.store.listAgents({ pathPrefix: optionalText(input.path_prefix) }).map((agent) => ({
       agent_name: agent.path,
       agent_status: canonicalAgentStatus(agent),
+      delegation_mode: agent.delegationMode,
     }));
     return {
       agents,

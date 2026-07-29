@@ -1,7 +1,7 @@
 {
   "name": "cc-for-pein",
-  "version": "0.4.0+codex.20260728124337",
-  "description": "Experimental checkout-owned Claude Code Agent runtime with durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
+  "version": "0.5.0+codex.20260729075555",
+  "description": "Experimental checkout-owned Claude Code Agent runtime with bounded leaf/Fable delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",
     "email": "852128461@qq.com",
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "CC for Pein",
     "shortDescription": "Experimental durable local Claude Agents for Codex",
-    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with durable messages, bounded progress, complete completion delivery, recent native message history, interruption, exact-session continuation, and terminal-parity execution.",
+    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with bounded leaf/Fable delegation, durable messages, bounded progress, complete completion delivery, recent native message history, interruption, exact-session continuation, and terminal-parity execution.",
     "developerName": "Pein",
     "category": "Coding",
     "capabilities": [

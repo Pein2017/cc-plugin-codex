@@ -12,6 +12,7 @@ import {
   CODEX_SANDBOX_META_KEY,
   createCcMcpServer,
 } from "../../runtime/mcp-server.mjs";
+import { PACKAGE_VERSION } from "../../runtime/version.mjs";
 
 const root = path.resolve(new URL("../../", import.meta.url).pathname);
 const pluginRoot = path.join(root, "plugins", "cc-for-pein");
@@ -42,6 +43,7 @@ describe("typed CC MCP server", () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const listed = await client.listTools();
+    assert.equal(client.getServerVersion()?.version, PACKAGE_VERSION);
     assert.deepEqual(listed.tools.map((tool) => tool.name), CC_MCP_TOOL_NAMES);
     for (const tool of listed.tools) assert.equal(tool.inputSchema.additionalProperties, false);
     const listAgents = listed.tools.find((tool) => tool.name === "list_agents");
@@ -52,10 +54,14 @@ describe("typed CC MCP server", () => {
       openWorldHint: false,
     });
     const spawn = listed.tools.find((tool) => tool.name === "spawn_agent");
-    assert.match(spawn.inputSchema.properties.write.description, /False or omitted[\s\S]*true enables/i);
+    assert.deepEqual(new Set(spawn.inputSchema.required), new Set(["task_name", "message", "model", "write"]));
+    assert.equal(Object.hasOwn(spawn.inputSchema.properties, "fork_turns"), false);
+    assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
+    assert.deepEqual(spawn.inputSchema.properties.delegation_mode.enum, ["leaf", "claude_orchestrator"]);
+    assert.match(spawn.inputSchema.properties.write.description, /Required[\s\S]*False[\s\S]*true enables/i);
   });
 
-  it("preserves false, omitted, and true write intent without adding another MCP switch", async () => {
+  it("requires spawn write intent and preserves explicit false and true without another switch", async () => {
     const calls = [];
     const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
       calls.push({ name, input });
@@ -66,10 +72,10 @@ describe("typed CC MCP server", () => {
     const base = {
       task_name: "permission_probe",
       message: "inspect only",
-      fork_turns: "none",
       model: "claude-haiku-4-5",
     };
-    await client.callTool({ name: "spawn_agent", arguments: base, _meta: meta });
+    const omitted = await client.callTool({ name: "spawn_agent", arguments: base, _meta: meta });
+    assert.equal(omitted.isError, true);
     await client.callTool({
       name: "spawn_agent",
       arguments: { ...base, task_name: "permission_read", write: false },
@@ -81,9 +87,9 @@ describe("typed CC MCP server", () => {
       _meta: meta,
     });
 
-    assert.equal(Object.hasOwn(calls[0].input, "write"), false);
-    assert.equal(calls[1].input.write, false);
-    assert.equal(calls[2].input.write, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].input.write, false);
+    assert.equal(calls[1].input.write, true);
     for (const call of calls) {
       assert.equal(Object.hasOwn(call.input, "dangerously_skip_permissions"), false);
       assert.equal(Object.hasOwn(call.input, "permission_mode"), false);
@@ -129,13 +135,26 @@ describe("typed CC MCP server", () => {
     assert.equal(missing.isError, true);
     assert.match(missing.content[0].text, /missing _meta\.threadId/);
 
+    const staleWorkspace = await client.callTool({
+      name: "list_agents",
+      arguments: {},
+      _meta: {
+        threadId: "mcp-stale-workspace-thread",
+        [CODEX_SANDBOX_META_KEY]: {
+          sandboxCwd: pathToFileURL(path.join(root, ".missing-cc-workspace-for-test")).href,
+        },
+      },
+    });
+    assert.equal(staleWorkspace.isError, true);
+    assert.match(staleWorkspace.content[0].text, /trusted.*workspace.*(?:unavailable|no longer exists)/i);
+
     const forbidden = await client.callTool({
       name: "spawn_agent",
       arguments: {
         task_name: "audit",
         message: "read only",
-        fork_turns: "none",
         model: "claude-haiku-4-5",
+        write: false,
         cwd: "/tmp",
       },
       _meta: meta,

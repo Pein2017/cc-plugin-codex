@@ -11,7 +11,7 @@ plugins, skills, MCP configuration, sessions, and tool execution.
 > that needs a child result must keep the join obligation inside its active
 > turn.
 
-Version 0.4 makes a named Agent—not an internal job ID—the public object. A
+Version 0.5 makes a named Agent—not an internal job ID—the public object. A
 Claude turn is temporary. An Agent has a stable root-scoped identity, a native
 Claude session pointer when safe, a durable message queue, and nonresident
 history after its worker exits.
@@ -35,9 +35,9 @@ The Plugin exposes one stdio MCP server named `cc_for_pein`. Its seven typed
 tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 
 ```text
-spawn_agent({ task_name, message, fork_turns: "none", model, write, description?, reasoning_effort?, execution_profile? })
+spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, allowed_tools?, delegation_mode? })
 send_message({ target, message })
-followup_task({ target, message, write?, reasoning_effort?, execution_profile? })
+followup_task({ target, message, write?, reasoning_effort?, allowed_tools? })
 wait_agent({ timeout_ms?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
@@ -71,7 +71,7 @@ $cc-for-pein:list-agents
 
 Successful `spawn-agent` calls report one concise sentence with the selected
 model, its role/tier, stable Agent path, and current status—never final Claude
-text or raw JSON. `list-agents` reports only canonical name/status records.
+text or raw JSON. `list-agents` reports only canonical name/status/delegation-mode records.
 `wait-agent` reports at most one update: either coalesced safe progress or an
 acknowledgement-bearing completion with the complete stored Claude final message
 for parent synthesis. `read-agent-messages` retrieves recent outer-assistant
@@ -94,6 +94,15 @@ ID; there is no implicit model or fallback, and partial IDs are rejected. All fo
 arguments, and `x-high` maps to `xhigh`. Older model IDs, dated backend snapshot
 IDs, and other Claude models fail before Claude launches. Follow-up turns
 inherit the Agent's selected model.
+
+Every Agent defaults to immutable `delegation_mode: "leaf"`. The runtime
+appends a bounded Codex-lead role envelope and denies Claude Code's native
+`Agent` tool for leaf turns. Only exact `claude-fable-5` with explicit
+`delegation_mode: "claude_orchestrator"` may use Claude-native subagents. Those
+children remain opaque inside the Fable session; the CC registry stays flat,
+and the Fable parent must join one child generation and return one
+self-contained synthesis. Haiku, Sonnet, Opus, and ordinary Fable turns remain
+leaves. Public follow-ups inherit the mode and cannot change it.
 
 An explicit Claude subscription, usage, weekly/monthly allowance, credit, or
 quota exhaustion ends subsequent real CC tests in that workflow. The runtime
@@ -137,10 +146,10 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.4 |
+| Surface | Codex Multi-Agent V2 | CC for Pein v0.5 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | The same six lifecycle names plus the `read_agent_messages` native-history extension, exposed as namespaced hyphenated skills |
-| Spawn | `task_name`, `message`, `fork_turns` | Same core fields; only `fork_turns=none` is supported because Codex context cannot safely become Claude history |
+| Spawn | `task_name`, `message`, `fork_turns` | `task_name`, self-contained `message`, exact `model`, and explicit `write`; the runtime never inherits Codex turns |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
 | Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, with one safe progress milestone or the complete durable final message in the wait receipt |
@@ -161,10 +170,10 @@ allowed only when the user requests background execution and the result is not
 needed in the current answer. Quiet wait timeouts are not failures and should
 not trigger repetitive narration or `list_agents` polling.
 
-`fork_turns=all`, positive fork counts, `agent_type`, Codex service-tier
-routing, and Claude session adoption fail explicitly rather than being ignored
-or injected into a prompt. Direct Terminal-session adoption is deferred to a
-future OpenSpec change.
+Public fork/profile selectors, `agent_type`, Codex service-tier routing, and
+Claude session adoption fail explicitly rather than being ignored or injected
+into a prompt. Direct Terminal-session adoption is deferred to a future
+OpenSpec change.
 
 There is no public `cancel`, `cancel_job`, archive, close, delete-history, or
 Agent deletion operation. `interrupt_agent` stops only the current turn. A
@@ -271,6 +280,58 @@ Inspect the current evidence without a model call with:
 node plugins/cc-for-pein/bootstrap/cc-runtime.mjs readiness
 ```
 
+## Operator doctor and release smoke
+
+Run the unified operator doctor after a Codex or Claude Code update, after a
+local Plugin refresh, or when MCP discovery behaves unexpectedly:
+
+```bash
+npm run doctor
+npm run doctor -- --json
+```
+
+Doctor is zero-model-cost and not exposed as a Skill or MCP tool. It checks the
+canonical checkout and installed snapshot, production Node dependencies,
+Claude CLI version/static compatibility and login, the fixed Claude config and
+9090 proxy envelope, exactly seven MCP tools, and aggregate local storage. Its
+output is redacted: it never reports account email, organization IDs, tokens,
+proxy credentials, arbitrary environment values, prompts, messages, or session
+contents. A required failure exits nonzero with a recovery command.
+
+Storage diagnosis is read-only and dry-run only. It counts Agent registry and
+status records, jobs, completion inbox events, runtime files, and native Claude
+JSONL history. Conservative Plugin cleanup candidates are limited to stale
+reservation/atomic-temp files and safe terminal receipts beyond the existing
+newest-100-per-owner retention boundary. It never reconciles or acknowledges
+lifecycle state, and it never treats anything under `CLAUDE_CONFIG_DIR` as a
+Plugin cleanup candidate. Claude history older than 30 days is an observation,
+not deletion authority.
+
+The default release smoke also costs no Claude model usage:
+
+```bash
+npm run smoke:release
+npm run smoke:release -- --json
+```
+
+It resolves the enabled `cc-for-pein@pein-local` installation, requires an exact
+checkout/snapshot match, discovers exactly seven installed Skills, launches the
+installed descriptor bootstrap, lists exactly seven MCP tools, and calls
+`list_agents` with a synthetic root and temporary runtime home. This exercises
+the fresh host-load and protocol boundaries used by a new Codex task without
+claiming to run a paid Codex model turn or touching production Agent state.
+
+Only an explicit flag adds one real Claude acceptance turn:
+
+```bash
+npm run smoke:release -- --real-claude
+```
+
+That extension announces and uses exactly `claude-haiku-4-5`, effort `low`, and
+`write: false`. It runs at most one task; an explicit subscription, quota,
+credit, or usage-limit failure stops paid CC testing immediately. Generic HTTP
+429 remains distinct.
+
 ## Environment
 
 The installed MCP bootstrap and operator CLI load exactly
@@ -303,7 +364,7 @@ not an internal job ID:
 
 | Removed v0.1 surface | v0.3 canonical replacement |
 | --- | --- |
-| `run` / `start` | `spawn_agent` with `task_name`, `message`, `fork_turns=none`, and an explicit supported model; Haiku/low is the recommended real-smoke route |
+| `run` / `start` | `spawn_agent` with `task_name`, self-contained `message`, explicit supported `model`, and explicit `write`; Haiku/low is the recommended real-smoke route |
 | `steer <job>` | `send_message <target> <message>` |
 | `steer --follow-up <job>` / `followUp` | `followup_task <target> <message>` |
 | `status` / `result` | `list_agents` and untargeted `wait_agent`; use `read_agent_messages` only for earlier native messages |
@@ -327,13 +388,23 @@ Run from this checkout:
 ```bash
 npm ci
 npm run check
+npm run doctor
 node runtime/cli.mjs readiness --json
 npm run install:local
+npm run smoke:release
 ```
 
 `runtime/cli.mjs` and `plugins/cc-for-pein/bootstrap/cc-runtime.mjs` remain
 operator/debug surfaces. Model-facing lifecycle calls use the typed MCP tools;
 there is no automatic shell fallback.
+
+`package.json` is the one manually maintained release base-version source. MCP
+server metadata reads it directly, while cachebuster refresh derives the Plugin
+manifest base and appends exactly one `+codex.<timestamp>` suffix. Do not update
+the MCP or manifest base independently. If either installed bootstrap cannot
+resolve the MCP SDK or Zod from the checkout, it reports a concise instruction
+to run `npm install` in `/data/CoordExp/cc-plugin-codex` instead of relying on a
+generic Node module-loader stack.
 
 The repository-local marketplace is `.agents/plugins/marketplace.json`; its
 plugin source is the intentionally small `plugins/cc-for-pein/` subtree.
@@ -349,7 +420,7 @@ does not remove the plugin. After that:
   refreshes with `codex plugin add`, and fails closed if the marketplace root
   drifted. Start a new Codex task to discover refreshed skills and MCP tools.
 
-Verify the installed snapshot has exactly the seven v0.4 Experimental skills and
+Verify the installed snapshot has exactly the seven Experimental skills and
 one `cc_for_pein` MCP server whose descriptor-only bootstrap delegates only to
 `/data/CoordExp/cc-plugin-codex`.
 

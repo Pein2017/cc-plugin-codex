@@ -79,7 +79,7 @@ describe("Agent durable launch boundary", () => {
       runtime.spawnAgent({
         task_name: "missing_model",
         message: "must not launch",
-        fork_turns: "none",
+        write: false,
       }),
       /requires an explicit model/
     );
@@ -87,7 +87,7 @@ describe("Agent durable launch boundary", () => {
     assert.equal(runtime.store.listAgents().length, 0);
   });
 
-  it("rejects invalid complete spawn profiles before readiness or durable state", async () => {
+  it("rejects invalid complete spawn delegation options before readiness or durable state", async () => {
     const cases = [
       {
         name: "effort",
@@ -95,19 +95,24 @@ describe("Agent durable launch boundary", () => {
         error: /Unsupported effort/,
       },
       {
-        name: "profile",
+        name: "removed profile",
         input: { execution_profile: "unknown-profile" },
-        error: /Unknown execution profile/,
+        error: /does not support execution_profile/,
       },
       {
-        name: "safe dangerous permissions",
-        input: { execution_profile: "safe", dangerously_skip_permissions: true },
-        error: /safe must remain sandboxed/,
+        name: "non fable orchestrator",
+        input: { delegation_mode: "claude_orchestrator" },
+        error: /requires exact model claude-fable-5/,
       },
       {
-        name: "terminal parity permission mode",
-        input: { permission_mode: "auto" },
-        error: /cannot be combined/,
+        name: "fable alias orchestrator",
+        input: { model: "fable", delegation_mode: "claude_orchestrator" },
+        error: /requires exact model claude-fable-5/,
+      },
+      {
+        name: "leaf Agent allowlist",
+        input: { allowed_tools: ["Agent(explore)"] },
+        error: /cannot allow the native Agent tool/,
       },
     ];
 
@@ -123,8 +128,8 @@ describe("Agent durable launch boundary", () => {
         runtime.spawnAgent({
           task_name: `invalid_${testCase.name.replace(/[^a-z]+/g, "_")}`,
           message: "must not persist",
-          fork_turns: "none",
           model: "sonnet",
+          write: false,
           ...testCase.input,
         }),
         testCase.error,
@@ -137,15 +142,15 @@ describe("Agent durable launch boundary", () => {
     }
   });
 
-  it("rejects invalid activating follow-up profiles before mailbox or job mutation", async () => {
+  it("rejects invalid activating follow-up options before mailbox or job mutation", async () => {
     const cases = [
       { input: { reasoning_effort: "not-an-effort" }, error: /Unsupported effort/ },
-      { input: { execution_profile: "unknown-profile" }, error: /Unknown execution profile/ },
+      { input: { execution_profile: "unknown-profile" }, error: /does not support execution_profile/ },
       {
-        input: { execution_profile: "safe", dangerously_skip_permissions: true },
-        error: /safe must remain sandboxed/,
+        input: { delegation_mode: "claude_orchestrator" },
+        error: /does not support delegation_mode/,
       },
-      { input: { permission_mode: "auto" }, error: /cannot be combined/ },
+      { input: { allowed_tools: ["Agent"] }, error: /cannot allow the native Agent tool/ },
     ];
 
     for (const [index, testCase] of cases.entries()) {
@@ -176,17 +181,46 @@ describe("Agent durable launch boundary", () => {
     }
   });
 
+  it("projects idle interrupt lifecycle through the five public statuses", async () => {
+    const { runtime } = setup();
+    const agent = runtime.store.createAgent({
+      task_name: "idle_interrupt_projection",
+      selectedModel: "claude-sonnet-5",
+    });
+
+    const pending = await runtime.interruptAgent({ target: agent.agentId });
+    assert.equal(pending.interrupted, false);
+    assert.equal(pending.status, "no_active_turn");
+    assert.equal(pending.agent.status, "starting");
+    assert.deepEqual(Object.keys(pending.agent).sort(), [
+      "agentId",
+      "delegationMode",
+      "path",
+      "selectedModel",
+      "status",
+    ]);
+
+    runtime.store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      status: "errored",
+    }));
+    const failed = await runtime.interruptAgent({ target: agent.agentId });
+    assert.equal(failed.interrupted, false);
+    assert.equal(failed.status, "no_active_turn");
+    assert.equal(failed.agent.status, "failed");
+  });
+
   it("fails compatibility before spawn or idle follow-up durable mutation", async () => {
     const spawnSetup = setup();
     spawnSetup.runtime.jobs.assertReady = () => {
-      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v1.");
+      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v2.");
     };
     await assert.rejects(
       spawnSetup.runtime.spawnAgent({
         task_name: "incompatible_spawn",
         message: "must not persist",
-        fork_turns: "none",
         model: "sonnet",
+        write: false,
       }),
       /incompatible with CC runtime surface/,
     );
@@ -203,7 +237,7 @@ describe("Agent durable launch boundary", () => {
       status: "completed",
     }));
     followupSetup.runtime.jobs.assertReady = () => {
-      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v1.");
+      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v2.");
     };
     await assert.rejects(
       followupSetup.runtime.followupTask({
@@ -401,13 +435,16 @@ describe("Agent durable launch boundary", () => {
     const result = await runtime.spawnAgent({
       task_name: "boundary",
       message: "launch after readiness",
-      fork_turns: "none",
       model: "sonnet",
+      write: false,
     });
 
     assert.equal(result.turn.jobId, observedJobId);
+    assert.equal(result.agent.status, "working");
+    assert.equal(result.agent.delegationMode, "leaf");
     assert.deepEqual(events, ["ready:start", "ready:end", "reserve", "attach", "launch"]);
     assert.equal(readJobFile(workspace, observedJobId).agentId, result.agent.agentId);
+    assert.equal(readJobFile(workspace, observedJobId).request.delegationMode, "leaf");
     const messages = runtime.store.listMessages(result.agent.agentId);
     assert.deepEqual(messages.map((message) => message.sequence), [1, 2]);
     assert.deepEqual(messages.map((message) => message.text), [
@@ -437,8 +474,8 @@ describe("Agent durable launch boundary", () => {
       runtime.spawnAgent({
         task_name: "prepare_race",
         message: "initial prompt",
-        fork_turns: "none",
         model: "opus",
+        write: false,
       }),
       /injected prepare failure/
     );
@@ -601,5 +638,6 @@ describe("Agent durable launch boundary", () => {
     assert.equal(reserveOptions?.initial, true);
     assert.equal(followup.activated, true);
     assert.equal(launchedPrompt, "keep this pending input\n\nfollow-up after recovery");
+    assert.equal(readJobFile(runtime.jobs.cwd, followup.turn.jobId).request.delegationMode, "leaf");
   });
 });

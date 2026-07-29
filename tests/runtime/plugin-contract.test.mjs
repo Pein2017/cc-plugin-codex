@@ -7,6 +7,9 @@ import { describe, it } from "node:test";
 import { createClaudeRuntime } from "../../runtime/index.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
+const releaseMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const escapedReleaseVersion = releaseMetadata.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const pluginVersionPattern = new RegExp(`^${escapedReleaseVersion}\\+codex\\.[A-Za-z0-9._-]+$`);
 
 describe("native plugin contract", () => {
   const canonicalSkills = [
@@ -33,7 +36,7 @@ describe("native plugin contract", () => {
     const pluginRoot = path.join(root, "plugins", "cc-for-pein");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "cc-for-pein");
-    assert.match(manifest.version, /^0\.4\.0\+codex\.[A-Za-z0-9._-]+$/);
+    assert.match(manifest.version, pluginVersionPattern);
     assert.equal(manifest.hooks, undefined);
     assert.equal(manifest.mcpServers, "./.mcp.json");
     assert.equal(manifest.author.name, "Pein");
@@ -130,6 +133,10 @@ describe("native plugin contract", () => {
     assert.match(bootstrap, /runtime["',\s]+"mcp-server\.mjs"/);
     assert.match(bootstrap, /stdio: "inherit"/);
     assert.doesNotMatch(bootstrap, /plugins\/cache|sendbird\/cc-plugin-codex/);
+    assert.match(bootstrap, /assertCheckoutDependencies\(checkout\)/);
+
+    const lifecycleBootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "cc-runtime.mjs"), "utf8");
+    assert.match(lifecycleBootstrap, /assertCheckoutDependencies\(checkout\)/);
 
     const server = fs.readFileSync(path.join(root, "runtime", "mcp-server.mjs"), "utf8");
     assert.match(server, /CODEX_SANDBOX_META_KEY = "codex\/sandbox-state-meta"/);
@@ -168,15 +175,16 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("keeps spawn success concise while retaining explicit raw and actionable output", () => {
+  it("keeps spawn success concise and routes internal evidence to operator diagnostics", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /do not print its raw JSON by default/i);
+    assert.match(text, /stable ID\/path[\s\S]*selected[\s\S]*model[\s\S]*delegation mode[\s\S]*status/i);
+    assert.match(text, /Session, job,[\s\S]*continuation,[\s\S]*workspace,[\s\S]*mailbox[\s\S]*operator\/debug/i);
     assert.match(text, /one concise sentence[\s\S]*selected model[\s\S]*role\/tier[\s\S]*Agent path[\s\S]*current status/i);
     assert.match(text, /Do not[\s\S]*include final[\s\S]*Claude text[\s\S]*raw JSON/i);
-    assert.match(text, /explicitly[\s\S]*requests raw or debug output/i);
+    assert.match(text, /deeper diagnostics[\s\S]*operator diagnostics path/i);
     assert.match(text, /failure[\s\S]*actionable details/i);
     assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
   });
@@ -213,6 +221,10 @@ describe("native plugin contract", () => {
     assert.match(text, /Pass `write: false`[\s\S]*omits `--dangerously-skip-permissions`/i);
     assert.match(text, /Pass `write: true`[\s\S]*adds[\s\S]*`--dangerously-skip-permissions`/i);
     assert.match(text, /Never omit `write` from a model-facing spawn/i);
+    assert.match(text, /delegation_mode: "leaf"[\s\S]*claude_orchestrator[\s\S]*claude-fable-5/i);
+    assert.match(text, /disables Claude Code's native `Agent` tool/i);
+    assert.doesNotMatch(text, /fork_turns|execution_profile/);
+    assert.doesNotMatch(text, /`running` spawn acknowledgement/i);
   });
 
   it("documents follow-up write inheritance and explicit authority changes", () => {
@@ -260,18 +272,18 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("keeps v0.4 base metadata synchronized with one local plugin cachebuster", () => {
+  it("keeps package-owned base metadata synchronized with one local plugin cachebuster", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
     const manifest = JSON.parse(
       fs.readFileSync(path.join(root, "plugins", "cc-for-pein", ".codex-plugin", "plugin.json"), "utf8"),
     );
     const marketplace = JSON.parse(fs.readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
-    assert.equal(packageJson.version, "0.4.0");
-    assert.equal(lockfile.version, "0.4.0");
-    assert.equal(lockfile.packages[""].version, "0.4.0");
+    assert.equal(packageJson.version, releaseMetadata.version);
+    assert.equal(lockfile.version, packageJson.version);
+    assert.equal(lockfile.packages[""].version, packageJson.version);
     assert.equal(manifest.version.split("+")[0], packageJson.version);
-    assert.match(manifest.version, /^0\.4\.0\+codex\.[A-Za-z0-9._-]+$/);
-    assert.match(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.4\.0/);
+    assert.match(manifest.version, pluginVersionPattern);
+    assert.doesNotMatch(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.4\.0/);
   });
 });

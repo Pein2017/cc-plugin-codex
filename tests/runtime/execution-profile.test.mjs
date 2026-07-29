@@ -25,6 +25,7 @@ describe("execution profiles", () => {
         name: "safe",
         model: "claude-sonnet-5",
         effort: "high",
+        delegationMode: "leaf",
         dangerouslySkipPermissions: false,
       },
     );
@@ -42,6 +43,7 @@ describe("execution profiles", () => {
         name: "terminal-parity",
         model: "claude-sonnet-5",
         effort: undefined,
+        delegationMode: "leaf",
         dangerouslySkipPermissions: false,
       },
     );
@@ -62,11 +64,22 @@ describe("execution profiles", () => {
       env: { CLAUDE_CONFIG_DIR: "/project/.claude" },
     });
     assert.equal(profile.name, "terminal-parity");
-    assert.deepEqual(Object.keys(profile.claudeOptions), ["env", "model", "dangerouslySkipPermissions"]);
+    assert.deepEqual(Object.keys(profile.claudeOptions), [
+      "env",
+      "model",
+      "appendSystemPrompt",
+      "disallowedTools",
+      "dangerouslySkipPermissions",
+    ]);
     assert.equal(profile.claudeOptions.model, "claude-sonnet-5");
     assert.equal(profile.claudeOptions.effort, undefined);
     assert.equal(profile.claudeOptions.env.IS_SANDBOX, "1");
-    assert.deepEqual(profile.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
+    assert.deepEqual(profile.receipt.addedOverrides, [
+      "model",
+      "appendSystemPrompt",
+      "disallowedTools",
+      "dangerouslySkipPermissions",
+    ]);
     assert.equal(profile.receipt.inheritedClaudeConfiguration, true);
     assert.throws(
       () => createExecutionProfile({ profile: "terminal-parity", env: {} }),
@@ -80,7 +93,7 @@ describe("execution profiles", () => {
     assert.equal(haiku.claudeOptions.model, "claude-haiku-4-5");
     assert.equal(haiku.claudeOptions.effort, undefined);
     assert.equal(haiku.claudeOptions.dangerouslySkipPermissions, undefined);
-    assert.deepEqual(haiku.receipt.addedOverrides, ["model"]);
+    assert.deepEqual(haiku.receipt.addedOverrides, ["model", "appendSystemPrompt", "disallowedTools"]);
 
     const explicitLowHaiku = createExecutionProfile({
       profile: "terminal-parity",
@@ -91,7 +104,7 @@ describe("execution profiles", () => {
     assert.equal(explicitLowHaiku.claudeOptions.effort, "low");
     assert.deepEqual(
       explicitLowHaiku.receipt.addedOverrides,
-      ["model", "effort"],
+      ["model", "appendSystemPrompt", "disallowedTools", "effort"],
     );
 
     const fable = createExecutionProfile({ profile: "safe", model: "fable", env: {} });
@@ -108,7 +121,12 @@ describe("execution profiles", () => {
       env: {},
     });
     assert.deepEqual(profile.claudeOptions.allowedTools, ["mcp__serena__get_symbols_overview"]);
-    assert.deepEqual(profile.receipt.addedOverrides.sort(), ["allowedTools", "model"]);
+    assert.deepEqual(profile.receipt.addedOverrides.sort(), [
+      "allowedTools",
+      "appendSystemPrompt",
+      "disallowedTools",
+      "model",
+    ]);
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
@@ -129,7 +147,12 @@ describe("execution profiles", () => {
     });
     assert.equal(profile.claudeOptions.dangerouslySkipPermissions, true);
     assert.equal(profile.claudeOptions.env.IS_SANDBOX, "1");
-    assert.deepEqual(profile.receipt.addedOverrides, ["model", "dangerouslySkipPermissions"]);
+    assert.deepEqual(profile.receipt.addedOverrides, [
+      "model",
+      "appendSystemPrompt",
+      "disallowedTools",
+      "dangerouslySkipPermissions",
+    ]);
     assert.throws(
       () => createExecutionProfile({
         profile: "safe",
@@ -169,5 +192,41 @@ describe("execution profiles", () => {
     assert.ok(fs.existsSync(profile.claudeOptions.settingsFile));
     profile.cleanup();
     assert.equal(fs.existsSync(profile.claudeOptions.settingsFile), false);
+  });
+
+  it("enforces leaf depth and permits only explicit Fable orchestration", () => {
+    const leaf = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "opus",
+      delegationMode: "leaf",
+      env: {},
+    });
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /Codex lead/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /leaf Agent/i);
+    assert.deepEqual(leaf.claudeOptions.disallowedTools, ["Agent"]);
+
+    for (const tool of ["Agent", "Agent(explore)", "Agent(plan, explore)"]) {
+      assert.throws(
+        () => validateExecutionProfileOptions({ model: "opus", allowedTools: [tool] }),
+        /cannot allow the native Agent tool/,
+      );
+    }
+    assert.throws(
+      () => validateExecutionProfileOptions({
+        model: "opus",
+        delegationMode: "claude_orchestrator",
+      }),
+      /requires exact model claude-fable-5/,
+    );
+
+    const orchestrator = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "fable",
+      delegationMode: "claude_orchestrator",
+      env: {},
+    });
+    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /one child generation/i);
+    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /join every child/i);
+    assert.equal(orchestrator.claudeOptions.disallowedTools, undefined);
   });
 });

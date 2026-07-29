@@ -1,6 +1,6 @@
 ---
 name: spawn-agent
-description: 'Experimental: create a durable, root-scoped Claude Agent and start its first asynchronous turn. Requires a task name, message, explicit model, explicit write intent, and fork_turns=none; supports Haiku 4.5, Sonnet 5, Opus 5, Fable 5, and all five efforts.'
+description: 'Experimental: create a durable, root-scoped Claude Agent and start its first asynchronous turn. Requires a task name, message, explicit model, and explicit write intent; defaults to a leaf Agent and permits native subagents only for explicit Fable orchestration.'
 ---
 
 # Spawn Claude Agent
@@ -11,8 +11,8 @@ description: 'Experimental: create a durable, root-scoped Claude Agent and start
 
 Use this skill to create a named Agent in the current Codex root. Invoke
 `mcp__cc_for_pein__spawn_agent` with typed `task_name`, `message`,
-`fork_turns: "none"`, `model`, and `write` fields. Optional fields are
-`description`, `reasoning_effort`, `execution_profile`, and `allowed_tools`.
+`model`, and `write` fields. Optional fields are `description`,
+`reasoning_effort`, `allowed_tools`, and `delegation_mode`.
 
 Before invoking, confirm the active Codex turn workspace is the checkout or
 worktree where the new Agent should work. Trusted Codex metadata supplies the
@@ -62,8 +62,7 @@ transient HTTP 429 may use the runtime's bounded reconnect policy; a caller-set
 Choose mutation intent before invoking:
 
 - Pass `write: false` for audits, reviews, exploration, planning, or any turn
-  that is not authorized to mutate the workspace. Under the default
-  `terminal-parity` profile this omits `--dangerously-skip-permissions` and
+  that is not authorized to mutate the workspace. This omits `--dangerously-skip-permissions` and
   leaves authorization to native Claude configuration. Do not describe this as
   an OS-enforced read-only sandbox.
 - Pass `write: true` only for work explicitly authorized to modify the
@@ -73,21 +72,44 @@ Choose mutation intent before invoking:
 - Never omit `write` from a model-facing spawn, even though direct runtime
   omission fails safer and behaves like false.
 
-- Require `fork_turns=none` explicitly. Context inheritance (`all` or a
-  positive count) is unsupported and must fail rather than being put into a
-  Claude prompt.
+- Do not pass Codex history or a fork selector. The runtime always treats a CC
+  Agent as a self-contained delegated lane; make the `message` complete enough
+  to work without the parent transcript.
 - Names resolve to a flat `/root/<task_name>` path and must be unique within
   the current logical Codex root.
 - Never accept, infer, or adopt a Terminal Claude session; Terminal-session
   adoption is deferred to a future OpenSpec change.
-- Keep the complete runtime receipt available for targeting and later lifecycle
-  operations, but do not print its raw JSON by default.
+- The model-facing Agent receipt contains only its stable ID/path, selected
+  model, immutable delegation mode, and projected status. Session, job,
+  continuation, workspace, and mailbox internals remain operator/debug evidence.
 - On successful spawn, present one concise sentence containing only the
   selected model, its role/tier, stable Agent path, and current status. Do not
-  include final Claude text or raw JSON. Show the complete receipt only when
-  the user explicitly requests raw or debug output.
+  include final Claude text or raw JSON. If the user asks for deeper diagnostics,
+  use the operator diagnostics path rather than expanding the ordinary receipt.
 - On failure or when recovery/action is required, report the actionable details
   instead of replacing them with a generic success acknowledgement.
+
+## Delegation depth
+
+Use `delegation_mode: "leaf"` or omit the field for ordinary Agents, including
+Haiku, Sonnet, Opus, and ordinary Fable work. Leaf mode appends the bounded
+Codex-lead role envelope and disables Claude Code's native `Agent` tool. Never
+put `Agent` or an `Agent(...)` pattern in `allowed_tools` for a leaf.
+
+Use `delegation_mode: "claude_orchestrator"` only when all of the following are
+true:
+
+- the exact model is `claude-fable-5`;
+- the lead deliberately wants Fable to coordinate Claude-native subagents;
+- one generation is enough; and
+- the Fable parent will join its children and return one self-contained final
+  synthesis to Codex.
+
+The CC registry tracks only the durable Fable parent. Native children remain
+inside that Claude session and cannot be targeted with CC tools. Haiku, Sonnet,
+and Opus orchestration requests must fail rather than silently becoming leaf or
+switching models. Do not add a child registry, scheduler, or hidden second
+delegation layer in the prompt.
 
 ## Parent orchestration policy
 
@@ -103,5 +125,5 @@ Before spawning, classify the result:
   idle parent will not be automatically reactivated.
 
 Spawn independent lanes before waiting. Do not call wait by reflex while useful
-non-overlapping work remains, but never treat a `running` spawn acknowledgement
-as permission to end a required or parallel-then-join parent turn.
+non-overlapping work remains, but never treat a `starting` or `working` spawn
+acknowledgement as permission to end a required or parallel-then-join parent turn.

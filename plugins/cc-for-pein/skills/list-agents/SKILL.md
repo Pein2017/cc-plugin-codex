@@ -24,6 +24,8 @@ Plugin discovery/startup failure instead of silently running a shell fallback.
 - Cross-root `all` is intentionally absent. It is a redacted read-only
   operator diagnostic, never a model-facing operation.
 - Terminal-session adoption is deferred and is not represented by this list.
-- Present only the useful Agent names and statuses. Do not echo raw JSON,
+- Present only the useful Agent names, five-state status, and immutable
+  delegation mode. Status is one of `starting`, `working`, `completed`,
+  `failed`, or `interrupted`. Do not echo raw JSON,
   delivery tokens, or final Claude output unless the user explicitly requests
   raw/debug detail.

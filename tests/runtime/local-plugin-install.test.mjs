@@ -133,6 +133,7 @@ describe("local plugin installation", () => {
     });
     assert.equal(result.status, 0, result.stderr);
     const manifest = JSON.parse(fs.readFileSync(path.join(manifestDirectory, "plugin.json"), "utf8"));
-    assert.equal(manifest.version, "0.3.0+codex.test-123");
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    assert.equal(manifest.version, `${packageJson.version}+codex.test-123`);
   });
 });

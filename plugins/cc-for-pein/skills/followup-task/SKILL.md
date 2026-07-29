@@ -9,8 +9,7 @@ description: 'Experimental: send durable work to a CC Agent and guarantee delive
 > reactivate an idle Codex parent after that turn finishes.
 
 Invoke `mcp__cc_for_pein__followup_task` with typed `target` and `message`
-fields. Optional fields are `reasoning_effort`, `execution_profile`, `write`,
-and `allowed_tools`.
+fields. Optional fields are `reasoning_effort`, `write`, and `allowed_tools`.
 
 Before invoking, confirm the active Codex turn workspace is the checkout or
 worktree where this Agent should work. Trusted Codex metadata supplies the
@@ -26,6 +25,9 @@ Plugin discovery/startup failure instead of silently running a shell fallback.
   authorized. Under default terminal parity, false omits
   `--dangerously-skip-permissions`; true adds it. False is governed by native
   Claude permissions and is not an OS-enforced read-only sandbox.
+- Delegation mode is immutable Agent identity metadata. Do not send a mode or
+  model override: the follow-up inherits the Agent's existing leaf or Fable
+  orchestrator boundary across exact-session resume and safe-fresh recovery.
 - If the Agent is idle, this starts one new exact-session or receipt-proven
   safe-fresh turn and assigns queued messages in order. If it is already
   running, it sends only one durable active-turn message.

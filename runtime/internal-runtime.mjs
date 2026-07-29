@@ -690,6 +690,7 @@ class ClaudeRuntime {
       permissionMode: options.permissionMode,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
       allowedTools: options.allowedTools,
+      delegationMode: options.delegationMode,
     });
     const profile = executionProfile.name;
     // Agent orchestration validates this potentially slow CLI/auth check
@@ -739,6 +740,7 @@ class ClaudeRuntime {
         permissionMode: options.permissionMode ?? null,
         dangerouslySkipPermissions: executionProfile.dangerouslySkipPermissions,
         allowedTools: normalizeAllowedTools(options.allowedTools),
+        delegationMode: executionProfile.delegationMode,
         sessionName: String(options.sessionName ?? "").trim() || null,
         resumeSessionId,
       };
@@ -1088,6 +1090,7 @@ class ClaudeRuntime {
       permissionMode: request.permissionMode,
       dangerouslySkipPermissions: request.dangerouslySkipPermissions,
       allowedTools: request.allowedTools,
+      delegationMode: request.delegationMode,
       env: this.env,
     });
     try {
@@ -1201,6 +1204,7 @@ class ClaudeRuntime {
       dangerouslySkipPermissions:
         options.dangerouslySkipPermissions ?? request.dangerouslySkipPermissions,
       allowedTools: options.allowedTools ?? request.allowedTools,
+      delegationMode: options.delegationMode ?? request.delegationMode,
       sessionName: options.sessionName ?? request.sessionName,
       resumeSessionId: sessionId,
       parentJobId: source.id,

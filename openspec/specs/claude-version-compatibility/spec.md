@@ -29,15 +29,15 @@ automatic readiness.
 
 ### Requirement: Required CLI surface gates new activation
 The static check SHALL require every option and value vocabulary emitted by the
-current terminal-parity and safe execution profiles. A missing option, failed or
-timed-out probe, or unstable fingerprint SHALL make readiness false and SHALL
-fail before a new Agent, job, or idle follow-up activation is durably published.
-It SHALL NOT pin a semantic-version range or fall back to another executable,
-model, or effort.
+current terminal-parity and safe execution profiles, including `--append-system-prompt` and `--disallowedTools`. A missing option, failed or timed-out probe, or unstable fingerprint SHALL make readiness false and SHALL fail before a new Agent, job, or idle follow-up activation is durably published. It SHALL NOT pin a semantic-version range or fall back to another executable, model, or effort.
 
 #### Scenario: Required flag is missing
 - **WHEN** the new Claude CLI help omits a flag used by the runtime
 - **THEN** readiness reports the version, executable, missing surface, and incompatibility without launching Claude
+
+#### Scenario: Delegation policy flag is missing
+- **WHEN** Claude CLI help omits `--append-system-prompt` or `--disallowedTools`
+- **THEN** every new public activation fails before state mutation because the runtime cannot enforce its delegation boundary
 
 #### Scenario: Compatible frontier version appears
 - **WHEN** a previously unseen version advertises the complete required surface and stays stable through the probe
@@ -87,3 +87,14 @@ session history SHALL NOT be terminated or rewritten by version drift.
 #### Scenario: Exact session continues on a compatible update
 - **WHEN** a later activation is prepared against a newly compatible fingerprint and owns an exact Claude session ID
 - **THEN** it may resume that same session while recording the new turn's Claude version separately
+
+### Requirement: Operator compatibility diagnosis is zero-model and non-persistent
+Doctor SHALL reuse the required Claude option/value vocabulary and executable fingerprinting semantics to run a static compatibility diagnosis without invoking a model or persisting Agent readiness evidence. Its result SHALL contain only normalized version, compatibility status, bounded missing surface, and fixed failure code.
+
+#### Scenario: Updated Claude remains compatible
+- **WHEN** doctor inspects a newly updated executable that advertises the required surface and remains stable through the probe
+- **THEN** it reports static compatibility without creating a job, Agent, completion event, or compatibility-state record
+
+#### Scenario: Updated Claude drops a required flag
+- **WHEN** doctor observes a missing required CLI flag or value
+- **THEN** it fails the compatibility check with bounded missing-surface evidence and launches no model

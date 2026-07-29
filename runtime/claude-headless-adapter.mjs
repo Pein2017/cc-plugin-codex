@@ -166,8 +166,20 @@ function appendTextTail(existing, chunk, maxBytes) {
 export function getClaudeAvailability(cwd, options = {}) {
   const env = options.env ?? process.env;
   const claudeBin = options.claudeBin ?? resolveClaudeExecutable({ env });
+  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   try {
-    const result = spawnSync(claudeBin, ["--version"], {
+    if (!fs.statSync(cwd).isDirectory()) {
+      throw new Error("not a directory");
+    }
+  } catch {
+    return {
+      available: false,
+      detail: `Claude working directory is unavailable: ${cwd}`,
+      executable: claudeBin,
+    };
+  }
+  try {
+    const result = spawnSyncImpl(claudeBin, ["--version"], {
       cwd,
       env,
       encoding: "utf8",
@@ -191,11 +203,12 @@ export function getClaudeAvailability(cwd, options = {}) {
 export function getClaudeAuthStatus(cwd, options = {}) {
   const env = options.env ?? process.env;
   const claudeBin = options.claudeBin ?? resolveClaudeExecutable({ env });
+  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   if (env.ANTHROPIC_API_KEY) {
     return { available: true, loggedIn: true, detail: "API key configured" };
   }
   try {
-    const result = spawnSync(claudeBin, ["auth", "status"], {
+    const result = spawnSyncImpl(claudeBin, ["auth", "status"], {
       cwd,
       env,
       encoding: "utf8",
@@ -621,6 +634,8 @@ function buildHostRuntimeReceipt(options, env, claudeBin) {
     dangerouslySkipPermissions: Boolean(options.dangerouslySkipPermissions),
     isSandbox: env.IS_SANDBOX === "1",
     allowedTools: Array.isArray(options.allowedTools) ? options.allowedTools : null,
+    disallowedTools: Array.isArray(options.disallowedTools) ? options.disallowedTools : null,
+    appendedSystemPrompt: Boolean(options.appendSystemPrompt),
     proxyEndpoints: {
       http: redactProxyEndpoint(env.HTTP_PROXY ?? env.http_proxy),
       https: redactProxyEndpoint(env.HTTPS_PROXY ?? env.https_proxy),
@@ -900,6 +915,11 @@ export function buildArgs(prompt, options = {}) {
       args.push("--allowedTools", tool);
     }
   }
+  if (options.disallowedTools) {
+    for (const tool of options.disallowedTools) {
+      args.push("--disallowedTools", tool);
+    }
+  }
   if (options.maxTurns) {
     args.push("--max-turns", String(options.maxTurns));
   }
@@ -908,6 +928,13 @@ export function buildArgs(prompt, options = {}) {
   }
   if (options.systemPrompt) {
     args.push("--system-prompt", options.systemPrompt);
+  }
+  if (options.appendSystemPrompt) {
+    const promptText = String(options.appendSystemPrompt);
+    if (!promptText.trim() || promptText.includes("\0")) {
+      throw new Error("Claude appended system prompt must be non-empty text without NUL bytes.");
+    }
+    args.push("--append-system-prompt", promptText);
   }
   if (options.permissionMode) {
     args.push("--permission-mode", options.permissionMode);

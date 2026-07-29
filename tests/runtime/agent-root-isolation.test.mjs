@@ -158,7 +158,7 @@ describe("owner-scoped Agent reconciliation", () => {
     assert.equal(readJobFile(workspace, jobId)?.agentProjectionReconciledAt, undefined);
 
     const repaired = runtimeB.listAgents().agents[0];
-    assert.deepEqual(repaired.agent_status, { completed: null });
+    assert.equal(repaired.agent_status, "completed");
     assert.equal(runtimeB.store.readAgent(foreign.agentId)?.claudeSessionId, "foreign-claude-session");
     assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), true);
     assert.ok(readJobFile(workspace, jobId)?.agentProjectionReconciledAt);
@@ -234,7 +234,7 @@ describe("owner-scoped Agent reconciliation", () => {
     const explicitForeignBefore = readJobFile(workspace, explicitForeign.id);
 
     const listed = runtimeA.listAgents().agents;
-    assert.deepEqual(listed[0]?.agent_status, { completed: null });
+    assert.equal(listed[0]?.agent_status, "completed");
     assert.equal(readJobFile(workspace, localJob.id)?.ownerRootId, ownerA);
     assert.equal(readJobFile(workspace, localJob.id)?.sessionId, ownerA);
     assert.deepEqual(readJobFile(workspace, foreignLegacy.id), foreignLegacyBefore);

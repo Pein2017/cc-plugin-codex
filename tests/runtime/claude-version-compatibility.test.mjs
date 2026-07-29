@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   assertPreparedClaudeCompatibility,
+  diagnoseClaudeCompatibility,
   inspectClaudeCompatibility,
   recordSuccessfulClaudeTurn,
   REQUIRED_CLAUDE_OPTIONS,
@@ -101,6 +102,19 @@ esac
 }
 
 describe("Claude Code version compatibility", () => {
+  it("diagnoses the required surface without persisting readiness state", () => {
+    const { workspace, executable } = setup();
+    const fake = fakeCommands();
+    const receipt = diagnoseClaudeCompatibility(workspace, {
+      availability: availability(executable),
+      spawnSyncImpl: fake.command,
+    });
+    assert.equal(receipt.status, "statically-compatible");
+    assert.equal(receipt.staticCompatible, true);
+    assert.equal(fs.existsSync(process.env.CC_RUNTIME_HOME), false);
+    assert.equal(fake.calls.filter(([arg]) => arg === "--help").length, 1);
+  });
+
   it("checks a new fingerprint once, caches it, and records a successful real turn", () => {
     const { workspace, executable } = setup();
     const fake = fakeCommands();
@@ -190,6 +204,8 @@ describe("Claude Code version compatibility", () => {
     const persistedEvidence = JSON.stringify(getConfig(workspace).claudeCliCompatibility);
     assert.doesNotMatch(persistedEvidence, /help unavailable|versionText|detail/);
     assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--session-id"), false);
+    assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--append-system-prompt"), true);
+    assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--disallowedTools"), true);
 
     replaceExecutable(executable, "repaired-v1");
     const v1 = fakeCommands({ version: "2.1.221" });

@@ -12,7 +12,7 @@ import fs from "node:fs";
 import { resolveClaudeExecutable } from "./claude-headless-adapter.mjs";
 import { getConfig, mutateConfig, nowIso } from "./job-store.mjs";
 
-export const CLAUDE_CLI_SURFACE_REVISION = "cc-agent-v1";
+export const CLAUDE_CLI_SURFACE_REVISION = "cc-agent-v2";
 export const REQUIRED_CLAUDE_OPTIONS = Object.freeze([
   "-p",
   "--output-format",
@@ -26,6 +26,8 @@ export const REQUIRED_CLAUDE_OPTIONS = Object.freeze([
   "--effort",
   "--resume",
   "--allowedTools",
+  "--disallowedTools",
+  "--append-system-prompt",
   "--settings",
   "--permission-mode",
   "--dangerously-skip-permissions",
@@ -161,6 +163,92 @@ function checkHelpSurface(helpText) {
   );
   return [...missingOptions, ...missingValues.map((value) => `value:${value}`)]
     .slice(0, MAX_MISSING_SURFACE);
+}
+
+/**
+ * Read-only static diagnosis for operator tooling. Unlike readiness admission,
+ * this never reads or writes cached compatibility state.
+ */
+export function diagnoseClaudeCompatibility(cwd, options = {}) {
+  const availability = options.availability;
+  if (availability?.available !== true) {
+    return {
+      status: "incompatible",
+      staticCompatible: false,
+      version: null,
+      executable: availability?.executable ?? null,
+      fingerprint: null,
+      requiredSurfaceRevision: CLAUDE_CLI_SURFACE_REVISION,
+      checkedAt: nowIso(),
+      missingSurface: [],
+      failureCode: "availability_unavailable",
+    };
+  }
+
+  const env = options.env ?? process.env;
+  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
+  let before;
+  try {
+    before = sampleClaudeExecutable(cwd, {
+      env,
+      spawnSyncImpl,
+      executable: availability.executable,
+      versionText: availability.detail,
+      realpathSync: options.realpathSync,
+      statSync: options.statSync,
+    });
+  } catch (error) {
+    return {
+      status: "incompatible",
+      staticCompatible: false,
+      version: null,
+      executable: availability.executable ?? null,
+      fingerprint: null,
+      requiredSurfaceRevision: CLAUDE_CLI_SURFACE_REVISION,
+      checkedAt: nowIso(),
+      missingSurface: [],
+      failureCode: compatibilityFailureCode(error, "executable_identity_failed"),
+    };
+  }
+
+  const helpResult = runCommand(before.executable, ["--help"], cwd, env, spawnSyncImpl);
+  const helpFailureCode = probeResultFailureCode(helpResult, "help");
+  let after = null;
+  let afterFailureCode = null;
+  try {
+    after = sampleClaudeExecutable(cwd, {
+      env,
+      spawnSyncImpl,
+      executable: before.executable,
+      realpathSync: options.realpathSync,
+      statSync: options.statSync,
+    });
+  } catch (error) {
+    afterFailureCode = compatibilityFailureCode(error, "post_probe_failed");
+  }
+
+  const stable = after?.fingerprint === before.fingerprint;
+  const missingSurface = helpFailureCode
+    ? []
+    : checkHelpSurface(`${helpResult.stdout ?? ""}\n${helpResult.stderr ?? ""}`);
+  const failureCode = helpFailureCode ?? afterFailureCode ?? (
+    !stable
+      ? "executable_unstable"
+      : missingSurface.length > 0
+        ? "missing_surface"
+        : null
+  );
+  return {
+    status: failureCode ? "incompatible" : "statically-compatible",
+    staticCompatible: failureCode == null,
+    version: before.version,
+    executable: before.executable,
+    fingerprint: before.fingerprint,
+    requiredSurfaceRevision: CLAUDE_CLI_SURFACE_REVISION,
+    checkedAt: nowIso(),
+    missingSurface: missingSurface.slice(0, MAX_MISSING_SURFACE),
+    failureCode,
+  };
 }
 
 function sameCachedProbe(current, snapshot) {

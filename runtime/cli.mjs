@@ -22,7 +22,7 @@ const PUBLIC_COMMANDS = new Set([
 function usage() {
   return [
     "Usage:",
-    "  node runtime/cli.mjs spawn_agent --task-name <name> --fork-turns none --model <haiku|sonnet|opus|fable> [options] <message>",
+    "  node runtime/cli.mjs spawn_agent --task-name <name> --model <haiku|sonnet|opus|fable> --write=<true|false> [options] <message>",
     "  node runtime/cli.mjs send_message <exact-target> <message>",
     "  node runtime/cli.mjs followup_task <exact-target> <message>",
     "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--acknowledge-tokens <csv>]",
@@ -87,16 +87,14 @@ async function spawnAgent(argv) {
     valueOptions: [
       "task-name",
       "message",
-      "fork-turns",
       "description",
       "model",
       "reasoning-effort",
-      "execution-profile",
-      "permission-mode",
+      "delegation-mode",
       "allowed-tools",
       "prompt-file",
     ],
-    booleanOptions: ["write", "dangerously-skip-permissions"],
+    booleanOptions: ["write"],
   });
   const cwd = runtimeOptions(options).cwd;
   const message = options["prompt-file"]
@@ -105,14 +103,11 @@ async function spawnAgent(argv) {
   const receipt = await createClaudeRuntime(runtimeOptions(options)).spawn_agent({
     task_name: options["task-name"],
     message,
-    fork_turns: options["fork-turns"],
     description: options.description,
     model: options.model,
     reasoning_effort: options["reasoning-effort"],
-    execution_profile: options["execution-profile"],
-    write: Boolean(options.write),
-    permission_mode: options["permission-mode"],
-    dangerously_skip_permissions: options["dangerously-skip-permissions"] ? true : undefined,
+    delegation_mode: options["delegation-mode"],
+    write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
     allowed_tools: options["allowed-tools"],
   });
   output(receipt, options.json);
@@ -140,19 +135,14 @@ async function followupTask(argv) {
       "target",
       "message",
       "reasoning-effort",
-      "execution-profile",
-      "permission-mode",
       "allowed-tools",
     ],
-    booleanOptions: ["write", "dangerously-skip-permissions"],
+    booleanOptions: ["write"],
   });
   const receipt = await createClaudeRuntime(runtimeOptions(options)).followup_task({
     ...targetAndMessage(options, positionals),
     reasoning_effort: options["reasoning-effort"],
-    execution_profile: options["execution-profile"],
-    write: options.write ? true : undefined,
-    permission_mode: options["permission-mode"],
-    dangerously_skip_permissions: options["dangerously-skip-permissions"] ? true : undefined,
+    write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
     allowed_tools: options["allowed-tools"],
   });
   output(receipt, options.json);

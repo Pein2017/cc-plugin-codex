@@ -6,6 +6,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { pluginVersionForCachebuster, readPackageMetadata } from "../runtime/version.mjs";
+
 const DEFAULT_PLUGIN_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -63,10 +65,7 @@ function main() {
   if (typeof manifest.name !== "string" || typeof manifest.version !== "string") {
     throw new Error(`Invalid plugin manifest: ${manifestFile}`);
   }
-  const baseVersion = manifest.version.split("+", 1)[0];
-  if (!baseVersion) throw new Error(`Plugin manifest has no base version: ${manifestFile}`);
-
-  manifest.version = `${baseVersion}+codex.${cachebuster}`;
+  manifest.version = pluginVersionForCachebuster(cachebuster, readPackageMetadata());
   fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
   process.stdout.write(`${manifest.name} ${manifest.version}\n`);
 }

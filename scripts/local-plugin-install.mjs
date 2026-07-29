@@ -7,6 +7,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { pluginBaseVersion, readPackageMetadata } from "../runtime/version.mjs";
+
 const MARKETPLACE = "pein-local";
 const PLUGIN = "cc-for-pein";
 const sourceRoot = fs.realpathSync.native(
@@ -129,6 +131,13 @@ function main() {
   const marketplace = JSON.parse(fs.readFileSync(marketplaceFile, "utf8"));
   if (manifest.name !== PLUGIN || marketplace.name !== MARKETPLACE) {
     throw new Error("Local plugin or marketplace identity is inconsistent.");
+  }
+  const packageMetadata = readPackageMetadata();
+  if (pluginBaseVersion(manifest.version) !== packageMetadata.version) {
+    throw new Error(
+      `Plugin base version ${pluginBaseVersion(manifest.version)} does not match package version ` +
+      `${packageMetadata.version}. Run node scripts/update-plugin-cachebuster.mjs first.`
+    );
   }
 
   // Codex owns installation snapshots. The snapshot contains only discovery

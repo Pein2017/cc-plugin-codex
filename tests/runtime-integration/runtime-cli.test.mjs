@@ -61,7 +61,7 @@ function appendInvocation(record) {
 
 async function main() {
   if (args[0] === "--version") return process.stdout.write("2.1.220 (Claude Code)\\n");
-  if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
+  if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --disallowedTools --append-system-prompt --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
   if (args[0] === "auth" && args[1] === "status") return process.stdout.write("authenticated\\n");
   if (args[0] !== "-p") throw new Error("unexpected args " + JSON.stringify(args));
   const initial = await firstEvent();
@@ -275,7 +275,7 @@ describe("canonical Agent runtime CLI", () => {
   it("launches Haiku with its canonical model and explicit low effort", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "haiku_smoke", "--fork-turns", "none",
+      "spawn_agent", "--write=false", "--task-name", "haiku_smoke",
       "--model", "haiku", "--reasoning-effort", "low", "--json", "session=haiku delay=40",
     ]);
     assert.equal(spawned.agent.selectedModel, "claude-haiku-4-5");
@@ -283,32 +283,56 @@ describe("canonical Agent runtime CLI", () => {
     const invocation = invocations(test)[0];
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-haiku-4-5");
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "low");
+    assert.equal(invocation.args[invocation.args.indexOf("--disallowedTools") + 1], "Agent");
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /leaf Agent/i);
   });
 
   it("launches Fable with canonical model and explicit max effort", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "fable_smoke", "--fork-turns", "none",
-      "--model", "fable", "--reasoning-effort", "max", "--json", "session=fable delay=40",
+      "spawn_agent", "--write=false", "--task-name", "fable_smoke",
+      "--model", "claude-fable-5", "--reasoning-effort", "max",
+      "--delegation-mode", "claude_orchestrator", "--json", "session=fable delay=40",
     ]);
     assert.equal(spawned.agent.selectedModel, "claude-fable-5");
     waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     const invocation = invocations(test)[0];
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-fable-5");
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "max");
+    assert.equal(invocation.args.includes("--disallowedTools"), false);
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /join every child/i);
+
+    const followed = run(test, [
+      "followup_task", spawned.agent.path, "--json", "fable exact-session follow-up delay=40",
+    ]);
+    assert.equal(followed.activated, true);
+    const completed = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
+    assert.equal(completed.delegationMode, "claude_orchestrator");
+    const followupJob = readInternalJob(test, followed.turn.jobId);
+    assert.equal(followupJob.request.delegationMode, "claude_orchestrator");
+    const followupInvocation = invocations(test)[1];
+    assert.equal(
+      followupInvocation.args[followupInvocation.args.indexOf("--resume") + 1],
+      "fake-session-fable",
+    );
+    assert.equal(followupInvocation.args.includes("--disallowedTools"), false);
+    assert.match(
+      followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1],
+      /join every child/i,
+    );
   });
 
   it("exposes all seven operations with flat exact targeting and duplicate-name rejection", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "sonnet", "--json", "session=alpha delay=700",
+      "spawn_agent", "--write=false", "--task-name", "alpha", "--model", "sonnet", "--json", "session=alpha delay=700",
     ]);
     assert.equal(spawned.agent.path, "/root/alpha");
     assert.equal(spawned.agent.selectedModel, "claude-sonnet-5");
     assert.equal(spawned.topology, "flat");
     assert.equal(spawned.residency, "ephemeral_turn");
     assert.throws(
-      () => run(test, ["spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "sonnet", "--json", "duplicate"]),
+      () => run(test, ["spawn_agent", "--write=false", "--task-name", "alpha", "--model", "sonnet", "--json", "duplicate"]),
       /already belongs/
     );
     const selected = agent(test, "/root/alpha");
@@ -317,21 +341,21 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(prefix.status, 1);
     assert.match(prefix.stderr, /No Agent with that exact ID, path, or name/);
     assert.throws(
-      () => run(test, ["spawn_agent", "--task-name", "forked", "--fork-turns", "all", "--json", "forbidden"]),
-      /requires fork_turns=none/
+      () => run(test, ["spawn_agent", "--write=false", "--task-name", "forked", "--fork-turns", "all", "--json", "forbidden"]),
+      /Unknown option --fork-turns/
     );
   });
 
   it("keeps Agent roots isolated while operator all-agents remains explicit and read-only", () => {
     const test = fixture("root-a");
-    const alpha = run(test, ["spawn_agent", "--task-name", "alpha", "--fork-turns", "none", "--model", "opus", "--json", "session=alpha delay=50"]);
+    const alpha = run(test, ["spawn_agent", "--write=false", "--task-name", "alpha", "--model", "opus", "--json", "session=alpha delay=50"]);
     waitForAgent(test, alpha.agent.path, (value) => value.status === "completed");
     const foreignEnv = { ...test.env, CODEX_THREAD_ID: "root-b" };
     assert.deepEqual(list(test, { env: foreignEnv }).agents, []);
     const foreign = command(test, ["send_message", alpha.agent.path, "foreign", "--json"], { env: foreignEnv });
     assert.equal(foreign.status, 1);
     assert.match(foreign.stderr, /No Agent with that exact ID, path, or name/);
-    const beta = run(test, ["spawn_agent", "--task-name", "beta", "--fork-turns", "none", "--model", "sonnet", "--json", "session=beta delay=50"], { env: foreignEnv });
+    const beta = run(test, ["spawn_agent", "--write=false", "--task-name", "beta", "--model", "sonnet", "--json", "session=beta delay=50"], { env: foreignEnv });
     waitForAgent(test, beta.agent.path, (value) => value.status === "completed", { env: foreignEnv });
 
     const operator = run(test, [
@@ -350,15 +374,15 @@ describe("canonical Agent runtime CLI", () => {
   it("runs two Agents concurrently and leaves their terminal histories nonresident", async () => {
     const test = fixture();
     const launches = await Promise.all([
-      runAsync(test, ["spawn_agent", "--task-name", "agent_a", "--fork-turns", "none", "--model", "sonnet", "--json", "session=a delay=500"]),
-      runAsync(test, ["spawn_agent", "--task-name", "agent_b", "--fork-turns", "none", "--model", "opus", "--json", "session=b delay=500"]),
+      runAsync(test, ["spawn_agent", "--write=false", "--task-name", "agent_a", "--model", "sonnet", "--json", "session=a delay=500"]),
+      runAsync(test, ["spawn_agent", "--write=false", "--task-name", "agent_b", "--model", "opus", "--json", "session=b delay=500"]),
     ]);
     assert.deepEqual(launches.map((entry) => entry.status).sort(), [0, 0]);
     const agents = launches.map((entry) => JSON.parse(entry.stdout).agent);
     for (const entry of agents) waitForAgent(test, entry.path, (value) => value.status === "completed");
     const listed = list(test);
     assert.equal(listed.agents.length, 2);
-    assert.ok(listed.agents.every((value) => value.agent_status?.completed === null));
+    assert.ok(listed.agents.every((value) => value.agent_status === "completed"));
     assert.deepEqual(
       new Set(invocations(test).map((value) => value.sessionId)),
       new Set(["fake-session-a", "fake-session-b"])
@@ -368,7 +392,7 @@ describe("canonical Agent runtime CLI", () => {
   it("durably dispatches an active send_message and records acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "active", "--fork-turns", "none", "--model", "sonnet", "--json", "session=active delay=1000",
+      "spawn_agent", "--write=false", "--task-name", "active", "--model", "sonnet", "--json", "session=active delay=1000",
     ]);
     const started = waitForJob(test, spawned.turn.jobId, (value) => value.status === "running" && Boolean(value.pid));
     assert.equal(started.agentId, spawned.agent.agentId);
@@ -383,7 +407,7 @@ describe("canonical Agent runtime CLI", () => {
   it("queues an idle message and assigns it to an exact-session follow-up", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "resume", "--fork-turns", "none", "--model", "opus", "--json", "session=resume delay=60",
+      "spawn_agent", "--write=false", "--task-name", "resume", "--model", "opus", "--json", "session=resume delay=60",
     ]);
     const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     assert.equal(terminal.continuation.mode, "exact_session");
@@ -413,7 +437,7 @@ describe("canonical Agent runtime CLI", () => {
   it("reads complete paginated outer-assistant history from the bound native session", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "history", "--fork-turns", "none",
+      "spawn_agent", "--write=false", "--task-name", "history",
       "--model", "sonnet", "--json", "session=history delay=40",
     ]);
     const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
@@ -504,7 +528,7 @@ describe("canonical Agent runtime CLI", () => {
   it("keeps list and wait completion delivery unread until a later acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "delivery", "--fork-turns", "none", "--model", "sonnet", "--json", "session=delivery delay=60",
+      "spawn_agent", "--write=false", "--task-name", "delivery", "--model", "sonnet", "--json", "session=delivery delay=60",
     ]);
     waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
     const firstList = list(test);
@@ -512,7 +536,8 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(firstList, secondList);
     assert.deepEqual(firstList.agents, [{
       agent_name: spawned.agent.path,
-      agent_status: { completed: null },
+      agent_status: "completed",
+      delegation_mode: "leaf",
     }]);
     assert.equal(JSON.stringify(firstList).includes("completionInbox"), false);
 
@@ -536,7 +561,7 @@ describe("canonical Agent runtime CLI", () => {
   it("reports safe stream progress before the complete completion message", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "progress_stream", "--fork-turns", "none",
+      "spawn_agent", "--write=false", "--task-name", "progress_stream",
       "--model", "sonnet", "--json", "session=progress-stream delay=2000",
     ]);
     waitForJob(test, spawned.turn.jobId, (value) => Number(value.publicProgress?.revision ?? 0) >= 2);
@@ -546,7 +571,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(progress.update, {
       kind: "progress",
       agent_name: spawned.agent.path,
-      agent_status: "running",
+      agent_status: "working",
       progress: {
         revision: 2,
         activity: "responding",
@@ -565,7 +590,7 @@ describe("canonical Agent runtime CLI", () => {
   it("interrupts only a running Agent turn and keeps the logical Agent record", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "interruptible", "--fork-turns", "none", "--model", "opus", "--json", "session=interrupt delay=5000",
+      "spawn_agent", "--write=false", "--task-name", "interruptible", "--model", "opus", "--json", "session=interrupt delay=5000",
     ]);
     waitForJob(test, spawned.turn.jobId, (value) => value.status === "running" && Boolean(value.pid));
     const receipt = run(test, ["interrupt_agent", spawned.agent.path, "--json"], { timeout: 12_000 });
@@ -593,7 +618,7 @@ describe("canonical Agent runtime CLI", () => {
       ["list_agents", "-C", path.dirname(test.workspace), "--json"],
       ["list_agents", "--env-file", test.envFile, "--json"],
       ["list_agents", `--cwd ${path.dirname(test.workspace)} --json`],
-      ["spawn_agent", "--task-name", "forbidden", "--fork-turns", "none", "--resume-session", "x", "--json", "x"],
+      ["spawn_agent", "--write=false", "--task-name", "forbidden", "--resume-session", "x", "--json", "x"],
       ["wait_agent", "/root/not-allowed", "--json"],
       ["read_agent_messages", "/root/not-allowed", "--session-id", "foreign", "--json"],
       ["read_agent_messages", "/root/not-allowed", "--owner-root-id", "foreign", "--json"],
@@ -606,9 +631,8 @@ describe("canonical Agent runtime CLI", () => {
     }
 
     const swallowedUnknown = command(test, [
-      "spawn_agent",
+      "spawn_agent", "--write=false",
       "--task-name", "must_not_exist",
-      "--fork-turns", "none",
       "--message", "--claude-session-id", "foreign",
       "--json",
     ]);
@@ -617,9 +641,8 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(list(test).agents, []);
 
     const unsupportedModel = command(test, [
-      "spawn_agent",
+      "spawn_agent", "--write=false",
       "--task-name", "unsupported_model",
-      "--fork-turns", "none",
       "--model", "fable-5",
       "--json", "must fail before Claude starts",
     ]);
@@ -628,9 +651,8 @@ describe("canonical Agent runtime CLI", () => {
 
     for (const unsupported of ["haiku-4-5", "claude-haiku-4-5-20251001"]) {
       const rejected = command(test, [
-        "spawn_agent",
+        "spawn_agent", "--write=false",
         "--task-name", `unsupported_${unsupported.replaceAll("-", "_")}`,
-        "--fork-turns", "none",
         "--model", unsupported,
         "--json", "dated or partial IDs are not public inputs",
       ]);
@@ -639,7 +661,7 @@ describe("canonical Agent runtime CLI", () => {
     }
 
     const missingModel = command(test, [
-      "spawn_agent", "--task-name", "missing_model", "--fork-turns", "none", "--json", "must fail before Claude starts",
+      "spawn_agent", "--write=false", "--task-name", "missing_model", "--json", "must fail before Claude starts",
     ]);
     assert.equal(missingModel.status, 1);
     assert.match(missingModel.stderr, /requires an explicit model/);
@@ -650,7 +672,7 @@ describe("canonical Agent runtime CLI", () => {
   it("preserves permission-respecting terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "parity", "--fork-turns", "none", "--model", "opus",
+      "spawn_agent", "--write=false", "--task-name", "parity", "--model", "opus",
       "--json", "session=parity delay=60",
     ]);
     waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
@@ -660,6 +682,9 @@ describe("canonical Agent runtime CLI", () => {
     }
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), false);
+    assert.equal(invocation.args[invocation.args.indexOf("--disallowedTools") + 1], "Agent");
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /bounded Claude Agent/i);
+    assert.equal(invocation.args.includes("--system-prompt"), false);
     assert.equal(invocation.args[invocation.args.indexOf("--name") + 1], "parity");
     assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(path.dirname(test.workspace), ".claude"));
     assert.equal(invocation.env.CONDA_EXE, "/opt/conda/bin/conda");
@@ -674,6 +699,10 @@ describe("canonical Agent runtime CLI", () => {
     const poisonMarker = path.join(fakeCache, "poison-ran");
     fs.mkdirSync(path.dirname(fakeBootstrap), { recursive: true });
     fs.copyFileSync(bootstrap, fakeBootstrap);
+    fs.copyFileSync(
+      path.join(path.dirname(bootstrap), "dependency-preflight.mjs"),
+      path.join(path.dirname(fakeBootstrap), "dependency-preflight.mjs"),
+    );
     fs.mkdirSync(path.join(fakeCache, "runtime"));
     fs.writeFileSync(path.join(fakeCache, "runtime", "cli.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(poisonMarker)}, "bad");\n`);
     const poisonEnv = path.join(fakeCache, "poison.env");
@@ -709,7 +738,7 @@ describe("canonical Agent runtime CLI", () => {
   it("adds dangerous permission bypass only for explicit write and inherits it on follow-up", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--task-name", "write_parity", "--fork-turns", "none",
+      "spawn_agent", "--task-name", "write_parity",
       "--model", "sonnet", "--write", "--json", "session=write-parity delay=40",
     ]);
     const terminal = waitForAgent(test, spawned.agent.path, (value) => value.status === "completed");
@@ -727,10 +756,10 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(recorded[1].args.includes("--dangerously-skip-permissions"), true);
 
     const rejected = command(test, [
-      "spawn_agent", "--task-name", "contradictory", "--fork-turns", "none",
+      "spawn_agent", "--write=false", "--task-name", "contradictory",
       "--model", "sonnet", "--dangerously-skip-permissions", "--json", "must fail",
     ]);
     assert.equal(rejected.status, 1);
-    assert.match(rejected.stderr, /requires explicit write access/);
+    assert.match(rejected.stderr, /Unknown option --dangerously-skip-permissions/);
   });
 });

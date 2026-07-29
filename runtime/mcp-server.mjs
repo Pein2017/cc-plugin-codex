@@ -15,6 +15,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { createClaudeRuntime } from "./index.mjs";
+import { PACKAGE_VERSION } from "./version.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
 export const CC_MCP_TOOL_NAMES = Object.freeze([
@@ -45,23 +46,25 @@ const exactTarget = z.string().trim().min(1).describe(
 const message = z.string().trim().min(1);
 const executionFields = {
   reasoning_effort: z.enum(EFFORTS).optional(),
-  execution_profile: z.enum(["safe", "terminal-parity"]).optional(),
-  write: z.boolean().optional().describe(
-    "Mutation intent. False or omitted keeps native Claude permissions; true enables terminal-parity dangerous permission bypass."
-  ),
   allowed_tools: z.array(z.string().trim().min(1)).min(1).optional(),
 };
+const optionalWrite = z.boolean().optional().describe(
+  "Mutation intent. False keeps native Claude permissions; true enables terminal-parity dangerous permission bypass. Omitted follow-up intent inherits."
+);
 
 const TOOL_DEFINITIONS = Object.freeze({
   spawn_agent: {
     description:
-      "Experimental: create one durable current-root Claude Agent and return after its background turn is durably handed off. Model and fork_turns=none are always explicit.",
+      "Experimental: create one durable current-root leaf Claude Agent by default, or an explicit Fable native orchestrator, and return after durable background handoff.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
-      fork_turns: z.literal("none"),
       description: z.string().trim().min(1).optional(),
       model: z.enum(MODEL_IDS),
+      write: z.boolean().describe(
+        "Required mutation intent. False keeps native Claude permissions; true enables terminal-parity dangerous permission bypass."
+      ),
+      delegation_mode: z.enum(["leaf", "claude_orchestrator"]).optional(),
       ...executionFields,
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -75,7 +78,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   followup_task: {
     description:
       "Experimental: deliver work to an active Agent or activate one exact-session/safely-fresh follow-up turn, returning after durable background handoff.",
-    inputSchema: z.object({ target: exactTarget, message, ...executionFields }).strict(),
+    inputSchema: z.object({ target: exactTarget, message, ...executionFields, write: optionalWrite }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
@@ -135,6 +138,14 @@ export function resolveCodexMcpContext(meta, signal = null) {
     throw contextError("sandboxCwd is not a valid local file URI");
   }
   if (!path.isAbsolute(cwd)) throw contextError("sandboxCwd is not absolute");
+  try {
+    cwd = fs.realpathSync.native(cwd);
+    if (!fs.statSync(cwd).isDirectory()) {
+      throw new Error("not a directory");
+    }
+  } catch {
+    throw contextError(`trusted sandbox workspace is unavailable or no longer exists: ${cwd}`);
+  }
   return {
     cwd,
     envFile: FIXED_ENV_FILE,
@@ -166,7 +177,7 @@ function sanitizedError(error) {
 export function createCcMcpServer(options = {}) {
   const runtimeFactory = options.runtimeFactory ?? createClaudeRuntime;
   const server = new McpServer(
-    { name: "cc-for-pein", version: "0.4.0" },
+    { name: "cc-for-pein", version: PACKAGE_VERSION },
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:

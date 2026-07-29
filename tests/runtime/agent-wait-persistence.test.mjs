@@ -241,7 +241,8 @@ describe("Agent wait persistence", () => {
     assert.deepEqual(observed.result, {
       agents: [{
         agent_name: created.path,
-        agent_status: { completed: null },
+        agent_status: "completed",
+        delegation_mode: "leaf",
       }],
     });
     assert.deepEqual(observed.counts, zeroPersistenceIo);

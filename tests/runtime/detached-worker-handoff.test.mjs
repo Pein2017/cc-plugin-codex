@@ -223,9 +223,9 @@ describe("detached worker handoff", () => {
       firstRuntime.spawnAgent({
         task_name: "safe_spawn",
         message: "safe before spawn",
-        fork_turns: "none",
         model: "haiku",
         reasoning_effort: "low",
+        write: false,
       }),
       /async pre-spawn error/
     );
@@ -301,9 +301,9 @@ describe("detached worker handoff", () => {
       spawnRuntime.spawnAgent({
         task_name: "attach_spawn",
         message: "do not leave active",
-        fork_turns: "none",
         model: "haiku",
         reasoning_effort: "low",
+        write: false,
       }),
       /attach failure/
     );
@@ -654,9 +654,9 @@ describe("detached worker handoff", () => {
       agentRuntime.spawnAgent({
         task_name: "terminal_handoff",
         message: "preserve before reconciliation",
-        fork_turns: "none",
         model: "haiku",
         reasoning_effort: "low",
+        write: false,
       }),
       /worker handoff/i
     );
@@ -692,9 +692,9 @@ describe("detached worker handoff", () => {
       agentRuntime.spawnAgent({
         task_name: "unknown_handoff",
         message: "do not detach me",
-        fork_turns: "none",
         model: "haiku",
         reasoning_effort: "low",
+        write: false,
       }),
       /worker handoff/i
     );

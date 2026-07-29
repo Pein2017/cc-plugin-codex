@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Breaking:** slim public spawn to required `task_name`, `message`, `model`,
+  and `write`; remove public `fork_turns` and execution-profile selectors.
+  Default every Agent to an immutable leaf with an appended Codex-lead envelope
+  and native `Agent` denial, while allowing explicit Fable-only
+  `claude_orchestrator` mode with opaque one-generation native children. Map
+  public lifecycle state to five strings and expose delegation mode in listings.
+- Reject stale trusted Codex workspace metadata before runtime construction and
+  distinguish a removed workspace from a missing Claude executable instead of
+  reporting a false PATH failure.
+- Add an operator-only, redacted `doctor`, read-only storage/history inventory,
+  and a zero-model-cost installed Plugin release smoke covering seven Skills,
+  stdio MCP startup, seven tools, and isolated `list_agents`. Add an explicit
+  one-turn Haiku 4.5/low paid extension, derive runtime/Plugin versions from the
+  package base, and replace missing dependency loader stacks with an actionable
+  checkout `npm install` recovery.
 - Bind terminal-parity authority to the public `write` intent: false or omitted
   intent now respects native Claude permissions without
   `--dangerously-skip-permissions`, while explicit `write: true` enables the

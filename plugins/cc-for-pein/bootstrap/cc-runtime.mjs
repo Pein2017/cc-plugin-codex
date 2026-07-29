@@ -11,6 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { assertCheckoutDependencies } from "./dependency-preflight.mjs";
+
 const FIXED_RUNTIME_CHECKOUT = "/data/CoordExp/cc-plugin-codex";
 const PUBLIC_COMMANDS = new Set([
   "spawn_agent",
@@ -134,6 +136,7 @@ function main() {
   const hostThreadId = String(inherited.CODEX_THREAD_ID ?? "").trim();
   rejectPublicContextOverrides(process.argv.slice(2));
   const { checkout, cli, envFile } = resolveCheckout();
+  assertCheckoutDependencies(checkout);
   const configured = parseEnv(envFile);
   delete configured.CODEX_THREAD_ID;
   delete configured.CC_TRUSTED_OWNER_ROOT_ID;

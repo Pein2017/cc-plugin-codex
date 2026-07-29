@@ -9,6 +9,7 @@ import {
   buildArgs,
   classifyClaudeFailure,
   encodeStreamUserMessage,
+  getClaudeAvailability,
   runClaudeTurn,
 } from "../../runtime/claude-headless-adapter.mjs";
 
@@ -75,6 +76,23 @@ function delay(milliseconds) {
 }
 
 describe("Claude headless adapter", () => {
+  it("distinguishes an unavailable working directory from a missing Claude executable", () => {
+    const missingCwd = path.join(os.tmpdir(), `cc-missing-cwd-${process.pid}-${Date.now()}`);
+    let spawnCalls = 0;
+    const availability = getClaudeAvailability(missingCwd, {
+      claudeBin: process.execPath,
+      spawnSyncImpl() {
+        spawnCalls += 1;
+        throw new Error("must not spawn with an invalid cwd");
+      },
+    });
+    assert.equal(availability.available, false);
+    assert.equal(availability.executable, process.execPath);
+    assert.match(availability.detail, /working directory|workspace/i);
+    assert.doesNotMatch(availability.detail, /not found in PATH/i);
+    assert.equal(spawnCalls, 0);
+  });
+
   it("builds the native bidirectional stream-json transport", () => {
     const args = buildArgs("ignored", {
       outputFormat: "stream-json",
@@ -106,6 +124,16 @@ describe("Claude headless adapter", () => {
       outputFormat: "stream-json",
     });
     assert.equal(permissionRespecting.includes("--dangerously-skip-permissions"), false);
+  });
+
+  it("serializes appended policy and hard tool denial without replacing Claude defaults", () => {
+    const args = buildArgs("ignored", {
+      appendSystemPrompt: "bounded delegated lane",
+      disallowedTools: ["Agent"],
+    });
+    assert.equal(args[args.indexOf("--append-system-prompt") + 1], "bounded delegated lane");
+    assert.equal(args[args.indexOf("--disallowedTools") + 1], "Agent");
+    assert.equal(args.includes("--system-prompt"), false);
   });
 
   it("pins canonical model aliases, every explicit effort, and names only fresh sessions", () => {

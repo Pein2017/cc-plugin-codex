@@ -16,6 +16,43 @@ import {
 } from "./claude-headless-adapter.mjs";
 
 export const EXECUTION_PROFILES = new Set(["safe", "terminal-parity"]);
+export const DELEGATION_MODES = new Set(["leaf", "claude_orchestrator"]);
+
+const COMMON_DELEGATION_PROMPT = [
+  "You are a bounded Claude Agent delegated by a Codex lead.",
+  "Stay within the supplied task, workspace, and authority.",
+  "Codex owns user-facing synthesis and final acceptance.",
+  "Return one self-contained final result containing the evidence and conclusions the lead needs.",
+].join(" ");
+
+const LEAF_DELEGATION_PROMPT = [
+  COMMON_DELEGATION_PROMPT,
+  "Act as a leaf Agent: do not delegate work or invoke the native Agent tool.",
+].join(" ");
+
+const CLAUDE_ORCHESTRATOR_PROMPT = [
+  COMMON_DELEGATION_PROMPT,
+  "You may use Claude Code native subagents for at most one child generation.",
+  "Join every child you start and synthesize their work into your own final response.",
+].join(" ");
+
+export function normalizeDelegationMode(value) {
+  const mode = String(value ?? "leaf").trim().toLowerCase();
+  if (!DELEGATION_MODES.has(mode)) {
+    throw new Error(`Unknown delegation mode ${value}. Use leaf or claude_orchestrator.`);
+  }
+  return mode;
+}
+
+function isNativeAgentTool(value) {
+  return /^Agent(?:\(|$)/.test(String(value ?? "").trim());
+}
+
+function delegationPrompt(mode) {
+  return mode === "claude_orchestrator"
+    ? CLAUDE_ORCHESTRATOR_PROMPT
+    : LEAF_DELEGATION_PROMPT;
+}
 
 export function normalizeProfileName(value) {
   const name = String(value ?? "terminal-parity").trim().toLowerCase();
@@ -42,6 +79,17 @@ export function validateExecutionProfileOptions(options = {}) {
     );
   }
   const model = resolveModel(requestedModel);
+  const delegationMode = normalizeDelegationMode(options.delegationMode);
+  if (delegationMode === "claude_orchestrator" && model !== "claude-fable-5") {
+    throw new Error("claude_orchestrator delegation requires exact model claude-fable-5.");
+  }
+  if (
+    delegationMode === "leaf" &&
+    Array.isArray(options.allowedTools) &&
+    options.allowedTools.some(isNativeAgentTool)
+  ) {
+    throw new Error("Leaf delegation cannot allow the native Agent tool.");
+  }
 
   if (requestedDangerousBypass && name !== "terminal-parity") {
     throw new Error(
@@ -63,12 +111,12 @@ export function validateExecutionProfileOptions(options = {}) {
     ? resolveEffort(options.effort)
     : resolveEffort(resolveDefaultEffort(model, options.effort));
   const dangerouslySkipPermissions = name === "terminal-parity" && write;
-  return { name, model, effort, dangerouslySkipPermissions };
+  return { name, model, effort, delegationMode, dangerouslySkipPermissions };
 }
 
 export function createExecutionProfile(options = {}) {
   const validated = validateExecutionProfileOptions(options);
-  const { name, model, effort } = validated;
+  const { name, model, effort, delegationMode } = validated;
   const inheritedEnv = options.env ?? process.env;
 
   if (name === "terminal-parity") {
@@ -76,7 +124,9 @@ export function createExecutionProfile(options = {}) {
     const claudeOptions = {
       env,
       model,
+      appendSystemPrompt: delegationPrompt(delegationMode),
     };
+    if (delegationMode === "leaf") claudeOptions.disallowedTools = ["Agent"];
     if (validated.dangerouslySkipPermissions) {
       claudeOptions.dangerouslySkipPermissions = true;
     }
@@ -104,15 +154,19 @@ export function createExecutionProfile(options = {}) {
     env,
     model,
     effort,
+    appendSystemPrompt: delegationPrompt(delegationMode),
     settingsFile,
     permissionMode: options.permissionMode ?? (options.write
       ? runningAsRoot ? undefined : "bypassPermissions"
       : "dontAsk"),
   };
+  if (delegationMode === "leaf") claudeOptions.disallowedTools = ["Agent"];
   if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
     claudeOptions.allowedTools = options.allowedTools;
   } else if (!options.write) {
-    claudeOptions.allowedTools = SANDBOX_READ_ONLY_TOOLS;
+    claudeOptions.allowedTools = delegationMode === "leaf"
+      ? SANDBOX_READ_ONLY_TOOLS.filter((tool) => !isNativeAgentTool(tool))
+      : SANDBOX_READ_ONLY_TOOLS;
   }
 
   return {
@@ -122,7 +176,15 @@ export function createExecutionProfile(options = {}) {
       name,
       inheritedClaudeConfiguration: true,
       sandboxMode,
-      addedOverrides: ["model", "effort", "settings", "permission", ...(options.write ? [] : ["allowedTools"])],
+      addedOverrides: [
+        "model",
+        "effort",
+        "appendSystemPrompt",
+        ...(delegationMode === "leaf" ? ["disallowedTools"] : []),
+        "settings",
+        "permission",
+        ...(options.write ? [] : ["allowedTools"]),
+      ],
     },
     cleanup() {
       cleanupSandboxSettings(settingsFile);

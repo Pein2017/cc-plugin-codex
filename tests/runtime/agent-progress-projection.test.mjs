@@ -101,7 +101,7 @@ describe("Agent progress projection", () => {
       update: {
         kind: "progress",
         agent_name: agent.path,
-        agent_status: "running",
+        agent_status: "working",
         progress: {
           revision: 3,
           activity: "tool",
