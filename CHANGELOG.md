@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Breaking:** compact successful `spawn_agent` to `agent_name`, `model`, and
+  `status`; `followup_task` to `agent_name` and `delivery`; and
+  `interrupt_agent` to `agent_name` and operation `status`. Preserve internal
+  recovery evidence, actionable failures, and complete `wait_agent` final
+  messages. Increment the MCP generation for the discovered result shapes.
+- Reduce the seven Agent Skills from roughly 2,859 to about 1,310 words, remove
+  ordinary raw-receipt echoing, and shorten MCP descriptions plus the appended
+  Claude delegation envelope without weakening authority, joining, account
+  limits, delegation depth, or tool denial.
+- **Breaking:** remove public `allowed_tools` from `spawn_agent` and
+  `followup_task`; terminal-parity Agents inherit the native Claude tool surface
+  by default. Deny `Workflow` for every Agent, continue denying `Agent` for
+  leaves, and leave native `Agent` available only to explicit Fable
+  orchestrators. Increment the MCP API generation so existing Codex tasks fail
+  closed until restarted on the new schema.
+- Add a bounded prompt escape hatch for decisions only the Codex lead or user
+  can make: Claude ends the current turn with the exact question and evidence,
+  allowing the same durable session to continue through a follow-up.
 - **Breaking:** shrink successful `send_message` receipts to only stable
   `agent_name` and `delivery`. Keep complete mailbox,
   assignment, job, and steering evidence durable for operator diagnosis, while

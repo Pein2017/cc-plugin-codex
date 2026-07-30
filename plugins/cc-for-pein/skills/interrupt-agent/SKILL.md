@@ -1,25 +1,17 @@
 ---
 name: interrupt-agent
-description: 'Experimental: gracefully interrupt a CC Agent current turn while keeping its durable identity and any safely proven continuation path.'
+description: 'Experimental: stop a CC Agent current turn while preserving its durable identity and proven continuation.'
 ---
 
 # Interrupt Agent
 
-> **Experimental.** Interruption semantics depend on Claude flush evidence and
-> do not imply deletion, archive, or automatic Codex-parent reactivation.
+> **Experimental.** Interrupt ends only the current turn; it never deletes the
+> durable Agent or reactivates an idle Codex parent.
 
-Invoke `mcp__cc_for_pein__interrupt_agent` with the typed `target` field.
+Call `mcp__cc_for_pein__interrupt_agent` with exact current-root `target`.
+Trusted Codex metadata owns cwd/root. If unavailable, report Plugin startup or
+discovery failure; never use a shell fallback.
 
-Before invoking, confirm the active Codex turn workspace is the checkout or
-worktree that owns the Agent. Trusted Codex metadata supplies the workspace and
-root identity; never add cwd, environment, owner-root, or Claude-session
-selectors. If the typed MCP tool is unavailable, report the Plugin
-discovery/startup failure instead of silently running a shell fallback.
-
-- Resolve `target` exactly within the current logical Codex root; prefixes do
-  not select arbitrary Agents.
-- A proven graceful interruption preserves exact-session continuation. Forced
-  termination without Claude flush evidence becomes errored and non-resumable,
-  while the Agent record remains listed.
-- There is no public destructive cancel operation or Agent deletion action.
-- Present the interruption receipt exactly as returned.
+A graceful Claude flush preserves exact-session continuation. Forced unflushed
+termination becomes failed and non-resumable. Report one concise sentence from
+`agent_name` and `status`; raw JSON is debug-only.

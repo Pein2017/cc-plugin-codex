@@ -230,9 +230,10 @@ describe("Agent message delivery idempotency", () => {
       message: "second concurrent follow-up",
     });
 
-    assert.equal(result.activated, false);
-    assert.equal(result.delivery, "already_active_initial_prompt");
-    assert.equal(result.turn.jobId, winningJobId);
+    assert.deepEqual(result, {
+      agent_name: agent.path,
+      delivery: "already_active_initial_prompt",
+    });
     const messages = runtime.store.listMessages(agent.agentId);
     assert.equal(messages.length, 2);
     assert.ok(messages.every((message) =>
@@ -276,9 +277,10 @@ describe("Agent message delivery idempotency", () => {
       target: agent.agentId,
       message: "follow-up while activation remains unbound",
     });
-    assert.equal(followup.activated, false);
-    assert.equal(followup.delivery, "activation_pending");
-    assert.deepEqual(followup.turn, { jobId, steeringSequence: null });
+    assert.deepEqual(followup, {
+      agent_name: agent.path,
+      delivery: "activation_pending",
+    });
     assert.deepEqual(getSteeringSnapshot(workspace, jobId), {
       pendingCount: 0,
       unacknowledgedCount: 0,

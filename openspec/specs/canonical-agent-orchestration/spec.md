@@ -31,14 +31,14 @@ The `spawn-agent` skill SHALL classify each requested turn as read/review or aut
 - **THEN** `followup-task` passes the new explicit write intent rather than inheriting the previous one
 
 ### Requirement: Spawn skill presents a concise acknowledgement by default
-The `spawn-agent` skill SHALL receive only the bounded model-facing Agent projection containing stable Agent ID/path, selected model, immutable delegation mode, and bounded lifecycle status. It SHALL present one concise successful acknowledgement derived from the selected model, its configured relative capability/spend role, stable Agent path, and current status. The relative model ladder SHALL be identified as approximate Plugin guidance rather than exact pricing. It SHALL NOT print raw JSON or expose workspace, native session/config, job-pointer, continuation, or mailbox internals; deeper evidence SHALL use the operator diagnostics path. Actionable error or recovery information SHALL remain visible when spawn fails.
+The `spawn-agent` skill SHALL receive only a bounded successful projection containing stable `agent_name`, exact `model`, and bounded lifecycle `status`. It SHALL present one concise acknowledgement derived from those fields and the configured approximate model role. It SHALL NOT print raw JSON or expose Agent IDs, delegation metadata, workspace, native session/config, job, continuation, or mailbox internals; deeper evidence SHALL use the operator diagnostics path. Actionable error or recovery information SHALL remain visible when spawn fails.
 
 #### Scenario: Agent starts successfully
 - **WHEN** `spawn-agent` receives a successful bounded runtime receipt
-- **THEN** Codex reports the selected model, its concise role and relative tier within `Haiku < Sonnet < Opus < Fable`, Agent path, and current status without dumping JSON or internal state
+- **THEN** Codex reports the selected model, concise role, stable Agent name, and current status without dumping JSON or internal state
 
 #### Scenario: Deeper diagnostics are requested
-- **WHEN** the user needs session, job, continuation, workspace, or mailbox evidence
+- **WHEN** the user needs Agent ID, delegation, session, job, continuation, workspace, or mailbox evidence
 - **THEN** the ordinary Agent receipt remains bounded and the operator diagnostics path is used instead
 
 #### Scenario: Spawn fails or requires recovery
@@ -113,37 +113,37 @@ The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass
 - **THEN** the runtime rejects the request before creating an Agent reservation or launching Claude
 
 ### Requirement: Claude-native delegation is explicit and bounded
-Every Agent SHALL persist one immutable `delegation_mode` selected at spawn. Omitted mode SHALL mean `leaf`. Only exact model `claude-fable-5` with explicit `claude_orchestrator` SHALL be permitted to use Claude Code native subagents. A non-Fable orchestrator request or a leaf tool grant matching `Agent` or `Agent(...)` SHALL fail before readiness, Agent reservation, mailbox mutation, job preparation, or Claude launch. The Plugin SHALL track only the durable parent CC Agent and SHALL require an orchestrating Fable turn to join its one-generation native children and return one self-contained synthesis.
+Every Agent SHALL persist one immutable `delegation_mode` selected at spawn. Omitted mode SHALL mean `leaf`. Every activation SHALL deny the native `Workflow` tool. Only exact model `claude-fable-5` with explicit `claude_orchestrator` SHALL be permitted to use the native `Agent` tool. A non-Fable orchestrator request SHALL fail before readiness, Agent reservation, mailbox mutation, job preparation, or Claude launch. The Plugin SHALL track only the durable parent CC Agent and SHALL require an orchestrating Fable turn to join its one-generation native children and return one self-contained synthesis.
 
 #### Scenario: Ordinary Agent is spawned
 - **WHEN** spawn omits `delegation_mode` for any supported model
-- **THEN** the Agent is created as an immutable leaf and native `Agent` use is denied
+- **THEN** the Agent is created as an immutable leaf and native `Agent` and `Workflow` use are denied
 
 #### Scenario: Fable orchestration is explicit
 - **WHEN** spawn selects `claude-fable-5` with `delegation_mode=claude_orchestrator`
-- **THEN** the Fable Agent may use Claude-native one-generation subagents and remains the only Agent represented in the CC registry
+- **THEN** the Fable Agent may use Claude-native `Agent` subagents for one generation, native `Workflow` use is denied, and the Fable parent remains the only Agent represented in the CC registry
 
 #### Scenario: Non-Fable orchestration is requested
 - **WHEN** Haiku, Sonnet, or Opus is combined with `claude_orchestrator`
 - **THEN** spawn fails synchronously with no readiness probe, durable mutation, or Claude process
 
 #### Scenario: Leaf allowlist grants Agent
-- **WHEN** a leaf activation supplies an allowed-tool entry matching `Agent` or an `Agent(...)` permission pattern
-- **THEN** activation fails before readiness or durable mutation instead of emitting contradictory tool policy
+- **WHEN** a leaf activation supplies the retired public `allowed_tools` field with an entry matching `Agent` or an `Agent(...)` permission pattern
+- **THEN** the strict public surface rejects the request before readiness or durable mutation, while the leaf execution profile continues to hard-deny native `Agent`
 
 ### Requirement: spawn_agent creates identity and starts the first turn
-`spawn_agent` SHALL require canonical `task_name`, `message`, explicit supported `model`, and explicit boolean `write`. It SHALL accept only optional `description`, `reasoning_effort`, `allowed_tools`, and `delegation_mode`; public `fork_turns` and `execution_profile` fields SHALL be absent and rejected. The runtime SHALL always use no Codex-history fork and the terminal-parity execution path. Before readiness, Agent creation, mailbox mutation, or job preparation, it SHALL synchronously validate the complete model, effort, delegation, tool, and permission combination. On success it SHALL atomically reserve a root-unique Agent identity with the first-turn message as mailbox sequence one, then start its first internal Claude job from the ordered mailbox assignment. The model-facing Agent projection SHALL contain only stable Agent ID/path, selected model, immutable delegation mode, and bounded lifecycle status; workspace, native session/config, job-pointer, continuation, and mailbox internals SHALL remain outside ordinary model-facing Agent receipts.
+`spawn_agent` SHALL require canonical `task_name`, `message`, explicit supported `model`, and explicit boolean `write`. It SHALL accept only optional `description`, `reasoning_effort`, and `delegation_mode`; public `allowed_tools`, `fork_turns`, and `execution_profile` fields SHALL be absent and rejected. The runtime SHALL always use no Codex-history fork and the terminal-parity execution path. Before readiness, Agent creation, mailbox mutation, or job preparation, it SHALL synchronously validate the complete model, effort, delegation, and permission combination. On success it SHALL atomically reserve a root-unique Agent identity with the first-turn message as mailbox sequence one, then start its first internal Claude job from the ordered mailbox assignment. The model-facing Agent projection SHALL contain only stable Agent ID/path, selected model, immutable delegation mode, and bounded lifecycle status; workspace, native session/config, job-pointer, continuation, and mailbox internals SHALL remain outside ordinary model-facing Agent receipts.
 
 #### Scenario: New Agent starts successfully
-- **WHEN** the name is unique, model/mode/tool/permission combination is valid, explicit write intent is present, and readiness passes
+- **WHEN** the name is unique, model/mode/permission combination is valid, explicit write intent is present, and readiness passes
 - **THEN** the call returns the stable Agent ID/path and a `starting` or `working` first-turn projection whose initial prompt is durably owned by the Agent mailbox
 
 #### Scenario: Activation combination is invalid
-- **WHEN** model, effort, delegation mode, tool policy, or permission arguments are unsupported or incompatible
+- **WHEN** model, effort, delegation mode, or permission arguments are unsupported or incompatible
 - **THEN** spawn fails synchronously before creating an Agent, mailbox entry, job, or steering record and no Claude process starts
 
 #### Scenario: Removed public field is supplied
-- **WHEN** spawn includes `fork_turns` or `execution_profile`
+- **WHEN** spawn includes `allowed_tools`, `fork_turns`, or `execution_profile`
 - **THEN** the strict public schema rejects the request without state mutation
 
 #### Scenario: Write intent is omitted
@@ -197,15 +197,19 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **THEN** it presents one concise sentence reflecting the delivery disposition and does not repeat the message or raw receipt unless the user requested debug detail
 
 ### Requirement: followup_task guarantees activation
-`followup_task` SHALL make the message available to an active Agent promptly or start a new exact-session or receipt-proven safe-fresh turn when the Agent is terminal. It SHALL inherit the Agent's immutable delegation mode and SHALL reject any attempted mode override. Before any path that activates a new turn mutates the mailbox, job store, or steering state, it SHALL synchronously validate the complete inherited mode and requested effort, write, and allowed-tool options. Activation SHALL atomically assign queued Agent-mailbox entries to the winning job.
+`followup_task` SHALL make the message available to an active Agent promptly or start a new exact-session or receipt-proven safe-fresh turn when the Agent is terminal. It SHALL inherit the Agent's immutable delegation mode and SHALL reject any attempted mode override or retired `allowed_tools` field. Before any path that activates a new turn mutates the mailbox, job store, or steering state, it SHALL synchronously validate the complete inherited mode and requested effort and write intent. Activation SHALL atomically assign queued Agent-mailbox entries to the winning job.
 
 #### Scenario: Agent is completed
 - **WHEN** a valid follow-up is submitted to an owner-valid completed Agent
 - **THEN** a new internal job starts on the Agent's exact Claude session, inherits its delegation mode, and consumes queued messages in order
 
 #### Scenario: Activating follow-up has invalid execution options
-- **WHEN** a terminal Agent receives a follow-up with an unsupported effort, permission, tool combination, or delegation-mode override
+- **WHEN** a terminal Agent receives a follow-up with an unsupported effort, permission combination, or delegation-mode override
 - **THEN** follow-up fails before appending or assigning mailbox messages, preparing a job, or writing steering state
+
+#### Scenario: Retired tool allow-list is supplied
+- **WHEN** follow-up includes `allowed_tools`
+- **THEN** follow-up rejects the retired field before mailbox mutation or activation
 
 #### Scenario: Agent is already running
 - **WHEN** follow-up is submitted during an active turn
@@ -361,3 +365,38 @@ The public runtime SHALL expose `spawn_agent`, `send_message`, `followup_task`, 
 #### Scenario: Public runtime is inspected
 - **WHEN** a caller enumerates the frozen Agent interface
 - **THEN** exactly the seven canonical operations are present and old job-oriented operations are absent
+
+### Requirement: Follow-up and interrupt acknowledgements are operation-specific
+A successful `followup_task` model-facing receipt SHALL contain only stable `agent_name` and `delivery`. A successful `interrupt_agent` model-facing receipt SHALL contain only stable `agent_name` and operation `status`, using `no_active_turn`, `interrupted`, `failed`, or `still_working`. Their Skills SHALL present one concise disposition-aware sentence and SHALL NOT echo raw JSON. Actionable failures SHALL remain visible.
+
+#### Scenario: Follow-up is handed off
+- **WHEN** a follow-up is durably delivered, pending activation, already active, or starts a new turn
+- **THEN** the receipt reports only the Agent name and exact delivery disposition
+
+#### Scenario: Active turn is interrupted
+- **WHEN** graceful interruption succeeds
+- **THEN** the receipt reports the Agent name and `interrupted`
+
+#### Scenario: Interruption cannot safely stop the turn
+- **WHEN** forced termination fails safely or produces an unresumable failure
+- **THEN** the receipt reports `still_working` or `failed` without exposing process-control or reconciliation evidence
+
+#### Scenario: Agent has no active turn
+- **WHEN** interruption targets an Agent without an active turn
+- **THEN** the receipt reports the Agent name and `no_active_turn`
+
+### Requirement: Agent Skill guidance has a bounded context footprint
+The seven installed Agent Skills SHALL remain self-contained and preserve their typed inputs, lifecycle distinctions, model and effort policy, behavioral write boundary, delegation depth, join obligations, account-limit stop rule, and actionable failure handling. Their aggregate whitespace-delimited word count SHALL NOT exceed 1,800, and successful presentation guidance SHALL prefer concise synthesis over raw receipt repetition.
+
+#### Scenario: Plugin contract tests inspect Skills
+- **WHEN** all seven installed `SKILL.md` files are measured
+- **THEN** their aggregate word count is at most 1,800 while every required contract marker remains present
+
+#### Scenario: Typed tool is unavailable
+- **WHEN** a Skill cannot resolve its matching MCP tool
+- **THEN** it reports Plugin discovery or startup failure instead of silently invoking a shell fallback
+
+#### Scenario: User requests debug output
+- **WHEN** the user explicitly asks for raw or operator diagnostic detail
+- **THEN** the Skill may present requested evidence through the existing diagnostic boundary without enlarging ordinary success output
+

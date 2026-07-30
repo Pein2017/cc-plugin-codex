@@ -35,9 +35,9 @@ The Plugin exposes one stdio MCP server named `cc_for_pein`. Its seven typed
 tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 
 ```text
-spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, allowed_tools?, delegation_mode? })
+spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, delegation_mode? })
 send_message({ target, message })
-followup_task({ target, message, write?, reasoning_effort?, allowed_tools? })
+followup_task({ target, message, write?, reasoning_effort? })
 wait_agent({ timeout_ms?, wake_on_progress?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
@@ -69,12 +69,13 @@ $cc-for-pein:read-agent-messages
 $cc-for-pein:list-agents
 ```
 
-Successful `spawn-agent` calls report one concise sentence with the selected
-model, its role/tier, stable Agent path, and current status—never final Claude
-text or raw JSON. `send-message` returns only the stable Agent path and delivery
-disposition; the parent confirms it in one short sentence without repeating
-message text or internal IDs. `list-agents` reports only
-canonical name/status/delegation-mode records.
+Successful `spawn-agent` calls return only `agent_name`, `model`, and `status`;
+the parent reports one concise sentence with the model role, Agent name, and
+status—never final Claude text or raw JSON. `send-message` and `followup-task`
+return only `agent_name` plus their delivery disposition. `interrupt-agent`
+returns only `agent_name` and operation status. `list-agents` reports only
+canonical name/status/delegation-mode records. Internal execution evidence
+remains available through operator diagnostics.
 `wait-agent` reports at most one update: by default an acknowledgement-bearing
 completion with the complete stored Claude final message for parent synthesis,
 or one coalesced safe progress update when explicitly requested.
@@ -101,12 +102,20 @@ inherit the Agent's selected model.
 
 Every Agent defaults to immutable `delegation_mode: "leaf"`. The runtime
 appends a bounded Codex-lead role envelope and denies Claude Code's native
-`Agent` tool for leaf turns. Only exact `claude-fable-5` with explicit
+`Agent` and `Workflow` tools for leaf turns. Only exact `claude-fable-5` with explicit
 `delegation_mode: "claude_orchestrator"` may use Claude-native subagents. Those
 children remain opaque inside the Fable session; the CC registry stays flat,
 and the Fable parent must join one child generation and return one
 self-contained synthesis. Haiku, Sonnet, Opus, and ordinary Fable turns remain
-leaves. Public follow-ups inherit the mode and cannot change it.
+leaves. `Workflow` remains denied in orchestrator mode; Fable uses the native
+`Agent` tool for its one child generation. Public follow-ups inherit the mode
+and cannot change it.
+
+The public Agent API has no tool allow-list. Terminal parity inherits ordinary
+Claude tools, MCP servers, hooks, skills, and configuration, with only the
+topology-owned `Agent`/`Workflow` denials above. If progress requires a decision
+only the Codex lead or user can make, the Agent ends its turn with the exact
+question and supporting evidence so the same durable session can continue.
 
 An explicit Claude subscription, usage, weekly/monthly allowance, credit, or
 quota exhaustion ends subsequent real CC tests in that workflow. The runtime
@@ -152,7 +161,7 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.9 |
+| Surface | Codex Multi-Agent V2 | CC for Pein v0.11 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | The same six lifecycle names plus the `read_agent_messages` native-history extension, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | `task_name`, self-contained `message`, exact `model`, and explicit `write`; the runtime never inherits Codex turns |
@@ -187,7 +196,9 @@ There is no public `cancel`, `cancel_job`, archive, close, delete-history, or
 Agent deletion operation. `interrupt_agent` stops only the current turn. A
 successful graceful interruption retains exact-session continuation when the
 receipt proves it; forced termination without flush evidence becomes an
-errored, non-resumable turn while preserving the Agent record.
+errored, non-resumable turn while preserving the Agent record. Its public
+receipt contains only `agent_name` and `status`; control evidence stays in
+operator diagnostics.
 
 ## Durable delivery and continuation
 
@@ -198,7 +209,8 @@ does not start a Claude process. Its successful public receipt contains only
 steering, and timestamp evidence remains in the durable operator state.
 `followup_task` uses the same mailbox but guarantees work: it delivers to an
 active turn, or starts one exact-session or receipt-proven safe-fresh turn and
-assigns queued entries in order.
+assigns queued entries in order. Its successful public receipt contains only
+`agent_name` and `delivery`.
 
 `wait_agent` first checks the current root's durable completion mailbox. Its
 default observation upper bound is 10 minutes and its accepted maximum is one

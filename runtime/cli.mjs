@@ -65,7 +65,7 @@ function output(payload, json = false) {
 
 function rejectForbiddenPublicArgs(argv) {
   const forbidden = normalizeArgv(argv).find((value) =>
-    /^(?:--all|--cwd|--env-file|--owner(?:-root|-session)?-id|--resume-session|--session-id|--agent-type|--service-tier)(?:=|$)/.test(value) ||
+    /^(?:--all|--cwd|--env-file|--owner(?:-root|-session)?-id|--resume-session|--session-id|--agent-type|--service-tier|--allowed-tools)(?:=|$)/.test(value) ||
     /^(?:-C)(?:=|$)/.test(value)
   );
   if (forbidden) {
@@ -91,7 +91,6 @@ async function spawnAgent(argv) {
       "model",
       "reasoning-effort",
       "delegation-mode",
-      "allowed-tools",
       "prompt-file",
     ],
     booleanOptions: ["write"],
@@ -108,7 +107,6 @@ async function spawnAgent(argv) {
     reasoning_effort: options["reasoning-effort"],
     delegation_mode: options["delegation-mode"],
     write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
-    allowed_tools: options["allowed-tools"],
   });
   output(receipt, options.json);
 }
@@ -135,7 +133,6 @@ async function followupTask(argv) {
       "target",
       "message",
       "reasoning-effort",
-      "allowed-tools",
     ],
     booleanOptions: ["write"],
   });
@@ -143,7 +140,6 @@ async function followupTask(argv) {
     ...targetAndMessage(options, positionals),
     reasoning_effort: options["reasoning-effort"],
     write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
-    allowed_tools: options["allowed-tools"],
   });
   output(receipt, options.json);
 }

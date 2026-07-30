@@ -110,9 +110,9 @@ describe("Agent durable launch boundary", () => {
         error: /requires exact model claude-fable-5/,
       },
       {
-        name: "leaf Agent allowlist",
+        name: "retired tool allowlist",
         input: { allowed_tools: ["Agent(explore)"] },
-        error: /cannot allow the native Agent tool/,
+        error: /does not support allowed_tools/,
       },
     ];
 
@@ -150,7 +150,7 @@ describe("Agent durable launch boundary", () => {
         input: { delegation_mode: "claude_orchestrator" },
         error: /does not support delegation_mode/,
       },
-      { input: { allowed_tools: ["Agent"] }, error: /cannot allow the native Agent tool/ },
+      { input: { allowed_tools: ["Agent"] }, error: /does not support allowed_tools/ },
     ];
 
     for (const [index, testCase] of cases.entries()) {
@@ -181,7 +181,7 @@ describe("Agent durable launch boundary", () => {
     }
   });
 
-  it("projects idle interrupt lifecycle through the five public statuses", async () => {
+  it("projects idle interruption as one compact operation outcome", async () => {
     const { runtime } = setup();
     const agent = runtime.store.createAgent({
       task_name: "idle_interrupt_projection",
@@ -189,25 +189,20 @@ describe("Agent durable launch boundary", () => {
     });
 
     const pending = await runtime.interruptAgent({ target: agent.agentId });
-    assert.equal(pending.interrupted, false);
-    assert.equal(pending.status, "no_active_turn");
-    assert.equal(pending.agent.status, "starting");
-    assert.deepEqual(Object.keys(pending.agent).sort(), [
-      "agentId",
-      "delegationMode",
-      "path",
-      "selectedModel",
-      "status",
-    ]);
+    assert.deepEqual(pending, {
+      agent_name: agent.path,
+      status: "no_active_turn",
+    });
 
     runtime.store.updateAgent(agent.agentId, (current) => ({
       ...current,
       status: "errored",
     }));
     const failed = await runtime.interruptAgent({ target: agent.agentId });
-    assert.equal(failed.interrupted, false);
-    assert.equal(failed.status, "no_active_turn");
-    assert.equal(failed.agent.status, "failed");
+    assert.deepEqual(failed, {
+      agent_name: agent.path,
+      status: "no_active_turn",
+    });
   });
 
   it("fails compatibility before spawn or idle follow-up durable mutation", async () => {
@@ -439,13 +434,16 @@ describe("Agent durable launch boundary", () => {
       write: false,
     });
 
-    assert.equal(result.turn.jobId, observedJobId);
-    assert.equal(result.agent.status, "working");
-    assert.equal(result.agent.delegationMode, "leaf");
+    assert.deepEqual(result, {
+      agent_name: "/root/boundary",
+      model: "claude-sonnet-5",
+      status: "working",
+    });
     assert.deepEqual(events, ["ready:start", "ready:end", "reserve", "attach", "launch"]);
-    assert.equal(readJobFile(workspace, observedJobId).agentId, result.agent.agentId);
+    const storedAgent = runtime.store.resolveTarget(result.agent_name);
+    assert.equal(readJobFile(workspace, observedJobId).agentId, storedAgent.agentId);
     assert.equal(readJobFile(workspace, observedJobId).request.delegationMode, "leaf");
-    const messages = runtime.store.listMessages(result.agent.agentId);
+    const messages = runtime.store.listMessages(storedAgent.agentId);
     assert.deepEqual(messages.map((message) => message.sequence), [1, 2]);
     assert.deepEqual(messages.map((message) => message.text), [
       "launch after readiness",
@@ -639,8 +637,12 @@ describe("Agent durable launch boundary", () => {
       message: "follow-up after recovery",
     });
     assert.equal(reserveOptions?.initial, true);
-    assert.equal(followup.activated, true);
+    assert.deepEqual(followup, {
+      agent_name: agent.path,
+      delivery: "new_turn",
+    });
     assert.equal(launchedPrompt, "keep this pending input\n\nfollow-up after recovery");
-    assert.equal(readJobFile(runtime.jobs.cwd, followup.turn.jobId).request.delegationMode, "leaf");
+    const activeJobId = runtime.store.resolveTarget(agent.agentId).activeJobId;
+    assert.equal(readJobFile(runtime.jobs.cwd, activeJobId).request.delegationMode, "leaf");
   });
 });

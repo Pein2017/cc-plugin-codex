@@ -44,28 +44,27 @@ const MODEL_IDS = [
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
 const exactTarget = z.string().trim().min(1).describe(
-  "Exact current-root Agent ID, /root/<task_name> path, or normalized name."
+  "Exact current-root Agent ID, /root/<task_name>, or normalized name."
 );
 const message = z.string().trim().min(1);
 const executionFields = {
   reasoning_effort: z.enum(EFFORTS).optional(),
-  allowed_tools: z.array(z.string().trim().min(1)).min(1).optional(),
 };
 const optionalWrite = z.boolean().optional().describe(
-  "Behavioral mutation intent. False requires read/review-only behavior; true permits task-scoped writes. Both use full-access terminal parity. Omitted follow-up intent inherits."
+  "Behavioral authority: false is read/review-only, true permits task-scoped writes, omitted inherits. Process access is unchanged."
 );
 
 const TOOL_DEFINITIONS = Object.freeze({
   spawn_agent: {
     description:
-      "Experimental: create one durable current-root leaf Claude Agent by default, or an explicit Fable native orchestrator, and return after durable background handoff.",
+      "Experimental: start a durable CC Agent asynchronously; leaf by default, Fable orchestrator only when explicit.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
       description: z.string().trim().min(1).optional(),
       model: z.enum(MODEL_IDS),
       write: z.boolean().describe(
-        "Required behavioral mutation intent. False requires read/review-only behavior; true permits task-scoped writes. Both use full-access terminal parity."
+        "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
       ),
       delegation_mode: z.enum(["leaf", "claude_orchestrator"]).optional(),
       ...executionFields,
@@ -74,23 +73,23 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   send_message: {
     description:
-      "Experimental: durably deliver or queue a message for an exact current-root CC Agent without activating an idle Agent.",
+      "Experimental: deliver to a running CC Agent or queue for idle; never activates it.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   followup_task: {
     description:
-      "Experimental: deliver work to an active Agent or activate one exact-session/safely-fresh follow-up turn, returning after durable background handoff.",
+      "Experimental: deliver work or activate one proven CC Agent continuation asynchronously.",
     inputSchema: z.object({ target: exactTarget, message, ...executionFields, write: optionalWrite }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
     description:
-      "Experimental: synchronously wait for current-root CC Agent completion or timeout. Omit timeout_ms for the 10-minute default; set wake_on_progress only for one intentional intermediate progress observation. Cancellation stops only this observation.",
+      "Experimental: join current-root completion. Omit fields for the 10-minute completion-first default; opt into one progress update only when useful.",
     inputSchema: z.object({
       timeout_ms: z.number().int().min(0).max(3_600_000).optional(),
       wake_on_progress: z.boolean().optional().describe(
-        "Opt in for this call to return one eligible safe progress update before completion. Ordinary joins omit this field."
+        "Return one eligible safe progress update before completion; ordinary joins omit."
       ),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
     }).strict(),
@@ -98,19 +97,19 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   interrupt_agent: {
     description:
-      "Experimental: interrupt only an exact current-root Agent's active turn while preserving its durable identity and proven continuation path.",
+      "Experimental: stop only the current CC Agent turn; preserve identity and proven continuation.",
     inputSchema: z.object({ target: exactTarget }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
   list_agents: {
     description:
-      "Experimental: list durable logical CC Agents in the current Codex root, optionally filtered by stable path prefix.",
+      "Experimental: list current-root durable CC Agents, optionally by path prefix.",
     inputSchema: z.object({ path_prefix: z.string().trim().min(1).optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   read_agent_messages: {
     description:
-      "Experimental: read complete recent outer-assistant text from the native Claude history bound to an exact current-root Agent without activating it.",
+      "Experimental: read complete recent outer-assistant text from a CC Agent native Claude history without activation.",
     inputSchema: z.object({
       target: exactTarget,
       before: z.string().trim().min(1).optional(),

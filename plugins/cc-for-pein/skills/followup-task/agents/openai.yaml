@@ -1,4 +1,4 @@
 interface:
   display_name: "CC Follow-up Task"
   short_description: "Experimental: send work and guarantee Agent activation"
-  default_prompt: "Experimental: use $cc-for-pein:followup-task and invoke mcp__cc_for_pein__followup_task to continue a named Claude Agent; omitted write intent inherits the prior activation, so pass it explicitly whenever authority changes, never fall back to a shell command, and remember that completion cannot reactivate an idle Codex parent."
+  default_prompt: "Experimental: use $cc-for-pein:followup-task and invoke mcp__cc_for_pein__followup_task to continue a named Claude Agent; omitted write intent inherits the prior activation, so pass it whenever authority changes. Summarize success without raw JSON, never fall back to shell, and remember that completion cannot reactivate an idle Codex parent."

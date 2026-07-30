@@ -57,12 +57,6 @@ function resultSessionId(job) {
   return job?.threadId ?? job?.result?.sessionId ?? job?.recoverability?.exactSessionId ?? null;
 }
 
-function normalizeAllowedTools(value) {
-  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
-  if (value == null) return undefined;
-  return String(value).split(",").map((item) => item.trim()).filter(Boolean);
-}
-
 function internalOptions(input, fallback = {}) {
   const requestedModel = input.model ?? fallback.model;
   return {
@@ -72,7 +66,6 @@ function internalOptions(input, fallback = {}) {
     effort: input.reasoning_effort ?? fallback.effort,
     permissionMode: fallback.permissionMode,
     dangerouslySkipPermissions: fallback.dangerouslySkipPermissions,
-    allowedTools: normalizeAllowedTools(input.allowed_tools ?? fallback.allowedTools),
     delegationMode: input.delegation_mode ?? fallback.delegationMode,
   };
 }
@@ -280,13 +273,18 @@ function canonicalFrozenAgentStatus(status) {
   }
 }
 
-function publicAgentReceipt(agent) {
+function publicSpawnReceipt(agent) {
   return {
-    agentId: agent.agentId,
-    path: agent.path,
-    selectedModel: agent.selectedModel,
-    delegationMode: agent.delegationMode,
+    agent_name: agent.path,
+    model: agent.selectedModel,
     status: canonicalAgentStatus(agent),
+  };
+}
+
+function publicFollowupReceipt(agent, delivery) {
+  return {
+    agent_name: agent.path,
+    delivery,
   };
 }
 
@@ -771,6 +769,7 @@ class AgentRuntime {
       "execution_profile",
       "permission_mode",
       "dangerously_skip_permissions",
+      "allowed_tools",
     ]) {
       if (input[key] != null) throw new Error(`spawn_agent does not support ${key}.`);
     }
@@ -840,14 +839,9 @@ class AgentRuntime {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
       launchAttempted = true;
       const assigned = activation.assignedMessages;
-      const turn = await this.jobs.launchPreparedStart(attached, messageText(assigned));
+      await this.jobs.launchPreparedStart(attached, messageText(assigned));
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
-      return {
-        agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-        turn,
-        topology: "flat",
-        residency: "ephemeral_turn",
-      };
+      return publicSpawnReceipt(this.store.resolveTarget(agent.agentId));
     } catch (error) {
       const handoffDisposition = launchAttempted
         ? preparedStartDisposition(error)
@@ -961,6 +955,7 @@ class AgentRuntime {
       "execution_profile",
       "permission_mode",
       "dangerously_skip_permissions",
+      "allowed_tools",
     ]) {
       if (input[key] != null) throw new Error(`followup_task does not support ${key}.`);
     }
@@ -1003,28 +998,22 @@ class AgentRuntime {
     if (agent.activeJobId) {
       const delivery = await this.waitForAssignedDelivery(agent, queued.message);
       if (delivery.delivered) {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "dispatched_active",
-          turn: { jobId: delivery.jobId, steeringSequence: delivery.steeringSequence },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "dispatched_active",
+        );
       }
       if (delivery.reason === "activation_pending") {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "activation_pending",
-          turn: { jobId: delivery.jobId, steeringSequence: null },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "activation_pending",
+        );
       }
       if (delivery.reason === "initial_prompt") {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "already_active_initial_prompt",
-          turn: { jobId: delivery.jobId, steeringSequence: null },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "already_active_initial_prompt",
+        );
       }
       this.reconcile();
       agent = this.store.resolveTarget(agent.agentId);
@@ -1073,42 +1062,31 @@ class AgentRuntime {
           candidate.assignedJobId === latest.activeJobId
         );
       if (message?.deliveryIntent === "initial_prompt") {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "already_active_initial_prompt",
-          turn: { jobId: latest.activeJobId, steeringSequence: null },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "already_active_initial_prompt",
+        );
       }
       if (message?.state === "dispatched" || message?.state === "acknowledged") {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "already_active_dispatched",
-          turn: {
-            jobId: latest.activeJobId,
-            steeringSequence: message.receipt?.steeringSequence ?? null,
-          },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "already_active_dispatched",
+        );
       }
       const delivery = message
         ? await this.waitForAssignedDelivery(latest, message)
         : { delivered: false };
       if (delivery.delivered) {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "dispatched_active",
-          turn: { jobId: delivery.jobId, steeringSequence: delivery.steeringSequence },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "dispatched_active",
+        );
       }
       if (delivery.reason === "activation_pending") {
-        return {
-          agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-          activated: false,
-          delivery: "activation_pending",
-          turn: { jobId: delivery.jobId, steeringSequence: null },
-        };
+        return publicFollowupReceipt(
+          this.store.resolveTarget(agent.agentId),
+          "activation_pending",
+        );
       }
       throw new Error(`Agent ${agent.path} became active but its message could not be delivered.`);
     }
@@ -1123,15 +1101,12 @@ class AgentRuntime {
     try {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
       launchAttempted = true;
-      const turn = await this.jobs.launchPreparedStart(attached, prompt);
+      await this.jobs.launchPreparedStart(attached, prompt);
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
-      return {
-        agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-        activated: true,
-        delivery: "new_turn",
-        turn,
-        assignedMessageIds: assigned.map((message) => message.messageId),
-      };
+      return publicFollowupReceipt(
+        this.store.resolveTarget(agent.agentId),
+        "new_turn",
+      );
     } catch (error) {
       const handoffDisposition = launchAttempted
         ? preparedStartDisposition(error)
@@ -1199,20 +1174,20 @@ class AgentRuntime {
     const agent = this.store.resolveTarget(assertText(input.target, "interrupt_agent target"));
     if (!agent.activeJobId) {
       return {
-        agent: publicAgentReceipt(agent),
-        interrupted: false,
+        agent_name: agent.path,
         status: "no_active_turn",
-        turn: null,
       };
     }
     const turn = await this.jobs.interrupt(agent.activeJobId);
-    const reconciliation = this.reconcile();
+    this.reconcile();
+    const current = this.store.resolveTarget(agent.agentId);
     return {
-      agent: publicAgentReceipt(this.store.resolveTarget(agent.agentId)),
-      interrupted: turn.interrupted,
-      status: turn.status,
-      turn,
-      reconciliation,
+      agent_name: current.path,
+      status: turn.interrupted
+        ? "interrupted"
+        : canonicalAgentStatus(current) === "failed"
+          ? "failed"
+          : "still_working",
     };
   }
 

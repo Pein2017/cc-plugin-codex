@@ -15,6 +15,7 @@ import {
   createCcMcpServer,
   invokeIsolatedRuntimeOperation,
 } from "../../runtime/mcp-server.mjs";
+import { CC_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
 import { PACKAGE_VERSION } from "../../runtime/version.mjs";
 
 const root = path.resolve(new URL("../../", import.meta.url).pathname);
@@ -64,12 +65,15 @@ describe("typed CC MCP server", () => {
     assert.deepEqual(new Set(spawn.inputSchema.required), new Set(["task_name", "message", "model", "write"]));
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "fork_turns"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
+    assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
     assert.deepEqual(spawn.inputSchema.properties.delegation_mode.enum, ["leaf", "claude_orchestrator"]);
-    assert.match(spawn.inputSchema.properties.write.description, /Required[\s\S]*False[\s\S]*true permits[\s\S]*full-access terminal parity/i);
+    assert.match(spawn.inputSchema.properties.write.description, /Required behavioral authority[\s\S]*false[\s\S]*true permits[\s\S]*Process access is unchanged/i);
+    const followup = listed.tools.find((tool) => tool.name === "followup_task");
+    assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
     const wait = listed.tools.find((tool) => tool.name === "wait_agent");
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
-    assert.match(wait.description, /completion[\s\S]*wake_on_progress[\s\S]*one intentional/i);
+    assert.match(wait.description, /join current-root completion[\s\S]*10-minute[\s\S]*one progress update/i);
   });
 
   it("forwards an explicit one-shot progress wakeup without making it required", async () => {
@@ -112,6 +116,42 @@ describe("typed CC MCP server", () => {
     assert.deepEqual(result.structuredContent, receipt);
     assert.deepEqual(JSON.parse(result.content[0].text), receipt);
     assert.equal(JSON.stringify(result).includes("private repeated text"), false);
+  });
+
+  it("passes through exact compact spawn, follow-up, and interrupt receipts", async () => {
+    const receipts = {
+      spawn_agent: {
+        agent_name: "/root/compact",
+        model: "claude-sonnet-5",
+        status: "working",
+      },
+      followup_task: {
+        agent_name: "/root/compact",
+        delivery: "new_turn",
+      },
+      interrupt_agent: {
+        agent_name: "/root/compact",
+        status: "interrupted",
+      },
+    };
+    const { client, server } = await inMemoryClient(() => runtimeMethods((name) => receipts[name] ?? {}));
+    closers.push(() => client.close(), () => server.close());
+
+    for (const [name, argumentsValue] of [
+      ["spawn_agent", {
+        task_name: "compact",
+        message: "bounded task",
+        model: "claude-sonnet-5",
+        write: false,
+      }],
+      ["followup_task", { target: "/root/compact", message: "continue" }],
+      ["interrupt_agent", { target: "/root/compact" }],
+    ]) {
+      const result = await client.callTool({ name, arguments: argumentsValue, _meta: meta });
+      assert.deepEqual(result.structuredContent, receipts[name]);
+      assert.deepEqual(JSON.parse(result.content[0].text), receipts[name]);
+      assert.deepEqual(Object.keys(result.structuredContent), Object.keys(receipts[name]));
+    }
   });
 
   it("requires spawn write intent and preserves explicit false and true without another switch", async () => {
@@ -214,6 +254,13 @@ describe("typed CC MCP server", () => {
     });
     assert.equal(forbidden.isError, true);
     assert.match(forbidden.content[0].text, /invalid|unrecognized|additional/i);
+    const retiredTools = await client.callTool({
+      name: "followup_task",
+      arguments: { target: "/root/audit", message: "continue", allowed_tools: ["Read"] },
+      _meta: meta,
+    });
+    assert.equal(retiredTools.isError, true);
+    assert.match(retiredTools.content[0].text, /invalid|unrecognized|additional/i);
     assert.equal(runtimeCalls, 0);
   });
 
@@ -259,7 +306,7 @@ describe("typed CC MCP server", () => {
     temporaryDirectories.push(directory);
     const runtimeFile = path.join(directory, "runtime.mjs");
     const writeRuntime = (revision) => fs.writeFileSync(runtimeFile, `
-export const CC_MCP_API_GENERATION = 1;
+export const CC_MCP_API_GENERATION = ${CC_MCP_API_GENERATION};
 export function createClaudeRuntime() {
   return { list_agents() { return { revision: ${JSON.stringify(revision)} }; } };
 }
@@ -290,7 +337,7 @@ export function createClaudeRuntime() {
     const runtimeFile = path.join(directory, "runtime.mjs");
     fs.writeFileSync(runtimeFile, `
 import fs from "node:fs";
-export const CC_MCP_API_GENERATION = 2;
+export const CC_MCP_API_GENERATION = ${CC_MCP_API_GENERATION + 1};
 export function createClaudeRuntime() {
   fs.writeFileSync(${JSON.stringify(marker)}, "called");
   return { list_agents() { return {}; } };

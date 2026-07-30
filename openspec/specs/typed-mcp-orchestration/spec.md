@@ -17,11 +17,19 @@ The installed Plugin SHALL declare one required local stdio MCP server named `cc
 - **THEN** the call fails before durable runtime state changes
 
 ### Requirement: Typed spawn schema exposes only lead decisions
-The typed `spawn_agent` schema SHALL require `task_name`, `message`, exact supported `model`, and boolean `write`. It SHALL expose only optional `description`, `reasoning_effort`, `allowed_tools`, and `delegation_mode`. It SHALL reject `fork_turns`, `execution_profile`, working-directory, environment-file, native-session, permission-mode, and dangerous-bypass fields as unknown public inputs.
+The typed `spawn_agent` schema SHALL require `task_name`, `message`, exact supported `model`, and boolean `write`. It SHALL expose only optional `description`, `reasoning_effort`, and `delegation_mode`. The typed `followup_task` schema SHALL expose only `target`, `message`, optional `reasoning_effort`, and optional `write`. Both SHALL reject `allowed_tools`; spawn SHALL also reject `fork_turns`, `execution_profile`, working-directory, environment-file, native-session, permission-mode, and dangerous-bypass fields as unknown public inputs.
 
 #### Scenario: Minimal read-only spawn is submitted
 - **WHEN** Codex supplies task name, message, exact model, and `write: false`
-- **THEN** typed validation accepts the request without requiring a fork or profile selector
+- **THEN** typed validation accepts the request without requiring a fork, profile selector, or tool list
+
+#### Scenario: Retired tool allow-list is submitted to spawn
+- **WHEN** a caller supplies `allowed_tools` to `spawn_agent`
+- **THEN** strict typed validation rejects the call before the runtime factory mutates state
+
+#### Scenario: Retired tool allow-list is submitted to follow-up
+- **WHEN** a caller supplies `allowed_tools` to `followup_task`
+- **THEN** strict typed validation rejects the call before mailbox or activation state changes
 
 #### Scenario: Legacy public selectors are submitted
 - **WHEN** a caller supplies `fork_turns` or `execution_profile`
@@ -122,15 +130,27 @@ The Plugin MCP declaration SHALL configure an outer tool-call timeout of 3660 se
 - **THEN** the runtime has a one-minute transport margin to return completion, explicitly requested progress, or timeout before Codex ends the MCP call
 
 ### Requirement: MCP receipts remain complete and structured
-Successful MCP tools SHALL return the matching operation's complete bounded public runtime receipt as structured content with a JSON text representation for protocol clients. The MCP adapter SHALL NOT supplement a compact operation-specific receipt with internal Agent, message, job, steering, session, or persistence evidence. Runtime validation, compatibility, subscription-limit, continuation, and recovery errors SHALL remain actionable while excluding arbitrary environment values, raw private state, and foreign-root evidence.
+Successful MCP tools SHALL return the matching operation's complete bounded public runtime receipt as structured content with a JSON text representation for protocol clients. Spawn SHALL expose only `agent_name`, `model`, and `status`; follow-up SHALL expose only `agent_name` and `delivery`; interrupt SHALL expose only `agent_name` and operation `status`. Other operation-specific receipts, including complete wait completion delivery, SHALL remain unchanged. The MCP adapter SHALL NOT supplement a compact receipt with internal Agent, message, job, steering, session, or persistence evidence. Runtime validation, compatibility, subscription-limit, continuation, and recovery errors SHALL remain actionable while excluding arbitrary environment values, raw private state, and foreign-root evidence.
 
 #### Scenario: Spawn succeeds
 - **WHEN** the runtime returns a durable spawn receipt
-- **THEN** the MCP result contains that receipt without inventing another Agent or terminal session identifier
+- **THEN** the MCP result contains exactly `agent_name`, `model`, and `status` without inventing another Agent or terminal session identifier
+
+#### Scenario: Follow-up succeeds
+- **WHEN** the runtime durably delivers or activates a follow-up
+- **THEN** the MCP result contains exactly `agent_name` and `delivery`
+
+#### Scenario: Interrupt succeeds
+- **WHEN** the runtime completes an interruption request
+- **THEN** the MCP result contains exactly `agent_name` and operation `status`
 
 #### Scenario: Send succeeds with a compact receipt
 - **WHEN** the runtime returns a bounded `send_message` receipt
 - **THEN** the MCP result contains exactly that compact receipt in text and structured content without reconstructing the durable mailbox record
+
+#### Scenario: Wait returns completion
+- **WHEN** `wait_agent` returns an unread completion
+- **THEN** the MCP result preserves the complete stored Agent final message and delivery token
 
 #### Scenario: Runtime rejects a request
 - **WHEN** an operation fails validation or reaches an actionable lifecycle boundary
@@ -150,3 +170,4 @@ The Plugin snapshot SHALL declare an absolute canonical checkout bootstrap and w
 #### Scenario: Canonical checkout is unavailable
 - **WHEN** the fixed checkout or its MCP entrypoint/config/manifest is missing or invalid
 - **THEN** MCP startup fails closed without loading cached or upstream runtime code
+

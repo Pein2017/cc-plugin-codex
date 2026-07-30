@@ -98,9 +98,12 @@ describe("native plugin contract", () => {
     ]) {
       const text = fs.readFileSync(path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"), "utf8");
       assert.match(text, new RegExp(`mcp__cc_for_pein__${operation}`));
-      assert.match(text, /Trusted Codex metadata[\s\S]*workspace\s+and\s+root\s+identity/i);
-      assert.match(text, /never add cwd[\s\S]*environment[\s\S]*(?:owner-root|root identity|owner root)/i);
-      assert.match(text, /Plugin\s+discovery\/startup failure[\s\S]*instead of silently[\s\S]*shell fallback/i);
+      assert.match(text, /Trusted Codex\s+metadata owns cwd\/root/i);
+      assert.match(
+        text,
+        /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin\s+startup or\s+discovery failure/i,
+      );
+      assert.match(text, /never use[\s\S]*shell/i);
       assert.doesNotMatch(text, /cc-runtime\.mjs|runtime\/cli\.mjs|node --/);
 
       const metadata = fs.readFileSync(
@@ -108,7 +111,7 @@ describe("native plugin contract", () => {
         "utf8",
       );
       assert.match(metadata, new RegExp(`mcp__cc_for_pein__${operation}`));
-      assert.match(metadata, /never fall back to a shell command/i);
+      assert.match(metadata, /never fall back to (?:a )?shell(?: command)?/i);
     }
   });
 
@@ -182,13 +185,11 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /stable ID\/path[\s\S]*selected[\s\S]*model[\s\S]*delegation mode[\s\S]*status/i);
-    assert.match(text, /Session, job,[\s\S]*continuation,[\s\S]*workspace,[\s\S]*mailbox[\s\S]*operator\/debug/i);
-    assert.match(text, /one concise sentence[\s\S]*selected model[\s\S]*role\/tier[\s\S]*Agent path[\s\S]*current status/i);
-    assert.match(text, /Do not[\s\S]*include final[\s\S]*Claude text[\s\S]*raw JSON/i);
-    assert.match(text, /deeper diagnostics[\s\S]*operator diagnostics path/i);
-    assert.match(text, /failure[\s\S]*actionable details/i);
-    assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
+    assert.match(text, /one sentence[\s\S]*`model`[\s\S]*`agent_name`[\s\S]*`status`/i);
+    assert.match(text, /no final Claude text[\s\S]*JSON[\s\S]*internal IDs/i);
+    assert.match(text, /operator diagnostics[\s\S]*deeper evidence/i);
+    assert.match(text, /actionable failure\/recovery detail/i);
+    assert.doesNotMatch(text, /receipt exactly as returned/i);
   });
 
   it("documents exact Claude model and effort identifiers without invented fallback", () => {
@@ -196,38 +197,26 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /Haiku 4\.5[\s\S]*model: "claude-haiku-4-5"/);
-    assert.match(text, /Sonnet 5[\s\S]*model: "claude-sonnet-5"/);
-    assert.match(text, /Opus 5[\s\S]*model: "claude-opus-5"/);
-    assert.match(text, /Fable 5[\s\S]*model: "claude-fable-5"/);
-    assert.match(text, /supports exactly four[\s\S]*full Claude model IDs/i);
-    assert.match(text, /Haiku[\s\S]*cheapest and fastest[\s\S]*tests[\s\S]*real smoke[\s\S]*small mechanical work/i);
-    assert.match(text, /Haiku\/low[\s\S]*recommended real-smoke[\s\S]*route[\s\S]*not test-only/i);
-    assert.match(text, /Sonnet[\s\S]*balanced default[\s\S]*general coding/i);
-    assert.match(text, /Opus[\s\S]*deep analysis[\s\S]*complex work[\s\S]*high-risk/i);
-    assert.match(text, /Fable[\s\S]*highest[\s\S]*capability and spend[\s\S]*core decision discussion[\s\S]*planning[\s\S]*not routine code writing/i);
-    assert.match(text, /Relative Plugin guidance, not exact pricing[\s\S]*Haiku < Sonnet < Opus < Fable/i);
-    assert.match(text, /Before invoking[\s\S]*selected model[\s\S]*role\/tier/i);
-    assert.match(text, /model is always explicit/i);
-    assert.match(text, /does not select one of the four model[\s\S]*stop and ask/i);
-    assert.match(text, /must reject a launch without[\s\S]*`model` field/i);
-    assert.doesNotMatch(text, /runtime's explicit default is/);
-    assert.match(text, /Every model accepts exactly `low`,[\s\S]*`medium`, `high`, `xhigh`, or `max`/);
+    for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
+      assert.match(text, new RegExp(model));
+    }
+    assert.match(text, /Haiku[\s\S]*cheapest\/fastest[\s\S]*tests[\s\S]*smoke[\s\S]*mechanical work/i);
+    assert.match(text, /Haiku\/low[\s\S]*preferred[\s\S]*real smoke[\s\S]*not test-only/i);
+    assert.match(text, /Sonnet[\s\S]*balanced general coding/i);
+    assert.match(text, /Opus[\s\S]*deep[\s\S]*complex[\s\S]*high-risk/i);
+    assert.match(text, /Fable[\s\S]*highest capability\/spend[\s\S]*core decisions[\s\S]*planning[\s\S]*not[\s\S]*routine coding/i);
+    assert.match(text, /Approximate guidance, not exact pricing[\s\S]*Haiku < Sonnet < Opus < Fable/i);
+    assert.match(text, /Ask when no model family was selected/i);
     assert.match(text, /low.*medium.*high.*xhigh.*max/s);
-    assert.match(text, /Never pass a partial model ID[\s\S]*`haiku-4-5`[\s\S]*`sonnet-5`[\s\S]*`opus-5`[\s\S]*`fable-5`/);
-    assert.match(text, /Ops5.*Agent\/task name[\s\S]*not an implicit model/s);
-    assert.match(text, /never silently retry with (?:a )?different[\s\S]*model/i);
-    assert.match(text, /subscription[\s\S]*usage[\s\S]*weekly\/monthly[\s\S]*credits[\s\S]*quota[\s\S]*stop all subsequent[\s\S]*real Claude/i);
-    assert.match(text, /generic[\s\S]*HTTP 429[\s\S]*bounded reconnect/i);
-    assert.match(text, /--max-budget-usd[\s\S]*not subscription exhaustion/i);
-    assert.match(text, /Pass `write: false`[\s\S]*behavioral[\s\S]*not an OS-enforced read-only sandbox/i);
-    assert.match(text, /Pass `write: true`[\s\S]*supplied task/i);
-    assert.match(text, /both values[\s\S]*`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);
-    assert.match(text, /Never omit `write` from a model-facing spawn/i);
-    assert.match(text, /delegation_mode: "leaf"[\s\S]*claude_orchestrator[\s\S]*claude-fable-5/i);
-    assert.match(text, /disables Claude Code's native `Agent` tool/i);
+    assert.match(text, /Agent label such as Ops5[\s\S]*partial IDs[\s\S]*substitute another model/i);
+    assert.match(text, /subscription[\s\S]*usage[\s\S]*allowance[\s\S]*credit[\s\S]*quota exhaustion[\s\S]*stop further real Claude tests/i);
+    assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
+    assert.match(text, /`write: false`[\s\S]*prompt-enforced read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation/i);
+    assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
+    assert.match(text, /`leaf`[\s\S]*native `Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Fable/i);
+    assert.match(text, /Fable must join every child[\s\S]*`Workflow` remains[\s\S]*disabled/i);
+    assert.doesNotMatch(text, /allowed_tools/);
     assert.doesNotMatch(text, /fork_turns|execution_profile/);
-    assert.doesNotMatch(text, /`running` spawn acknowledgement/i);
   });
 
   it("documents follow-up write inheritance and explicit authority changes", () => {
@@ -235,19 +224,18 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "cc-for-pein", "skills", "followup-task", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /Omitted `write` inherits[\s\S]*latest activation intent/i);
-    assert.match(text, /`write: false`[\s\S]*`write: true`/i);
-    assert.match(text, /both values[\s\S]*`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);
-    assert.match(text, /not an OS-enforced read-only sandbox/i);
+    assert.match(text, /Omitted `write` inherits[\s\S]*latest behavioral authority/i);
+    assert.match(text, /Pass `false`[\s\S]*and `true`/i);
+    assert.match(text, /full-access terminal parity[\s\S]*prompt-enforced/i);
+    assert.match(text, /`agent_name`[\s\S]*`delivery`[\s\S]*raw JSON/i);
   });
 
   it("keeps send-message receipts and presentation compact", () => {
     const skillRoot = path.join(root, "plugins", "cc-for-pein", "skills", "send-message");
     const text = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
-    assert.match(text, /successful receipt[\s\S]*`agent_name`[\s\S]*`delivery`/i);
-    assert.match(text, /one concise disposition-aware sentence/i);
-    assert.match(text, /never print[\s\S]*raw JSON[\s\S]*repeat the sent message/i);
-    assert.match(text, /queued_no_turn[\s\S]*followup-task[\s\S]*activate the idle Agent/i);
+    assert.match(text, /one concise sentence[\s\S]*`agent_name`[\s\S]*`delivery`/i);
+    assert.match(text, /Do not repeat the message or JSON/i);
+    assert.match(text, /queued_no_turn[\s\S]*followup-task/i);
     assert.doesNotMatch(text, /Present the delivery receipt exactly as returned/);
 
     const metadata = fs.readFileSync(path.join(skillRoot, "agents", "openai.yaml"), "utf8");
@@ -263,16 +251,15 @@ describe("native plugin contract", () => {
       );
       assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
       assert.match(text, /Experimental/i);
-      if (name === "list-agents") assert.match(text, /final Claude output/i);
+      if (name === "list-agents") assert.match(text, /final output/i);
       else {
         assert.match(text, /complete stored[\s\S]*completion_message/i);
-        assert.match(text, /ordinary required join[\s\S]*omit both `timeout_ms` and[\s\S]*`wake_on_progress`/i);
+        assert.match(text, /ordinary join omit timeout and progress/i);
         assert.match(text, /600000 ms/);
         assert.match(text, /3600000 ms/);
-        assert.match(text, /5 to 10, 20, and[\s\S]*30 seconds/);
-        assert.match(text, /Call wait sparingly/i);
-        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate observation/i);
-        assert.match(text, /do not reflexively request progress again/i);
+        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate update/i);
+        assert.match(text, /not repeated polling/i);
+        assert.match(text, /Do not narrate unchanged timeouts/i);
 
         const metadata = fs.readFileSync(
           path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
@@ -282,6 +269,20 @@ describe("native plugin contract", () => {
         assert.match(metadata, /wake_on_progress[\s\S]*one intentional intermediate observation/i);
       }
     }
+  });
+
+  it("keeps the seven self-contained Skill instructions within the context budget", () => {
+    let words = 0;
+    for (const name of canonicalSkills) {
+      const text = fs.readFileSync(
+        path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
+        "utf8",
+      );
+      words += text.trim().split(/\s+/u).length;
+      assert.match(text, /Experimental/i);
+      assert.match(text, /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin/i);
+    }
+    assert.ok(words <= 1_800, `Agent Skill guidance uses ${words} words`);
   });
 
   it("marks all seven skill prompts and discovery descriptions Experimental", () => {

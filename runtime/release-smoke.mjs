@@ -51,12 +51,11 @@ async function runPaidSmoke(client, meta, options = {}) {
       name: "spawn_agent",
       arguments: {
         task_name: taskName,
-        message: "Use the Bash tool to run pwd without modifying anything. Then reply exactly CC_RELEASE_SMOKE_OK.",
+        message: "Inspect your available native tools, use Bash to run pwd without modifying anything, and do not delegate. If Workflow is unavailable, reply exactly CC_RELEASE_SMOKE_OK. If Workflow is available, reply exactly CC_RELEASE_SMOKE_WORKFLOW_VISIBLE.",
         description: "Explicit paid release acceptance smoke",
         model: REAL_SMOKE_MODEL,
         reasoning_effort: REAL_SMOKE_EFFORT,
         write: false,
-        allowed_tools: ["Bash"],
       },
       _meta: meta,
     }, undefined, callOptions(60_000));

@@ -19,32 +19,30 @@ export const EXECUTION_PROFILES = new Set(["safe", "terminal-parity"]);
 export const DELEGATION_MODES = new Set(["leaf", "claude_orchestrator"]);
 
 const COMMON_DELEGATION_PROMPT = [
-  "You are a bounded Claude Agent delegated by a Codex lead.",
-  "Stay within the supplied task, workspace, and authority.",
-  "Codex owns user-facing synthesis and final acceptance.",
-  "Return one self-contained final result containing the evidence and conclusions the lead needs.",
+  "You are a bounded Claude Agent delegated by Codex.",
+  "Stay within the task, workspace, and authority; Codex owns user-facing synthesis and acceptance.",
+  "Return one self-contained final result with needed evidence and conclusions.",
+  "If blocked on a lead/user decision, end with the exact question and evidence; this session can continue.",
 ].join(" ");
 
 const READ_ONLY_AUTHORITY_PROMPT = [
-  "Authority: read and review only.",
-  "Full Claude CLI permissions are granted only to avoid headless permission prompts.",
-  "Do not create, edit, delete, rename, move, or otherwise mutate workspace files, repository state, or external systems.",
+  "Read/review only: full CLI access avoids prompts but grants no mutation authority.",
+  "Do not change files, repository state, or external systems.",
 ].join(" ");
 
 const WRITE_AUTHORITY_PROMPT = [
-  "Authority: task-scoped workspace mutation is allowed.",
-  "Change only what the supplied task requires and preserve unrelated user work.",
+  "Task-scoped workspace mutation is allowed; change only what is required and preserve unrelated work.",
 ].join(" ");
 
 const LEAF_DELEGATION_PROMPT = [
   COMMON_DELEGATION_PROMPT,
-  "Act as a leaf Agent: do not delegate work or invoke the native Agent tool.",
+  "Act as a leaf: do not delegate or use Agent/Workflow.",
 ].join(" ");
 
 const CLAUDE_ORCHESTRATOR_PROMPT = [
   COMMON_DELEGATION_PROMPT,
-  "You may use Claude Code native subagents for at most one child generation.",
-  "Join every child you start and synthesize their work into your own final response.",
+  "You may use Agent for one child generation; never use Workflow.",
+  "Join every child and synthesize them in your final response.",
 ].join(" ");
 
 export function normalizeDelegationMode(value) {
@@ -132,12 +130,11 @@ export function createExecutionProfile(options = {}) {
       model,
       appendSystemPrompt: delegationPrompt(delegationMode, Boolean(options.write)),
     };
-    if (delegationMode === "leaf") claudeOptions.disallowedTools = ["Agent"];
+    claudeOptions.disallowedTools = delegationMode === "leaf"
+      ? ["Agent", "Workflow"]
+      : ["Workflow"];
     claudeOptions.dangerouslySkipPermissions = true;
     if (effort) claudeOptions.effort = effort;
-    if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
-      claudeOptions.allowedTools = options.allowedTools;
-    }
     return {
       name,
       claudeOptions,
@@ -164,7 +161,9 @@ export function createExecutionProfile(options = {}) {
       ? runningAsRoot ? undefined : "bypassPermissions"
       : "dontAsk"),
   };
-  if (delegationMode === "leaf") claudeOptions.disallowedTools = ["Agent"];
+  claudeOptions.disallowedTools = delegationMode === "leaf"
+    ? ["Agent", "Workflow"]
+    : ["Workflow"];
   if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
     claudeOptions.allowedTools = options.allowedTools;
   } else if (!options.write) {
@@ -184,7 +183,7 @@ export function createExecutionProfile(options = {}) {
         "model",
         "effort",
         "appendSystemPrompt",
-        ...(delegationMode === "leaf" ? ["disallowedTools"] : []),
+        "disallowedTools",
         "settings",
         "permission",
         ...(options.write ? [] : ["allowedTools"]),

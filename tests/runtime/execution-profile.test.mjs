@@ -118,21 +118,28 @@ describe("execution profiles", () => {
     fable.cleanup();
   });
 
-  it("preserves caller-explicit tool selection but rejects permission-mode conflicts", () => {
+  it("ignores a terminal-parity allow-list while preserving internal safe tool selection", () => {
     const profile = createExecutionProfile({
       profile: "terminal-parity",
       model: "opus",
       allowedTools: ["mcp__serena__get_symbols_overview"],
       env: {},
     });
-    assert.deepEqual(profile.claudeOptions.allowedTools, ["mcp__serena__get_symbols_overview"]);
+    assert.equal(profile.claudeOptions.allowedTools, undefined);
     assert.deepEqual(profile.receipt.addedOverrides.sort(), [
-      "allowedTools",
       "appendSystemPrompt",
       "dangerouslySkipPermissions",
       "disallowedTools",
       "model",
     ]);
+    const safe = createExecutionProfile({
+      profile: "safe",
+      model: "opus",
+      allowedTools: ["mcp__serena__get_symbols_overview"],
+      env: {},
+    });
+    assert.deepEqual(safe.claudeOptions.allowedTools, ["mcp__serena__get_symbols_overview"]);
+    safe.cleanup();
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
@@ -174,7 +181,7 @@ describe("execution profiles", () => {
       dangerouslySkipPermissions: true,
     });
     assert.equal(explicitReadBypass.claudeOptions.dangerouslySkipPermissions, true);
-    assert.match(explicitReadBypass.claudeOptions.appendSystemPrompt, /read and review only/i);
+    assert.match(explicitReadBypass.claudeOptions.appendSystemPrompt, /read\/review only/i);
     assert.throws(
       () => createExecutionProfile({
         profile: "terminal-parity",
@@ -206,11 +213,12 @@ describe("execution profiles", () => {
       delegationMode: "leaf",
       env: {},
     });
-    assert.match(leaf.claudeOptions.appendSystemPrompt, /Codex lead/i);
-    assert.match(leaf.claudeOptions.appendSystemPrompt, /leaf Agent/i);
-    assert.match(leaf.claudeOptions.appendSystemPrompt, /read and review only/i);
-    assert.match(leaf.claudeOptions.appendSystemPrompt, /full Claude CLI permissions/i);
-    assert.deepEqual(leaf.claudeOptions.disallowedTools, ["Agent"]);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /delegated by Codex/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /Act as a leaf/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /read\/review only/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /full CLI access avoids prompts/i);
+    assert.match(leaf.claudeOptions.appendSystemPrompt, /blocked on a lead\/user decision/i);
+    assert.deepEqual(leaf.claudeOptions.disallowedTools, ["Agent", "Workflow"]);
 
     const writingLeaf = createExecutionProfile({
       profile: "terminal-parity",
@@ -219,7 +227,8 @@ describe("execution profiles", () => {
       env: {},
     });
     assert.match(writingLeaf.claudeOptions.appendSystemPrompt, /task-scoped workspace mutation/i);
-    assert.doesNotMatch(writingLeaf.claudeOptions.appendSystemPrompt, /read and review only/i);
+    assert.doesNotMatch(writingLeaf.claudeOptions.appendSystemPrompt, /read\/review only/i);
+    assert.deepEqual(writingLeaf.claudeOptions.disallowedTools, ["Agent", "Workflow"]);
 
     for (const tool of ["Agent", "Agent(explore)", "Agent(plan, explore)"]) {
       assert.throws(
@@ -243,6 +252,7 @@ describe("execution profiles", () => {
     });
     assert.match(orchestrator.claudeOptions.appendSystemPrompt, /one child generation/i);
     assert.match(orchestrator.claudeOptions.appendSystemPrompt, /join every child/i);
-    assert.equal(orchestrator.claudeOptions.disallowedTools, undefined);
+    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /never use Workflow/i);
+    assert.deepEqual(orchestrator.claudeOptions.disallowedTools, ["Workflow"]);
   });
 });
