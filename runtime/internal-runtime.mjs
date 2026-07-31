@@ -440,7 +440,6 @@ const PUBLIC_PROGRESS_ACTIVITY = Object.freeze({
   thinking: { phase: "thinking", summary: "Claude is reasoning." },
   responding: { phase: "running", summary: "Claude is drafting its response." },
   tool: { phase: "tool", summary: "Claude is using a tool." },
-  hook: { phase: "hook", summary: "Claude completed a hook." },
   retrying: { phase: "retry", summary: "Claude is retrying an API request." },
   reconnecting: { phase: "reconnect_backoff", summary: "Claude is reconnecting." },
 });

@@ -40,13 +40,6 @@ export const ACTIVE_JOB_STATUSES = new Set([
   "interrupting",
   "cancelling",
 ]);
-export const PUBLIC_PROGRESS_INITIAL_DELIVERY_INTERVAL_MS = 5_000;
-export const PUBLIC_PROGRESS_MAX_DELIVERY_INTERVAL_MS = 30_000;
-const PUBLIC_PROGRESS_RESET_ACTIVITIES = new Set([
-  "retrying",
-  "reconnecting",
-  "responding",
-]);
 const NO_SESSION_RETENTION_BUCKET = "__no-session__";
 const SESSION_LEASES_DIR_NAME = "session-leases";
 const SESSION_LEASE_PENDING_GRACE_MS = 10_000;
@@ -893,19 +886,19 @@ export function mutateJob(cwd, jobId, updater) {
   }
 }
 
-export function isJobPublicProgressDeliveryEligible(job, nowMs = Date.now()) {
+export function isJobPublicProgressDeliveryEligible(job) {
   const revision = Number(job?.publicProgress?.revision ?? 0);
   const deliveredRevision = Number(job?.publicProgressDeliveredRevision ?? 0);
-  if (!Number.isSafeInteger(revision) || revision < 1 || revision <= deliveredRevision) {
+  if (
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    !Number.isSafeInteger(deliveredRevision) ||
+    deliveredRevision !== 0
+  ) {
     return false;
   }
   const activity = String(job?.publicProgress?.activity ?? "");
-  const deliveredActivity = String(job?.publicProgressDeliveredActivity ?? "");
-  if (PUBLIC_PROGRESS_RESET_ACTIVITIES.has(activity) && activity !== deliveredActivity) {
-    return true;
-  }
-  const nextDeliveryAt = Date.parse(job?.publicProgressNextDeliveryAt ?? "");
-  return !Number.isFinite(nextDeliveryAt) || nowMs >= nextDeliveryAt;
+  return activity !== "hook";
 }
 
 /**
@@ -923,23 +916,7 @@ export function claimJobPublicProgress(cwd, jobId) {
       return { claimed: false, job };
     }
     const revision = Number(job.publicProgress.revision);
-    const deliveredRevision = Number(job.publicProgressDeliveredRevision ?? 0);
     const activity = String(job.publicProgress.activity ?? "");
-    const deliveredActivity = String(job.publicProgressDeliveredActivity ?? "");
-    const priorInterval = Number(job.publicProgressDeliveryIntervalMs);
-    const hasAdaptiveState = Number.isFinite(Date.parse(job.publicProgressDeliveredAt ?? ""));
-    const resetBackoff = !hasAdaptiveState || deliveredRevision < 1 || (
-      PUBLIC_PROGRESS_RESET_ACTIVITIES.has(activity) && activity !== deliveredActivity
-    );
-    const normalizedPriorInterval = Number.isFinite(priorInterval) && priorInterval > 0
-      ? Math.min(priorInterval, PUBLIC_PROGRESS_MAX_DELIVERY_INTERVAL_MS)
-      : PUBLIC_PROGRESS_INITIAL_DELIVERY_INTERVAL_MS;
-    const nextInterval = resetBackoff
-      ? PUBLIC_PROGRESS_INITIAL_DELIVERY_INTERVAL_MS
-      : Math.min(
-          normalizedPriorInterval * 2,
-          PUBLIC_PROGRESS_MAX_DELIVERY_INTERVAL_MS
-        );
     const deliveredAt = nowIso();
     const updatedJob = {
       ...job,
@@ -947,8 +924,6 @@ export function claimJobPublicProgress(cwd, jobId) {
       publicProgressDeliveredRevision: revision,
       publicProgressDeliveredActivity: activity,
       publicProgressDeliveredAt: deliveredAt,
-      publicProgressDeliveryIntervalMs: nextInterval,
-      publicProgressNextDeliveryAt: new Date(Date.parse(deliveredAt) + nextInterval).toISOString(),
       updatedAt: deliveredAt,
     };
     writeAtomic(jobFile, updatedJob);

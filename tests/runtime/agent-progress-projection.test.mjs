@@ -123,12 +123,9 @@ describe("Agent progress projection", () => {
     });
   });
 
-  it("adaptively backs off routine progress while urgent phase changes reset delivery", async () => {
+  it("keeps hook progress private without consuming the job progress budget", async () => {
     const { runtime, workspace } = setup();
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 3);
     let job = readJobFile(workspace, "cc-progress");
-    assert.equal(job.publicProgressDeliveryIntervalMs, 5_000);
-
     writeJobFile(workspace, "cc-progress", {
       ...job,
       publicProgress: {
@@ -140,29 +137,71 @@ describe("Agent progress projection", () => {
       },
     });
     assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).timedOut, true);
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 0);
 
     job = readJobFile(workspace, "cc-progress");
-    writeJobFile(workspace, "cc-progress", {
-      ...job,
-      publicProgressNextDeliveryAt: new Date(Date.now() - 1).toISOString(),
-    });
-    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 4);
-    job = readJobFile(workspace, "cc-progress");
-    assert.equal(job.publicProgressDeliveryIntervalMs, 10_000);
-
     writeJobFile(workspace, "cc-progress", {
       ...job,
       publicProgress: {
         revision: 5,
-        activity: "retrying",
-        phase: "retry",
-        summary: "Claude is retrying an API request.",
+        activity: "tool",
+        phase: "tool",
+        summary: "Claude is using Read.",
         updatedAt: "2026-07-26T00:00:05.000Z",
       },
     });
-    const urgent = await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true });
-    assert.equal(urgent.update.progress.activity, "retrying");
-    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveryIntervalMs, 5_000);
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 5);
+  });
+
+  it("allows no later progress phase after one delivery for the same job", async () => {
+    const { runtime, workspace } = setup();
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 3);
+    const job = readJobFile(workspace, "cc-progress");
+    writeJobFile(workspace, "cc-progress", {
+      ...job,
+      publicProgress: {
+        revision: 4,
+        activity: "retrying",
+        phase: "retry",
+        summary: "Claude is retrying an API request.",
+        updatedAt: "2026-07-26T00:00:04.000Z",
+      },
+    });
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).timedOut, true);
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 3);
+  });
+
+  it("gives a follow-up job for the same Agent a fresh progress budget", async () => {
+    const { runtime, workspace, ownerRootId, agent } = setup();
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true })).update.progress.revision, 3);
+    runtime.store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      activeJobId: "cc-progress-followup",
+      latestJobId: "cc-progress-followup",
+    }));
+    writeJobFile(workspace, "cc-progress-followup", {
+      id: "cc-progress-followup",
+      ownerRootId,
+      agentId: agent.agentId,
+      workspaceRoot: workspace,
+      status: "running",
+      workerPid: process.pid,
+      workerPidIdentity: getProcessIdentity(process.pid),
+      phase: "responding",
+      publicProgressDeliveredRevision: 0,
+      publicProgress: {
+        revision: 1,
+        activity: "responding",
+        phase: "responding",
+        summary: "Claude is preparing a response.",
+        updatedAt: "2026-07-26T00:00:04.000Z",
+      },
+    });
+
+    const receipt = await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true });
+    assert.equal(receipt.update?.kind, "progress");
+    assert.equal(receipt.update.agent_name, agent.path);
+    assert.equal(receipt.update.progress.revision, 1);
   });
 
   it("caps public Agent wait at one hour", async () => {
@@ -223,9 +262,11 @@ describe("Agent progress projection", () => {
       resultPointer: "cc-progress",
     });
 
-    const waited = await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true });
+    const startedAt = Date.now();
+    const waited = await runtime.waitAgent({ timeout_ms: 600_000, wake_on_progress: true });
     assert.equal(waited.update.kind, "completion");
     assert.equal(waited.update.completion_message, "authoritative completion");
+    assert.ok(Date.now() - startedAt < 1_000, "completion should return before the fixed upper bound");
   });
 
   it("atomically claims one progress revision across concurrent waits", async () => {

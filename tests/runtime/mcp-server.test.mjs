@@ -71,12 +71,13 @@ describe("typed CC MCP server", () => {
     const followup = listed.tools.find((tool) => tool.name === "followup_task");
     assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
     const wait = listed.tools.find((tool) => tool.name === "wait_agent");
+    assert.equal(Object.hasOwn(wait.inputSchema.properties, "timeout_ms"), false);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
-    assert.match(wait.description, /join current-root completion[\s\S]*10-minute[\s\S]*one progress update/i);
+    assert.match(wait.description, /critical-path[\s\S]*10-minute completion-first[\s\S]*one progress update per Agent turn[\s\S]*never repeat/i);
   });
 
-  it("forwards an explicit one-shot progress wakeup without making it required", async () => {
+  it("fixes model wait at ten minutes and preserves optional progress plus acknowledgement", async () => {
     const calls = [];
     const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
       calls.push({ name, input });
@@ -87,14 +88,30 @@ describe("typed CC MCP server", () => {
     await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
     await client.callTool({
       name: "wait_agent",
-      arguments: { wake_on_progress: true },
+      arguments: {
+        wake_on_progress: true,
+        acknowledge_tokens: ["delivery-prior"],
+      },
+      _meta: meta,
+    });
+    const rejected = await client.callTool({
+      name: "wait_agent",
+      arguments: { timeout_ms: 1_000 },
       _meta: meta,
     });
 
     assert.deepEqual(calls, [
-      { name: "wait_agent", input: {} },
-      { name: "wait_agent", input: { wake_on_progress: true } },
+      { name: "wait_agent", input: { timeout_ms: 600_000 } },
+      {
+        name: "wait_agent",
+        input: {
+          wake_on_progress: true,
+          acknowledge_tokens: ["delivery-prior"],
+          timeout_ms: 600_000,
+        },
+      },
     ]);
+    assert.equal(rejected.isError, true);
   });
 
   it("preserves a compact send receipt without reconstructing internal evidence", async () => {

@@ -254,19 +254,20 @@ describe("native plugin contract", () => {
       if (name === "list-agents") assert.match(text, /final output/i);
       else {
         assert.match(text, /complete stored[\s\S]*completion_message/i);
-        assert.match(text, /ordinary join omit timeout and progress/i);
+        assert.match(text, /critical path[\s\S]*ordinary join[\s\S]*omit progress/i);
         assert.match(text, /600000 ms/);
-        assert.match(text, /3600000 ms/);
-        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate update/i);
-        assert.match(text, /not repeated polling/i);
+        assert.doesNotMatch(text, /timeout_ms/);
+        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate update per active\s+Agent job/i);
+        assert.match(text, /hook[\s\S]*private/i);
+        assert.match(text, /never repeat progress waiting/i);
         assert.match(text, /Do not narrate unchanged timeouts/i);
 
         const metadata = fs.readFileSync(
           path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
           "utf8",
         );
-        assert.match(metadata, /ordinary join[\s\S]*omit timeout_ms and wake_on_progress[\s\S]*10-minute completion-first default/i);
-        assert.match(metadata, /wake_on_progress[\s\S]*one intentional intermediate observation/i);
+        assert.match(metadata, /critical-path[\s\S]*10-minute completion-first/i);
+        assert.match(metadata, /wake_on_progress[\s\S]*one intentional intermediate observation per Agent turn[\s\S]*never repeat/i);
       }
     }
   });

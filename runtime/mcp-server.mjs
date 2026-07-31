@@ -35,6 +35,7 @@ const SOURCE_ROOT = fs.realpathSync.native(
 const FIXED_ENV_FILE = path.join(SOURCE_ROOT, "config", "runtime.env");
 const RUNTIME_MODULE_URL = pathToFileURL(path.join(SOURCE_ROOT, "runtime", "index.mjs"));
 const MCP_CALL_WORKER_URL = new URL("./mcp-call-worker.mjs", import.meta.url);
+const MODEL_FACING_WAIT_TIMEOUT_MS = 600_000;
 const MODEL_IDS = [
   "claude-haiku-4-5",
   "claude-sonnet-5",
@@ -85,11 +86,10 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: join current-root completion. Omit fields for the 10-minute completion-first default; opt into one progress update only when useful.",
+      "Experimental: use only for a blocked critical-path join. The fixed 10-minute completion-first wait returns early; opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex.",
     inputSchema: z.object({
-      timeout_ms: z.number().int().min(0).max(3_600_000).optional(),
       wake_on_progress: z.boolean().optional().describe(
-        "Return one eligible safe progress update before completion; ordinary joins omit."
+        "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit."
       ),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
     }).strict(),
@@ -253,7 +253,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental CC Agent tools. Spawn is asynchronous; wait_agent is the explicit bounded join. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental CC Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Ordinary wait is completion-first; never repeat progress waiting by reflex. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 
@@ -262,9 +262,12 @@ export function createCcMcpServer(options = {}) {
     /** @type {any} */ (server).registerTool(name, definition, async (input, extra) => {
       try {
         const context = resolveCodexMcpContext(extra._meta, extra.signal);
+        const operationInput = name === "wait_agent"
+          ? { ...input, timeout_ms: MODEL_FACING_WAIT_TIMEOUT_MS }
+          : input;
         const receipt = runtimeFactory
-          ? await runtimeFactory(context)[name](input)
-          : await runtimeInvoker({ operation: name, input, context, signal: extra.signal });
+          ? await runtimeFactory(context)[name](operationInput)
+          : await runtimeInvoker({ operation: name, input: operationInput, context, signal: extra.signal });
         return runtimeReceiptResult(receipt);
       } catch (error) {
         throw sanitizedError(error);
