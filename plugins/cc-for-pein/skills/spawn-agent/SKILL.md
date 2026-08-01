@@ -62,3 +62,11 @@ work remains. A `starting`/`working` acknowledgement never resolves a required
 join. On success report one sentence from `model`, its role, `agent_name`, and
 `status`; no final Claude text, JSON, or internal IDs. Use operator diagnostics
 for deeper evidence, and preserve actionable failure/recovery detail.
+
+A join's non-null `blocking.retry` decides the response, not `scope` alone:
+`same_agent_followup` continues on that same Agent identity via
+`$cc-for-pein:followup-task`, never a new spawn; `new_agent` re-delegates only
+that lane under a new Agent while sibling Agents keep running;
+`operator_required` (always Harness scope) stops every further spawn in that
+workflow, the same stop rule as subscription/usage exhaustion above, with no
+retry, fallback, or model/Harness substitution.

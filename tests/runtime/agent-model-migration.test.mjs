@@ -125,13 +125,16 @@ describe("legacy Agent model migration", () => {
     assert.equal(blocked.continuation.mode, "blocked");
     assert.equal(blocked.continuation.evidence.reason, "legacy_agent_model_unsupported");
     assert.equal(blocked.continuation.evidence.observedModel, "claude-opus-4-7");
+    // The model-facing rejection names only the closed triple; the durable
+    // continuation evidence above (asserted separately) keeps the exact
+    // internal migration reason for operator diagnostics.
     assert.throws(
       () => runtime.sendMessage({ target: agent.agentId, message: "must not queue" }),
-      /legacy_agent_model_unsupported/,
+      /reason=route_unsupported, scope=agent, retry=new_agent/,
     );
     await assert.rejects(
       runtime.followupTask({ target: agent.agentId, message: "must not substitute" }),
-      /legacy_agent_model_unsupported/,
+      /reason=route_unsupported, scope=agent, retry=new_agent/,
     );
   });
 

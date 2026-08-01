@@ -14,6 +14,7 @@
 import { createHash } from "node:crypto";
 
 import { validateHarnessCapabilities } from "./harness-capabilities.mjs";
+import { assertHarnessTurnFailureClass } from "./harness-failure-classes.mjs";
 
 export const HARNESS_DRIVER_CONTRACT_VERSION = 1;
 
@@ -189,11 +190,14 @@ export function validateHarnessTurnResult(result, driver) {
   if (result.status === "completed" && failure.class != null) {
     throw new Error("A completed Harness turn must not classify a failure.");
   }
-  if (
-    result.status !== "completed" &&
-    (typeof failure.class !== "string" || !failure.class.trim())
-  ) {
-    throw new Error("A non-completed Harness turn must classify its failure.");
+  if (result.status !== "completed") {
+    if (typeof failure.class !== "string" || !failure.class.trim()) {
+      throw new Error("A non-completed Harness turn must classify its failure.");
+    }
+    // The empty/missing case above keeps its own message; a non-empty but
+    // unadmitted or free-text class is rejected here, before it becomes
+    // durable continuation evidence or a model-facing receipt.
+    assertHarnessTurnFailureClass(failure.class, `Harness turn result for ${driver.harnessId}`);
   }
   if (typeof failure.resumable !== "boolean") {
     throw new Error("Harness failure classification must state transport resumability.");

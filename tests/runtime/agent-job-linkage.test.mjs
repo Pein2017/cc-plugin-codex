@@ -15,6 +15,7 @@ import { createJobRecord } from "../../runtime/job-runner.mjs";
 import {
   classifyJobRecoverability,
   cleanupOldJobs,
+  reapStaleJobs,
   readJobFile,
   writeJobFile,
 } from "../../runtime/job-store.mjs";
@@ -95,6 +96,47 @@ describe("Agent-linked internal job receipts", () => {
         reason: "unknown failure",
       }
     );
+  });
+
+  it("prefers a structured job.failureClass over the raw operator errorMessage", () => {
+    assert.deepEqual(
+      classifyJobRecoverability({
+        status: "failed",
+        failureClass: "worker_reaped",
+        errorMessage: "Control process 4242 died or changed identity without completing. Auto-reaped.",
+      }),
+      {
+        resumable: false,
+        mode: "blocked",
+        exactSessionId: null,
+        reason: "worker_reaped",
+      }
+    );
+  });
+
+  it("reaps a stale job with the structured worker_reaped fact, never reading errorMessage for classification", () => {
+    const { workspace } = setup();
+    const staleTimestamp = new Date(Date.now() - 60_000).toISOString();
+    const job = {
+      id: "stale-worker",
+      workspaceRoot: workspace,
+      status: "running",
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp,
+      startedAt: staleTimestamp,
+      pid: 999_999,
+      pidIdentity: "stale-nonexistent-identity",
+    };
+    writeJobFile(workspace, job.id, job);
+
+    const [reaped] = reapStaleJobs(workspace, [job]);
+    assert.equal(reaped.status, "failed");
+    assert.equal(reaped.failureClass, "worker_reaped");
+    assert.match(reaped.errorMessage, /died or changed identity without completing\. Auto-reaped\./);
+
+    const recoverability = classifyJobRecoverability(reaped, "failed");
+    assert.equal(recoverability.mode, "blocked");
+    assert.equal(recoverability.reason, "worker_reaped");
   });
 
   it("derives an idempotent Agent completion projection from the terminal job fact", () => {

@@ -32,3 +32,12 @@ ordinary completion-first join; never repeat progress waiting for that job.
   use list as progress, or treat timeout as failure/cancellation.
 - Never finalize with an unresolved required or parallel-then-join result.
   Synthesize the complete message; quote it verbatim only when requested.
+- A completion carries `blocking`: `null` for `completed`, and `null` for an
+  `interrupted` status the parent itself requested and that proved a safe
+  flush — that Agent stays resumable via `$cc-for-pein:followup-task` on its
+  same session, not a failed lane. Otherwise `blocking` is a closed
+  `{reason, scope, retry}`; branch on `retry` per the spawn Skill's join
+  policy. A `completed` turn whose message asks a question is still
+  `blocking: null` regardless of its wording: answer with
+  `$cc-for-pein:followup-task` on that same Agent, never spawn a
+  replacement or infer status from message text.

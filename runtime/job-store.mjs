@@ -124,9 +124,12 @@ export function classifyJobRecoverability(job, status = job?.status) {
           resumable: false,
           mode: "blocked",
           exactSessionId: null,
+          // A structured supervisor-origin fact on `job.failureClass` (e.g.
+          // `worker_reaped`) is preferred over the raw operator `errorMessage`
+          // fallback, exactly as `job.result.failureClass` already is.
           reason: drifted
             ? "session_drift"
-            : job?.result?.failureClass ?? job?.errorMessage ?? "failure_not_proven_resumable",
+            : job?.result?.failureClass ?? job?.failureClass ?? job?.errorMessage ?? "failure_not_proven_resumable",
         };
   }
   return {
@@ -875,11 +878,15 @@ export function reapStaleJobs(cwd, jobs) {
     // Process is dead — transition to failed via CAS
     try {
       const transitioned = transitionJob(cwd, job.id, [job.status], "failed", {
+        // The operator sentence remains the exact diagnostic text; a
+        // structured `worker_reaped` fact alongside it is the only thing a
+        // model-facing projection may ever read (`runtime/agent-blocking.mjs`).
         errorMessage: controlPid
           ? controlIdentity
             ? `Control process ${controlPid} died or changed identity without completing. Auto-reaped.`
             : `Control process ${controlPid} has no deterministic identity; refusing PID-only liveness ownership.`
           : "No live worker claimed this job before the startup grace period. Auto-reaped.",
+        failureClass: "worker_reaped",
         requiresAttention: Boolean(controlPid && !controlIdentity),
         controlFailure: controlPid && !controlIdentity ? "missing_identity" : null,
         completedAt: nowIso(),

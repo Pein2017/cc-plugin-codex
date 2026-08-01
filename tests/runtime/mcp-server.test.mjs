@@ -115,6 +115,53 @@ describe("typed CC MCP server", () => {
     assert.equal(rejected.isError, true);
   });
 
+  it("forwards a non-null wait_agent blocking object unchanged, with no output schema or supplementation", async () => {
+    const update = {
+      kind: "completion",
+      agent_name: "/root/blocked_wait",
+      agent_status: "failed",
+      summary: "Agent turn failed.",
+      completion_message: "",
+      completion_message_truncated: false,
+      delivery_token: "delivery-blocked-wait",
+      blocking: { reason: "auth_required", scope: "harness", retry: "operator_required" },
+    };
+    const receipt = { message: "CC Agent completion is available.", timedOut: false, update };
+    const { client, server } = await inMemoryClient(() => runtimeMethods(() => receipt));
+    closers.push(() => client.close(), () => server.close());
+
+    const listed = await client.listTools();
+    const wait = listed.tools.find((tool) => tool.name === "wait_agent");
+    assert.equal(Object.hasOwn(wait, "outputSchema"), false);
+
+    const result = await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
+    assert.deepEqual(result.structuredContent, receipt);
+    assert.deepEqual(result.structuredContent.update.blocking, update.blocking);
+    assert.deepEqual(JSON.parse(result.content[0].text), receipt);
+    assert.deepEqual(JSON.parse(result.content[0].text).update.blocking, update.blocking);
+  });
+
+  it("forwards a null wait_agent blocking field unchanged rather than synthesizing a reason", async () => {
+    const update = {
+      kind: "completion",
+      agent_name: "/root/completed_wait",
+      agent_status: "completed",
+      summary: "Agent turn completed.",
+      completion_message: "done",
+      completion_message_truncated: false,
+      delivery_token: "delivery-completed-wait",
+      blocking: null,
+    };
+    const receipt = { message: "CC Agent completion is available.", timedOut: false, update };
+    const { client, server } = await inMemoryClient(() => runtimeMethods(() => receipt));
+    closers.push(() => client.close(), () => server.close());
+
+    const result = await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
+    assert.deepEqual(result.structuredContent, receipt);
+    assert.equal(result.structuredContent.update.blocking, null);
+    assert.equal(JSON.parse(result.content[0].text).update.blocking, null);
+  });
+
   it("preserves a compact send receipt without reconstructing internal evidence", async () => {
     const receipt = {
       agent_name: "/root/compact_send",

@@ -11,6 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { assertAgentBlocking, deriveAgentBlocking } from "./agent-blocking.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
 import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
@@ -212,6 +213,10 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   assertText(event.summary, "completion summary");
   assertText(event.deliveryToken, "delivery token");
   validateResumability(event.resumability);
+  // A pre-change stored event has no `blocking` key at all; that absence is
+  // read as `null`, exactly like an explicitly stored `null`, so an older
+  // record on disk is not rejected by a newer runtime.
+  assertAgentBlocking(event.blocking ?? null, "stored completion blocking evidence");
   if (typeof event.detailedResultAvailable !== "boolean") {
     throw new Error("Completion detailed-result availability must be boolean.");
   }
@@ -448,6 +453,7 @@ function normalizeCompletionInput(ownerRootId, completion) {
     completedAt: completion.completedAt == null ? nowIso() : assertText(completion.completedAt, "completion timestamp"),
     summary: assertText(completion.summary, "completion summary"),
     resumability: validateResumability(completion.resumability),
+    blocking: assertAgentBlocking(completion.blocking ?? null, "completion blocking evidence"),
     detailedResultAvailable: Boolean(completion.detailedResultAvailable),
     resultPointer,
     finalMessage,
@@ -472,6 +478,9 @@ function publicEvent(event) {
     completedAt: event.completedAt,
     summary: event.summary,
     resumability: { ...event.resumability },
+    // Absence (a pre-change frozen event) reads as `null`, identical to an
+    // explicitly stored `null`; this projection never recomputes it.
+    blocking: event.blocking ?? null,
     detailedResultAvailable: event.detailedResultAvailable,
     resultPointer: event.resultPointer,
     finalMessage: event.finalMessage,
@@ -498,6 +507,9 @@ function publicAgentCompletionSummary(event) {
     completionMessage: event.finalMessage,
     completionMessageTruncated: Boolean(event.truncated),
     deliveryToken: event.deliveryToken,
+    // Absence (a pre-change frozen event) reads as `null`; this frozen
+    // projection is never recomputed from the current Agent or job state.
+    blocking: event.blocking ?? null,
   };
 }
 
@@ -518,7 +530,12 @@ function sameCompletionFact(existing, normalized) {
     "truncated",
     "claudeSessionIdAvailable",
   ].every((field) => existing[field] === normalized[field]) &&
-    JSON.stringify(existing.resumability) === JSON.stringify(normalized.resumability);
+    JSON.stringify(existing.resumability) === JSON.stringify(normalized.resumability) &&
+    // `blocking` is compared structurally, exactly like `resumability`, rather
+    // than by the `===` scan used for scalars: a pre-change stored event has
+    // no key at all (reads as `null`), so that absence must compare equal to
+    // an explicitly stored `null` rather than always registering as changed.
+    JSON.stringify(existing.blocking ?? null) === JSON.stringify(normalized.blocking ?? null);
 }
 
 function assertSameCompletionIdentity(existing, normalized, ownerRootId) {
@@ -874,14 +891,25 @@ function completionFromTerminalJob(job, options) {
   if (!TERMINAL_STATUSES.has(job.status)) {
     return null;
   }
+  // `job.errorMessage` is deliberately excluded from this chain: it is
+  // operator-only free text (a PID, a manual resume command, or other raw
+  // diagnostic prose) and must never reach a model-facing summary or final
+  // message, even for a malformed or legacy job lacking a prompt-derived
+  // summary. Operator diagnostics still read `job.errorMessage` directly from
+  // the durable job record, unaffected by this projection.
   const summary =
     options.summary ??
     job.completionSummary ??
     job.summary ??
     job.finalMessage ??
-    job.errorMessage ??
     `${job.status} job ${job.id}`;
   const recoverability = job.recoverability ?? null;
+  const blocking = deriveAgentBlocking({
+    terminalStatus: job.status,
+    turnFailureClass: job.result?.failureClass ?? null,
+    supervisorFailureClass: job.failureClass ?? null,
+    continuationMode: recoverability?.mode ?? "blocked",
+  });
   const resumability = options.resumability ?? job.resumability ?? (
     recoverability?.resumable
       ? {
@@ -902,6 +930,7 @@ function completionFromTerminalJob(job, options) {
     completedAt: job.completedAt ?? job.updatedAt ?? nowIso(),
     summary,
     resumability,
+    blocking,
     detailedResultAvailable: options.detailedResultAvailable ?? true,
     resultPointer: options.resultPointer ?? job.id,
     finalMessage:

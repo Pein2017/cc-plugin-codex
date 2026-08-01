@@ -82,6 +82,7 @@ describe("Agent completion projection", () => {
         completion_message: "stored Claude final output for parent synthesis",
         completion_message_truncated: false,
         delivery_token: linked.deliveryToken,
+        blocking: null,
       },
     });
     assert.equal(JSON.stringify(first).includes("stored Claude final output"), true);
@@ -173,5 +174,104 @@ describe("Agent completion projection", () => {
     assert.equal(first.update.completion_message, "legacy stored prefix");
     assert.equal(first.update.completion_message_truncated, true);
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), first);
+  });
+
+  it("reports the closed blocking triple for a failed turn with no outer-assistant text", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "failed_no_text" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "errored" }));
+    appendCompletionEvent(workspace, ownerRootId, {
+      ...completion("agent-failed-no-text", agent.agentId),
+      terminalStatus: "failed",
+      finalMessage: "",
+      resumability: { classification: "not_resumable", blockingReason: "auth_or_permission" },
+      blocking: { reason: "auth_required", scope: "harness", retry: "operator_required" },
+    });
+
+    const first = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(first.update.agent_status, "failed");
+    assert.equal(first.update.summary, "Agent turn failed.");
+    // Today's `completion_message` resolution is unchanged by this projection:
+    // it stays empty rather than being backfilled from `blocking`.
+    assert.equal(first.update.completion_message, "");
+    assert.deepEqual(first.update.blocking, { reason: "auth_required", scope: "harness", retry: "operator_required" });
+  });
+
+  it("reports blocking: null for a completed turn regardless of its final message content", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "completed_with_question" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
+    appendCompletionEvent(workspace, ownerRootId, {
+      ...completion("agent-completed-question", agent.agentId),
+      finalMessage: "Which environment should I deploy to? This looks blocked on your quota.",
+    });
+
+    const first = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(first.update.agent_status, "completed");
+    assert.equal(first.update.blocking, null);
+  });
+
+  it("reports blocking: null for a gracefully interrupted turn whose receipt proves a safe flush", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "graceful_interrupt" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "interrupted" }));
+    appendCompletionEvent(workspace, ownerRootId, {
+      ...completion("agent-graceful-interrupt", agent.agentId),
+      terminalStatus: "interrupted",
+      finalMessage: "partial progress before the parent's own interrupt",
+      resumability: { classification: "resumable", claudeSessionId: "session-graceful-interrupt" },
+      blocking: null,
+    });
+
+    const first = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(first.update.agent_status, "interrupted");
+    assert.equal(first.update.blocking, null);
+  });
+
+  it("reports interrupted_unflushed for an interrupted turn without a receipt proving a safe flush", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "unflushed_interrupt" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "interrupted" }));
+    appendCompletionEvent(workspace, ownerRootId, {
+      ...completion("agent-unflushed-interrupt", agent.agentId),
+      terminalStatus: "interrupted",
+      finalMessage: "",
+      resumability: { classification: "not_resumable", blockingReason: "interrupted_without_exact_session" },
+      blocking: { reason: "interrupted_unflushed", scope: "agent", retry: "new_agent" },
+    });
+
+    const first = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(first.update.agent_status, "interrupted");
+    assert.deepEqual(first.update.blocking, { reason: "interrupted_unflushed", scope: "agent", retry: "new_agent" });
+  });
+
+  it("redelivers blocking: null for a payload frozen before this change, without recomputing", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "pre_change_frozen" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "errored" }));
+    appendCompletionEvent(workspace, ownerRootId, {
+      ...completion("agent-pre-change-frozen", agent.agentId),
+      terminalStatus: "failed",
+      finalMessage: "pre-change failed handoff",
+    });
+
+    // Simulate a stored event from before this change: no `blocking` key at
+    // all, exactly as `runtime/completion-inbox.mjs:463-482` projected before.
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const inbox = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    delete inbox.events[0].blocking;
+    fs.writeFileSync(inboxFile, `${JSON.stringify(inbox, null, 2)}\n`, "utf8");
+
+    const first = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(first.update.agent_status, "failed");
+    assert.equal(first.update.blocking, null);
+
+    // First delivery has now frozen the payload. Even though recomputing from
+    // the terminal fact would yield a non-null triple (a "failed" status
+    // always would), the frozen `null` is redelivered unchanged.
+    const redelivered = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.deepEqual(redelivered, first);
+    const storedAfterDelivery = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    assert.equal("blocking" in storedAfterDelivery.events[0], false);
   });
 });

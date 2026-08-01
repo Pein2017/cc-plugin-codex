@@ -19,5 +19,8 @@ discovery failure; never use a shell fallback.
 - Model and delegation mode are immutable. An idle Agent resumes its exact
   session or a receipt-proven safe-fresh path; a running Agent receives one
   durable message. Never substitute a Terminal Claude session.
+- A blocked Agent rejects with a closed `reason`/`scope`/`retry` instead of
+  raw internal evidence; `retry: new_agent` means that identity and name stay
+  unusable and the lane needs a new Agent.
 - On success, report one concise sentence from `agent_name` and `delivery`;
   show raw JSON only when the user explicitly requests debug detail.

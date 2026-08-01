@@ -199,6 +199,106 @@ describe("completion inbox", () => {
     );
   });
 
+  it("derives blocking purely from the terminal job fact and corrects it once before freezing", () => {
+    const { workspace, ownerRootId } = setup();
+    const job = {
+      id: "blocking-correction",
+      agentId: "agent-blocking-correction",
+      status: "failed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      result: { failureClass: "transport_closed_resumable", rawOutput: "" },
+      recoverability: { resumable: false, mode: "blocked", reason: "transport_closed_resumable" },
+    };
+    const initial = reconcileTerminalJobCompletion(workspace, ownerRootId, job).event;
+    assert.deepEqual(initial.blocking, { reason: "transport_exhausted", scope: "agent", retry: "new_agent" });
+
+    // The turn is later reclassified before first delivery: an unread,
+    // unfrozen event still corrects in place under the existing lock-and-reread
+    // rule, and `blocking` changes along with the rest of the fact.
+    const reclassifiedJob = {
+      ...job,
+      result: { failureClass: "auth_or_permission", rawOutput: "" },
+      recoverability: { resumable: false, mode: "blocked", reason: "auth_or_permission" },
+    };
+    const corrected = observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, reclassifiedJob)
+    );
+    assert.ok(corrected.result.reconciled, "a genuine blocking-evidence change must be recognized as a correction");
+    assert.deepEqual(corrected.result.event.blocking, { reason: "auth_required", scope: "harness", retry: "operator_required" });
+    assert.equal(corrected.result.event.deliveryToken, initial.deliveryToken);
+
+    // The identical fact converges in one step: a further reconcile of the
+    // same reclassified job performs no additional write.
+    const settled = observePersistenceIo(
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, reclassifiedJob)
+    );
+    assert.deepEqual(settled.counts, { fsync: 0, lockLinks: 0 });
+  });
+
+  it("never copies job.errorMessage into the model-facing summary or final message", () => {
+    const { workspace, ownerRootId } = setup();
+    const job = {
+      id: "no-summary-operator-prose",
+      agentId: "agent-no-summary-operator-prose",
+      status: "failed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      // No completionSummary, summary, finalMessage, result, or rendered text
+      // at all: a malformed or legacy job whose only text is operator prose.
+      errorMessage:
+        "Control process 55555 died or changed identity without completing. Auto-reaped. " +
+        "Resume manually with: claude --resume native-session-should-not-leak",
+      recoverability: { resumable: false, mode: "blocked", reason: "worker_reaped" },
+    };
+    const { event } = reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+    assert.equal(event.summary.includes("55555"), false);
+    assert.equal(event.summary.includes("Control process"), false);
+    assert.equal(event.summary.includes("claude --resume"), false);
+    assert.equal(event.summary.includes("native-session-should-not-leak"), false);
+    assert.equal(event.finalMessage.includes("55555"), false);
+    assert.equal(event.finalMessage.includes("claude --resume"), false);
+    assert.equal(event.finalMessage.includes("native-session-should-not-leak"), false);
+    // With no prompt-derived text anywhere, the projection falls back to the
+    // generic status/job-id text rather than any operator prose.
+    assert.equal(event.summary, `failed job ${job.id}`);
+    assert.equal(event.finalMessage, `failed job ${job.id}`);
+  });
+
+  it("performs no durable write across repeated observation of a settled failed Agent", () => {
+    const { workspace, ownerRootId } = setup();
+    const job = {
+      id: "settled-failed-agent",
+      agentId: "agent-settled-failed",
+      status: "failed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      result: { failureClass: "fatal", rawOutput: "" },
+      recoverability: { resumable: false, mode: "blocked", reason: "fatal" },
+    };
+    const appended = reconcileTerminalJobCompletion(workspace, ownerRootId, job).event;
+    assert.deepEqual(appended.blocking, { reason: "unclassified", scope: "agent", retry: "new_agent" });
+
+    const firstDelivery = observePersistenceIo(
+      () => readUnreadAgentCompletionSummaries(workspace, ownerRootId)
+    );
+    assert.equal(firstDelivery.result.events[0].blocking.reason, "unclassified");
+
+    const settledObservations = observePersistenceIo(() => Array.from(
+      { length: 10 },
+      () => readUnreadAgentCompletionSummaries(workspace, ownerRootId)
+    ));
+    assert.deepEqual(settledObservations.counts, { fsync: 0, lockLinks: 0 });
+    assert.ok(settledObservations.result.every(
+      (receipt) => JSON.stringify(receipt) === JSON.stringify(firstDelivery.result)
+    ));
+
+    // Reconciling the same unchanged terminal job repeatedly is also write-free:
+    // the derivation is pure, so it never disagrees with the frozen payload.
+    const repeatedReconcile = observePersistenceIo(() => Array.from(
+      { length: 10 },
+      () => reconcileTerminalJobCompletion(workspace, ownerRootId, job)
+    ));
+    assert.deepEqual(repeatedReconcile.counts, { fsync: 0, lockLinks: 0 });
+  });
+
   it("does not overwrite a correction committed after an identical snapshot read", () => {
     const { workspace, ownerRootId } = setup();
     const factA = completion("snapshot-correction-race", {
@@ -261,6 +361,7 @@ describe("completion inbox", () => {
       completionMessage: "public fact B",
       completionMessageTruncated: false,
       deliveryToken: initial.deliveryToken,
+      blocking: null,
     }]);
   });
 
@@ -468,6 +569,7 @@ describe("completion inbox", () => {
       completionMessage: "Claude final output enters only the bounded handoff",
       completionMessageTruncated: false,
       deliveryToken: linked.deliveryToken,
+      blocking: null,
     }]);
     assert.equal("finalMessage" in delivered.events[0], false);
     assert.equal("resultPointer" in delivered.events[0], false);

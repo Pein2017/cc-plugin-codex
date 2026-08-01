@@ -68,7 +68,11 @@ async function main() {
   const prompt = textOf(initial);
   const resume = value("--resume");
   const token = (prompt.match(/session=([a-z0-9_-]+)/i) || [])[1] || "default";
-  const sessionId = resume || "fake-session-" + token;
+  // Test-only fixture switch: a resumed turn that must observe a foreign
+  // native session id instead of the one it was asked to resume, to drive the
+  // supervisor's own protocol_session_drift detection.
+  const drift = /drift=1/.test(prompt);
+  const sessionId = drift ? "fake-session-drifted-" + token : (resume || "fake-session-" + token);
   appendInvocation({
     args, prompt, sessionId,
     env: {
@@ -85,6 +89,17 @@ async function main() {
     type: "system", subtype: "init", session_id: sessionId,
     claude_code_version: "2.1.220", model: value("--model"),
   }) + "\\n");
+  // Test-only fixture switch: fail the turn itself (after session
+  // establishment) with stderr text that Claude's own failure classifier
+  // recognizes, to drive a Harness-scoped turn failure without a real Claude
+  // account.
+  const failMode = (prompt.match(/fail=(auth|account_limit)/) || [])[1];
+  if (failMode) {
+    process.stderr.write(failMode === "auth"
+      ? "Error: unauthorized. Please re-authenticate.\\n"
+      : "Error: usage limit reached for this billing period.\\n");
+    process.exit(1);
+  }
   process.stdin.on("data", (chunk) => {
     for (const line of String(chunk).split("\\n")) {
       if (!line.trim()) continue;
@@ -858,5 +873,125 @@ describe("canonical Agent runtime CLI", () => {
     ]);
     assert.equal(rejected.status, 1);
     assert.match(rejected.stderr, /Unknown option --dangerously-skip-permissions/);
+  });
+
+  it("delivers an auth-loss wait receipt as a Harness-scoped operator-required block", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--write=false", "--task-name", "auth_loss",
+      "--model", "sonnet", "--json", "fail=auth",
+    ]);
+    waitForAgent(test, spawned.agent_name, (value) => value.status === "errored");
+    const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(wait.timedOut, false);
+    assert.equal(wait.update.agent_name, spawned.agent_name);
+    assert.equal(wait.update.agent_status, "failed");
+    assert.deepEqual(wait.update.blocking, {
+      reason: "auth_required", scope: "harness", retry: "operator_required",
+    });
+  });
+
+  it("delivers an account-limit wait receipt as a Harness-scoped operator-required block", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--write=false", "--task-name", "account_limit",
+      "--model", "sonnet", "--json", "fail=account_limit",
+    ]);
+    waitForAgent(test, spawned.agent_name, (value) => value.status === "errored");
+    const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(wait.timedOut, false);
+    assert.equal(wait.update.agent_name, spawned.agent_name);
+    assert.equal(wait.update.agent_status, "failed");
+    assert.deepEqual(wait.update.blocking, {
+      reason: "account_limit", scope: "harness", retry: "operator_required",
+    });
+  });
+
+  it("delivers a session-drift wait receipt as an Agent-scoped new-agent block", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--write=false", "--task-name", "session_drift",
+      "--model", "sonnet", "--json", "session=driftbase delay=40",
+    ]);
+    const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
+    const firstWait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(firstWait.update.blocking, null);
+    run(test, [
+      "wait_agent", "--timeout-ms", "0", "--acknowledge-tokens", firstWait.update.delivery_token, "--json",
+    ]);
+
+    run(test, ["followup_task", terminal.path, "--json", "session=driftbase drift=1 delay=40"]);
+    waitForAgent(
+      test,
+      terminal.path,
+      (value) => value.status === "errored" && value.latestJobId !== terminal.latestJobId,
+    );
+
+    const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(wait.timedOut, false);
+    assert.equal(wait.update.agent_name, terminal.path);
+    assert.equal(wait.update.agent_status, "failed");
+    assert.deepEqual(wait.update.blocking, {
+      reason: "session_lost", scope: "agent", retry: "new_agent",
+    });
+  });
+
+  it("delivers a worker-lost wait receipt without exposing the dead PID or operator prose", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--write=false", "--task-name", "lost_worker",
+      "--model", "sonnet", "--json", "session=lost delay=30000",
+    ]);
+    const stored = agent(test, spawned.agent_name);
+    // The Claude turn and its own detached worker are both structurally lost
+    // together (e.g. an OOM kill of the whole worker process tree), so no live
+    // actor ever observes the turn and patches a Driver failure class: only the
+    // passive stale-job reaper (`runtime/job-store.mjs` `reapStaleJobs`) later
+    // discovers the dead control PIDs.
+    const running = waitForJob(
+      test,
+      stored.activeJobId,
+      (value) => value.status === "running" && Boolean(value.pid) && Boolean(value.workerPid),
+    );
+    process.kill(running.workerPid, "SIGKILL");
+    process.kill(running.pid, "SIGKILL");
+    waitForAgent(test, spawned.agent_name, (value) => value.status === "errored", { timeoutMs: 8_000 });
+
+    const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(wait.timedOut, false);
+    assert.equal(wait.update.agent_name, spawned.agent_name);
+    assert.equal(wait.update.agent_status, "failed");
+    assert.deepEqual(wait.update.blocking, {
+      reason: "worker_lost", scope: "agent", retry: "new_agent",
+    });
+    const blockingText = JSON.stringify(wait.update.blocking);
+    assert.equal(blockingText.includes(String(running.pid)), false);
+    assert.equal(blockingText.includes(String(running.workerPid)), false);
+    assert.equal(/auto-reaped|control process/i.test(blockingText), false);
+  });
+
+  it("delivers an interrupted wait receipt with a null block and keeps the Agent follow-up resumable", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--write=false", "--task-name", "graceful_interrupt", "--model", "opus",
+      "--json", "session=graceful-interrupt delay=5000",
+    ]);
+    const stored = agent(test, spawned.agent_name);
+    waitForJob(test, stored.activeJobId, (value) => value.status === "running" && Boolean(value.pid));
+    const receipt = run(test, ["interrupt_agent", spawned.agent_name, "--json"], { timeout: 12_000 });
+    assert.deepEqual(receipt, { agent_name: spawned.agent_name, status: "interrupted" });
+    waitForAgent(test, spawned.agent_name, (value) => value.status === "interrupted", { timeoutMs: 12_000 });
+
+    const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
+    assert.equal(wait.timedOut, false);
+    assert.equal(wait.update.agent_name, spawned.agent_name);
+    assert.equal(wait.update.agent_status, "interrupted");
+    assert.equal(wait.update.blocking, null);
+
+    const followup = run(test, [
+      "followup_task", spawned.agent_name, "--json", "session=graceful-interrupt follow-up delay=40",
+    ]);
+    assert.deepEqual(followup, { agent_name: spawned.agent_name, delivery: "new_turn" });
+    waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
   });
 });

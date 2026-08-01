@@ -12,7 +12,10 @@ Call `mcp__cc_for_pein__send_message` with exact current-root `target` and
 startup or discovery failure; never use a shell fallback.
 
 A running Agent receives durable delivery. `queued_no_turn` requires
-`$cc-for-pein:followup-task`; a blocked Agent rejects instead of queueing.
+`$cc-for-pein:followup-task`; a blocked Agent rejects instead of queueing,
+naming only a closed `reason`/`scope`/`retry`, never raw internal evidence.
+`retry: new_agent` means that blocked identity and name stay unusable: there
+is no unblock, close, archive, or reuse; re-delegate under a new Agent.
 Present one concise sentence from `agent_name` and `delivery`: sent for
 `dispatched_active`, durably accepted for `activation_pending`, or queued and
 idle for `queued_no_turn`. Do not repeat the message or JSON unless debug was

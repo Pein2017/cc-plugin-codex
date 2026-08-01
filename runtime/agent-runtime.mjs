@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
+import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
   HARNESS_CAPABILITY_NAMES,
   assertHarnessCapability,
@@ -317,7 +318,32 @@ function publicCompletionUpdate(summary, agents) {
     completion_message: summary.completionMessage,
     completion_message_truncated: summary.completionMessageTruncated,
     delivery_token: summary.deliveryToken,
+    // Pass through the frozen value exactly as stored; never recompute it
+    // from the Agent's current (possibly later) lifecycle.
+    blocking: summary.blocking ?? null,
   };
+}
+
+/**
+ * Build a blocked-Agent activation rejection from the closed `reason`,
+ * `scope`, and `retry` triple alone. `agent.continuation.evidence.reason` is
+ * consulted only through `deriveBlockedContinuationRejection`, which reduces
+ * it to a recognized closed literal or treats it as absent — including
+ * version-1 legacy Agent model migration's own `legacy_agent_model_unsupported`
+ * and `legacy_agent_model_unproven` reasons, which resolve to
+ * `route_unsupported` there. No raw evidence text (which can carry
+ * `job.errorMessage` prose, a PID, a native session ID, or a `claude --resume`
+ * command) ever reaches this message.
+ */
+function blockedContinuationRejection(agent, verb) {
+  const blocking = deriveBlockedContinuationRejection({
+    continuationEvidenceReason: agent.continuation.evidence?.reason ?? null,
+    continuationMode: agent.continuation.mode,
+  });
+  return new Error(
+    `Agent ${agent.path} cannot ${verb}: blocked ` +
+    `(reason=${blocking.reason}, scope=${blocking.scope}, retry=${blocking.retry}).`
+  );
 }
 
 function publicProgressUpdate(update, agents) {
@@ -973,7 +999,7 @@ class AgentRuntime {
     const agent = this.store.resolveTarget(assertText(input.target, "send_message target"));
     this.assertAgentDriver(agent);
     if (agent.continuation.mode === "blocked") {
-      throw new Error(`Agent ${agent.path} cannot accept messages: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+      throw blockedContinuationRejection(agent, "accept messages");
     }
     const queued = this.store.enqueueMessage(agent.agentId, assertText(input.message, "send_message message"), {
       kind: "send_message",
@@ -1043,7 +1069,7 @@ class AgentRuntime {
     let agent = this.store.resolveTarget(assertText(input.target, "followup_task target"));
     const driver = this.assertAgentDriver(agent);
     if (agent.continuation.mode === "blocked") {
-      throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+      throw blockedContinuationRejection(agent, "continue");
     }
     if (agent.continuation.mode === "exact_session") {
       // Refuse before any durable mailbox or activation write: an exact-resume
@@ -1071,7 +1097,7 @@ class AgentRuntime {
     this.reconcile();
     agent = this.store.resolveTarget(agent.agentId);
     if (agent.continuation.mode === "blocked") {
-      throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+      throw blockedContinuationRejection(agent, "continue");
     }
     // An idle follow-up will need a new Claude process. Prove the host CLI
     // surface before adding its message to durable state. Active steering keeps

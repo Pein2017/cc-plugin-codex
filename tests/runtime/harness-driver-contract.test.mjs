@@ -37,6 +37,10 @@ import {
   assertNoHarnessImplementationSelector,
   resolveHarnessDriver,
 } from "../../runtime/harness-registry.mjs";
+import {
+  HARNESS_TURN_FAILURE_CLASSES,
+  HARNESS_TURN_FAILURE_SCOPES,
+} from "../../runtime/harness-failure-classes.mjs";
 
 const driver = createClaudeCodeDriver();
 const scratchRoots = [];
@@ -256,6 +260,62 @@ describe("Harness Driver contract", () => {
       finalMessage: null,
       finalMessageAbsenceReason: "usage_or_subscription_limit",
     }), driver));
+  });
+
+  it("closes the turn-failure vocabulary: every admitted class is accepted, a foreign class is rejected", () => {
+    for (const failureClass of HARNESS_TURN_FAILURE_CLASSES) {
+      assert.ok(validateHarnessTurnResult(terminalResult({
+        status: "failed",
+        exitStatus: 1,
+        sessionExactness: "unproven",
+        nativeSession: null,
+        failure: { class: failureClass, reason: "x", resumable: false },
+        finalMessage: null,
+        finalMessageAbsenceReason: failureClass,
+      }), driver), `${failureClass} must be admitted`);
+    }
+    assert.throws(
+      () => validateHarnessTurnResult(terminalResult({
+        status: "failed",
+        exitStatus: 1,
+        failure: { class: "not_an_admitted_class", reason: "x", resumable: false },
+        finalMessage: null,
+        finalMessageAbsenceReason: "not_an_admitted_class",
+      }), driver),
+      /is not an admitted turn-failure class/,
+    );
+  });
+
+  it("rejects a supervisor-owned fact claimed as a Driver turn-failure class", () => {
+    for (const supervisorFact of [
+      "worker_launch_failed",
+      "worker_handoff_failed",
+      "worker_reaped",
+      "session_binding_conflict",
+      "forced_interruption_unflushed",
+      "harness_incompatible",
+    ]) {
+      assert.throws(
+        () => validateHarnessTurnResult(terminalResult({
+          status: "failed",
+          exitStatus: 1,
+          failure: { class: supervisorFact, reason: "x", resumable: false },
+          finalMessage: null,
+          finalMessageAbsenceReason: supervisorFact,
+        }), driver),
+        /is not an admitted turn-failure class/,
+        `${supervisorFact} is a supervisor-owned fact and must not be admitted as a Driver class`,
+      );
+    }
+  });
+
+  it("declares an explicit blocking scope for every admitted class, closed over harness/agent", () => {
+    assert.equal(HARNESS_TURN_FAILURE_SCOPES.auth_or_permission, "harness");
+    assert.equal(HARNESS_TURN_FAILURE_SCOPES.usage_or_subscription_limit, "harness");
+    assert.equal(HARNESS_TURN_FAILURE_SCOPES.protocol_session_drift, "agent");
+    for (const scope of Object.values(HARNESS_TURN_FAILURE_SCOPES)) {
+      assert.ok(scope === "harness" || scope === "agent");
+    }
   });
 
   it("runs the production supervisor boundary from normalized fields without reading native receipts", async () => {
