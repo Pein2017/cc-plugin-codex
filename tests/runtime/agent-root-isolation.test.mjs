@@ -48,12 +48,20 @@ function setup(label) {
   const workspace = path.join(fixture.root, `workspace-${label}`);
   fs.mkdirSync(workspace);
 
-  const envFor = (ownerRootId) => ({
-    ...process.env,
-    CODEX_HOME: codexHome,
-    CODEX_THREAD_ID: ownerRootId,
-    CC_RUNTIME_HOME: runtimeHome,
-  });
+  const envFor = (ownerRootId) => {
+    // A CC-bootstrapped parent exports its own trusted root and native config
+    // dir ambiently. Strip them so the fixture's explicit CODEX_THREAD_ID and
+    // claudeConfigDir govern isolation the same way inside and outside CC.
+    const inheritedEnv = { ...process.env };
+    delete inheritedEnv.CC_TRUSTED_OWNER_ROOT_ID;
+    delete inheritedEnv.CLAUDE_NATIVE_CONFIG_DIR;
+    return {
+      ...inheritedEnv,
+      CODEX_HOME: codexHome,
+      CODEX_THREAD_ID: ownerRootId,
+      CC_RUNTIME_HOME: runtimeHome,
+    };
+  };
   const ownerA = `root-${label}-a`;
   const ownerB = `root-${label}-b`;
   return {

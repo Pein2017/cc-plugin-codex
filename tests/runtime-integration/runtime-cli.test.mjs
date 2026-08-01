@@ -132,10 +132,12 @@ function fixture(ownerRootId = "owner-1") {
     "",
   ].join("\n"));
   const inheritedEnv = { ...process.env };
-  // A CC-bootstrapped parent exports its own trusted root. The fixture owns a
-  // fresh logical root and must not let that ambient identity override the
-  // explicit CODEX_THREAD_ID below.
+  // A CC-bootstrapped parent exports its own trusted root and native config
+  // dir ambiently. The fixture owns a fresh logical root and claudeConfigDir
+  // and must not let that ambient identity override the explicit
+  // CODEX_THREAD_ID and CLAUDE_CONFIG_DIR set below.
   delete inheritedEnv.CC_TRUSTED_OWNER_ROOT_ID;
+  delete inheritedEnv.CLAUDE_NATIVE_CONFIG_DIR;
   return {
     workspace,
     invocation,
