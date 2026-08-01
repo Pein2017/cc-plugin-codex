@@ -9,13 +9,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
-import { readBoundClaudeAgentMessages } from "./claude-session-history.mjs";
-import { resolveModel } from "./claude-headless-adapter.mjs";
-import { validateExecutionProfileOptions } from "./execution-profile.mjs";
+import {
+  HARNESS_CAPABILITY_NAMES,
+  assertHarnessCapability,
+  validateHarnessCapabilities,
+} from "./harness-capabilities.mjs";
+import {
+  DEFAULT_HARNESS_ID,
+  assertNoHarnessImplementationSelector,
+} from "./harness-registry.mjs";
 import { createInternalClaudeRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
-  enqueueSteeringMessage,
   generateJobId,
   getSteeringSnapshot,
   listJobsForAgentReconciliation,
@@ -70,9 +75,20 @@ function internalOptions(input, fallback = {}) {
   };
 }
 
-function validatedInternalOptions(input, fallback = {}) {
+function validatedInternalOptions(driver, input, fallback = {}) {
   const options = internalOptions(input, fallback);
-  const validated = validateExecutionProfileOptions(options);
+  const validated = driver.validateRoute(options);
+  // A topology-changing route must name its canonical model explicitly. This
+  // preserves a stable durable route while leaving each Driver responsible for
+  // defining aliases, canonical model IDs, and topology compatibility.
+  if (
+    validated.delegationMode !== "leaf" &&
+    String(options.model ?? "").trim() !== validated.model
+  ) {
+    throw new Error(
+      `${validated.delegationMode} delegation requires exact model ${validated.model}.`
+    );
+  }
   return {
     ...options,
     profile: validated.name,
@@ -87,7 +103,8 @@ function requiredSpawnModel(input) {
   const requested = optionalText(input.model);
   if (!requested) {
     throw new Error(
-      "spawn_agent requires an explicit model: haiku/claude-haiku-4-5, sonnet/claude-sonnet-5, opus/claude-opus-5, or fable/claude-fable-5."
+      "spawn_agent requires an explicit model: haiku/claude-haiku-4-5, " +
+      "sonnet/claude-sonnet-5, opus/claude-opus-5, or fable/claude-fable-5."
     );
   }
   return requested;
@@ -362,7 +379,27 @@ class AgentRuntime {
     this.store = createAgentStore({
       cwd: this.cwd,
       ownerRootId: this.ownerRootId,
-      claudeConfigDir: this.jobs.env.CLAUDE_CONFIG_DIR,
+      // The Driver contract this supervisor resolved is what every new durable
+      // Agent records; it is never inferred from a model name or caller input.
+      harness: {
+        harnessId: this.jobs.driver.harnessId,
+        driverVersion: this.jobs.driver.driverVersion,
+        capabilities: this.jobs.driver.capabilities,
+        instanceKey: this.jobs.harnessInstance.instanceKey,
+      },
+    });
+  }
+
+  storeForDriver(driver) {
+    return createAgentStore({
+      cwd: this.cwd,
+      ownerRootId: this.ownerRootId,
+      harness: {
+        harnessId: driver.harnessId,
+        driverVersion: driver.driverVersion,
+        capabilities: driver.capabilities,
+        instanceKey: driver.resolveInstanceKey(this.jobs.env),
+      },
     });
   }
 
@@ -386,7 +423,14 @@ class AgentRuntime {
     const candidate = observed ?? explicitRequestModel(latestJob);
     if (candidate) {
       try {
-        const selectedModel = resolveModel(candidate);
+        // Legacy version-1 state is always Claude Code. Let its admitted Driver
+        // normalize the observed model instead of importing a Claude catalog
+        // into the Harness-neutral Agent supervisor.
+        const selectedModel = this.jobs.driver.validateRoute({
+          model: candidate,
+          write: false,
+          delegationMode: agent.delegationMode ?? "leaf",
+        }).model;
         this.store.updateAgent(agent.agentId, (current) => {
           if (current.selectedModel) return current;
           const migrationReason = current.continuation?.evidence?.reason;
@@ -687,7 +731,8 @@ class AgentRuntime {
         try {
           this.store.bindSession(agent.agentId, sessionId, {
             jobId: job.id,
-            claudeConfigDir: this.jobs.env.CLAUDE_CONFIG_DIR,
+            harnessId: job.harnessId ?? agent.harnessId,
+            instanceKey: job.harnessInstanceKey ?? this.jobs.harnessInstance.instanceKey,
           });
         } catch {
           // The Agent store persists drift/binding evidence. Reconciliation
@@ -759,6 +804,7 @@ class AgentRuntime {
 
   async spawnAgent(inputValue) {
     const input = assertObject(inputValue, "spawn_agent input");
+    assertNoHarnessImplementationSelector(input, "spawn_agent");
     for (const key of [
       "agent_type",
       "service_tier",
@@ -784,22 +830,18 @@ class AgentRuntime {
     // Validate the caller-owned model decision before readiness checks or any
     // durable Agent reservation. There is no implicit or fallback model.
     const requestedModel = requiredSpawnModel(input);
-    if (
-      input.delegation_mode === "claude_orchestrator" &&
-      requestedModel !== "claude-fable-5"
-    ) {
-      throw new Error(
-        "claude_orchestrator delegation requires exact model claude-fable-5."
-      );
-    }
-    const executionOptions = validatedInternalOptions({ ...input, model: requestedModel });
+    const driver = this.jobs.driverForHarness(DEFAULT_HARNESS_ID);
+    const executionOptions = validatedInternalOptions(
+      driver,
+      { ...input, model: requestedModel },
+    );
     const model = executionOptions.model;
 
     this.reconcile();
     // CLI availability/auth can each take seconds. Do not create a durable
     // active Agent reservation until that external preflight has succeeded.
-    const readinessReceipt = this.jobs.assertReady();
-    const agent = this.store.createAgent({
+    const readinessReceipt = this.jobs.assertReady(driver.harnessId);
+    const agent = this.storeForDriver(driver).createAgent({
       task_name: taskName,
       description: input.description,
       selectedModel: model,
@@ -812,11 +854,12 @@ class AgentRuntime {
     try {
       prepared = this.jobs.prepareStart(message, {
         ...executionOptions,
+        harnessId: driver.harnessId,
         readinessReceipt,
         jobId,
         agentId: agent.agentId,
         sessionName: agent.name,
-        title: `Claude Agent ${agent.name}`,
+        title: `${driver.harnessId} Agent ${agent.name}`,
       });
     } catch (error) {
       // A sender may have reached this newly-created Agent while local job
@@ -857,6 +900,39 @@ class AgentRuntime {
     }
   }
 
+  /**
+   * Resolve the Driver that owns an Agent's recorded Harness. A record naming
+   * an unadmitted Harness fails closed rather than being executed, steered, or
+   * read by whichever Driver this runtime happens to register.
+   */
+  assertAgentDriver(agent, options = {}) {
+    const driver = this.jobs.driverForHarness(agent.harnessId ?? DEFAULT_HARNESS_ID);
+    if (agent.version === 2) {
+      if (
+        options.allowDriverVersionDrift !== true &&
+        agent.driverVersion !== driver.driverVersion
+      ) {
+        throw new Error(
+          `Agent ${agent.path} accepted Driver ${agent.driverVersion}; ` +
+          `but this runtime provides ${driver.driverVersion}.`
+        );
+      }
+      const accepted = validateHarnessCapabilities(
+        agent.capabilities,
+        `Agent ${agent.path} capability snapshot`,
+      );
+      for (const name of options.allowDriverVersionDrift === true ? [] : HARNESS_CAPABILITY_NAMES) {
+        if (accepted[name] !== driver.capabilities[name]) {
+          throw new Error(
+            `Agent ${agent.path} accepted ${name}=${accepted[name]} but this runtime provides ` +
+            `${name}=${driver.capabilities[name]}.`
+          );
+        }
+      }
+    }
+    return driver;
+  }
+
   deliverAssignedMessage(agent, mailboxMessage) {
     const activeJobId = mailboxMessage.assignedJobId ?? agent.activeJobId;
     if (!activeJobId) return { delivered: false, reason: "queued_no_turn" };
@@ -876,7 +952,7 @@ class AgentRuntime {
     }
     let steering;
     try {
-      steering = enqueueSteeringMessage(this.cwd, activeJobId, mailboxMessage.text, {
+      steering = this.jobs.assignInput(activeJob, mailboxMessage.text, {
         kind: "agent_message",
         messageId: mailboxMessage.messageId,
       });
@@ -895,6 +971,7 @@ class AgentRuntime {
     const input = assertObject(inputValue, "send_message input");
     this.reconcile();
     const agent = this.store.resolveTarget(assertText(input.target, "send_message target"));
+    this.assertAgentDriver(agent);
     if (agent.continuation.mode === "blocked") {
       throw new Error(`Agent ${agent.path} cannot accept messages: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
     }
@@ -946,6 +1023,7 @@ class AgentRuntime {
 
   async followupTask(inputValue) {
     const input = assertObject(inputValue, "followup_task input");
+    assertNoHarnessImplementationSelector(input, "followup_task");
     if (input.model != null) {
       throw new Error("followup_task inherits the Agent's selected model and does not accept a model override.");
     }
@@ -963,8 +1041,19 @@ class AgentRuntime {
     // invalid caller options must not repair an unrelated terminal receipt,
     // publish completion, or otherwise mutate durable state before rejection.
     let agent = this.store.resolveTarget(assertText(input.target, "followup_task target"));
+    const driver = this.assertAgentDriver(agent);
     if (agent.continuation.mode === "blocked") {
       throw new Error(`Agent ${agent.path} cannot continue: ${agent.continuation.evidence?.reason ?? "blocked"}.`);
+    }
+    if (agent.continuation.mode === "exact_session") {
+      // Refuse before any durable mailbox or activation write: an exact-resume
+      // target is only meaningful when the accepted snapshot proves it.
+      assertHarnessCapability(
+        agent.capabilities ?? driver.capabilities,
+        "continuation",
+        ["exact_resume"],
+        `Harness ${driver.harnessId} cannot resume Agent ${agent.path} in its exact native session`
+      );
     }
     const validationJobId = agent.activeJobId ?? agent.latestJobId;
     const validationLatestJob = validationJobId
@@ -974,7 +1063,7 @@ class AgentRuntime {
     // delivery race: should that turn become terminal during delivery, this
     // same call is allowed to activate the queued message and must not leave
     // invalid execution options behind as durable mailbox state.
-    const executionOptions = validatedInternalOptions(input, {
+    const executionOptions = validatedInternalOptions(driver, input, {
       ...(validationLatestJob?.request ?? {}),
       model: validationLatestJob?.request?.model ?? agent.selectedModel,
       delegationMode: agent.delegationMode,
@@ -988,7 +1077,7 @@ class AgentRuntime {
     // surface before adding its message to durable state. Active steering keeps
     // using the already-running admitted process and needs no replacement-CLI
     // check.
-    let readinessReceipt = agent.activeJobId ? null : this.jobs.assertReady();
+    let readinessReceipt = agent.activeJobId ? null : this.jobs.assertReady(driver.harnessId);
     const queued = this.store.enqueueMessage(
       agent.agentId,
       assertText(input.message, "followup_task message"),
@@ -1021,16 +1110,16 @@ class AgentRuntime {
     // Keep slow Claude CLI/auth preflight outside the active-reservation
     // interval. A concurrent follow-up then sees an idle Agent until a winner
     // is genuinely ready to publish its local job receipt.
-    readinessReceipt ??= this.jobs.assertReady();
+    readinessReceipt ??= this.jobs.assertReady(driver.harnessId);
     const jobId = generateJobId("cc-agent");
     const previous = agent;
     const latestJob = validationLatestJob;
     const resumeSessionId = agent.continuation.mode === "exact_session"
-      ? agent.claudeSessionId
+      ? agent.nativeSessionRef?.nativeSessionId
       : null;
     const initialActivation = agent.status === "pending_init" &&
       agent.latestJobId == null &&
-      !agent.claudeSessionId;
+      !agent.nativeSessionRef;
     // This provisional prompt is replaced with the atomically assigned
     // mailbox batch immediately before the worker starts. It lets us publish
     // an unbound launch fact before an Agent becomes active.
@@ -1038,6 +1127,7 @@ class AgentRuntime {
       assertText(input.message, "followup_task message"),
       {
         ...executionOptions,
+        harnessId: driver.harnessId,
         readinessReceipt,
         jobId,
         agentId: agent.agentId,
@@ -1045,8 +1135,8 @@ class AgentRuntime {
         parentJobId: agent.latestJobId,
         sessionName: agent.name,
         title: initialActivation
-          ? `Claude Agent ${agent.name} initial activation`
-          : `Claude Agent ${agent.name} follow-up`,
+          ? `${driver.harnessId} Agent ${agent.name} initial activation`
+          : `${driver.harnessId} Agent ${agent.name} follow-up`,
       }
     );
     let activation = this.store.reserveActivation(agent.agentId, jobId, {
@@ -1172,12 +1262,22 @@ class AgentRuntime {
     const input = assertObject(inputValue, "interrupt_agent input");
     this.reconcile();
     const agent = this.store.resolveTarget(assertText(input.target, "interrupt_agent target"));
+    // Process control must remain available across an in-place Driver upgrade.
+    // The persisted Agent and job snapshots still have to name this Harness and
+    // carry a known capability vocabulary; activation and history stay strict.
+    const driver = this.assertAgentDriver(agent, { allowDriverVersionDrift: true });
     if (!agent.activeJobId) {
       return {
         agent_name: agent.path,
         status: "no_active_turn",
       };
     }
+    assertHarnessCapability(
+      agent.capabilities ?? driver.capabilities,
+      "interrupt",
+      ["graceful_flush_proven", "best_effort_signal"],
+      `Harness ${driver.harnessId} cannot interrupt an active turn`
+    );
     const turn = await this.jobs.interrupt(agent.activeJobId);
     this.reconcile();
     const current = this.store.resolveTarget(agent.agentId);
@@ -1199,10 +1299,17 @@ class AgentRuntime {
       throw new Error(`read_agent_messages does not support ${unsupported}.`);
     }
     const agent = this.store.resolveTarget(assertText(input.target, "read_agent_messages target"));
+    const driver = this.assertAgentDriver(agent);
+    assertHarnessCapability(
+      agent.capabilities ?? driver.capabilities,
+      "history",
+      ["assistant_messages"],
+      `Harness ${driver.harnessId} exposes no readable assistant history`
+    );
     if (!agent.claudeSessionId || !agent.claudeConfigDir) {
       throw new Error(`Agent ${agent.path} has no proven native Claude session history.`);
     }
-    const history = readBoundClaudeAgentMessages(agent, {
+    const history = driver.readAssistantHistory(agent, {
       before: input.before,
       limit: input.limit,
     });
@@ -1225,6 +1332,7 @@ class AgentRuntime {
     const agents = this.store.listAgents({ pathPrefix: optionalText(input.path_prefix) }).map((agent) => ({
       agent_name: agent.path,
       agent_status: canonicalAgentStatus(agent),
+      model: agent.selectedModel,
       delegation_mode: agent.delegationMode,
     }));
     return {

@@ -1,0 +1,364 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, describe, it } from "node:test";
+
+import {
+  CLAUDE_CODE_CAPABILITIES,
+  CLAUDE_CODE_DRIVER_VERSION,
+  CLAUDE_CODE_HARNESS_ID,
+  createClaudeCodeDriver,
+} from "../../runtime/claude-code-driver.mjs";
+
+const roots = [];
+after(() => {
+  while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
+});
+
+function scratch(label) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `cc-harness-parity-${label}-`));
+  roots.push(root);
+  return root;
+}
+
+const driver = createClaudeCodeDriver();
+const MODELS = [
+  ["haiku", "claude-haiku-4-5", "low"],
+  ["sonnet", "claude-sonnet-5", "high"],
+  ["opus", "claude-opus-5", "xhigh"],
+  ["fable", "claude-fable-5", "max"],
+];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/** Capture the exact native envelope the Driver builds without launching Claude. */
+async function captureTurn(route, options = {}) {
+  let captured = null;
+  const result = await driver.startTurn({
+    workspaceRoot: options.cwd ?? "/workspace",
+    cwd: options.cwd ?? "/workspace",
+    jobId: "cc-parity-1",
+    prompt: options.prompt ?? "do the work",
+    route,
+    env: { CLAUDE_CONFIG_DIR: options.claudeConfigDir ?? "/data/.claude", PATH: "/usr/bin" },
+    launchContext: {
+      compatibility: { fingerprint: "fingerprint-1", executable: "/usr/local/bin/claude" },
+    },
+    sessionName: options.sessionName,
+    resumeSessionId: options.resumeSessionId,
+    runTurnSession: async (request) => {
+      captured = request;
+      return options.turn ?? {
+        status: "failed",
+        exitCode: 1,
+        sessionId: null,
+        finalMessage: "",
+        failureClass: "fatal",
+        failureReason: "parity fixture did not run Claude",
+        resumable: false,
+        recoveryAttempts: 0,
+        attempts: [],
+        steering: { messages: [], latestAcknowledgedSequence: 0 },
+        runtimeReceipt: {},
+        toolUses: [],
+        touchedFiles: [],
+      };
+    },
+  });
+  return { captured, result };
+}
+
+describe("claude-code Driver preserves established Claude execution semantics", () => {
+  it("publishes the observable capability snapshot for this checkout", () => {
+    assert.deepEqual(driver.capabilities, {
+      activeInput: "acknowledged_active_stream",
+      continuation: "exact_resume",
+      history: "assistant_messages",
+      interrupt: "graceful_flush_proven",
+      automaticRecovery: "exact_session_transport",
+      // terminal-parity always passes the dangerous bypass, so write intent is
+      // a prompt-level authority boundary rather than a process control.
+      authorityEnforcement: "prompt_only",
+      leafEnforcement: "effective_tool_denial",
+      nativeOrchestration: "opaque_bounded",
+    });
+    assert.equal(driver.harnessId, CLAUDE_CODE_HARNESS_ID);
+    assert.equal(driver.driverVersion, CLAUDE_CODE_DRIVER_VERSION);
+    assert.equal(CLAUDE_CODE_CAPABILITIES, driver.capabilities);
+  });
+
+  it("admits exactly the established model, effort, and topology routes", () => {
+    for (const [alias, canonical, defaultEffort] of MODELS) {
+      for (const model of [alias, canonical]) {
+        const validated = driver.validateRoute({ model, write: false, delegationMode: "leaf" });
+        assert.equal(validated.model, canonical);
+        assert.equal(validated.name, "terminal-parity");
+        assert.equal(validated.dangerouslySkipPermissions, true);
+        assert.equal(validated.delegationMode, "leaf");
+        // terminal-parity keeps the caller's effort choice; `safe` is where a
+        // per-model default applies.
+        assert.equal(validated.effort, undefined);
+        assert.equal(
+          driver.validateRoute({ profile: "safe", model, write: false }).effort,
+          defaultEffort,
+        );
+      }
+      for (const effort of EFFORTS) {
+        assert.equal(driver.validateRoute({ model: canonical, effort, write: false }).effort, effort);
+      }
+    }
+    assert.equal(
+      driver.validateRoute({ model: "fable", delegationMode: "claude_orchestrator", write: false }).delegationMode,
+      "claude_orchestrator",
+    );
+    assert.throws(
+      () => driver.validateRoute({ model: "opus", delegationMode: "claude_orchestrator", write: false }),
+      /claude_orchestrator delegation requires exact model claude-fable-5/,
+    );
+    assert.throws(() => driver.validateRoute({ model: "claude-opus-4-7", write: false }), /Unsupported Claude model/);
+    assert.throws(() => driver.validateRoute({ model: "opus", effort: "turbo", write: false }), /Unsupported effort/);
+    assert.throws(() => driver.validateRoute({ write: false }), /requires an explicit Haiku, Sonnet, Opus, or Fable model/);
+  });
+
+  it("builds the fixed terminal-parity leaf envelope", async () => {
+    const { captured } = await captureTurn(
+      { model: "sonnet", effort: "high", write: false, delegationMode: "leaf" },
+      { sessionName: "researcher" },
+    );
+    const options = captured.claudeOptions;
+    assert.equal(options.env.IS_SANDBOX, "1");
+    assert.equal(options.dangerouslySkipPermissions, true);
+    assert.equal(options.model, "claude-sonnet-5");
+    assert.equal(options.effort, "high");
+    assert.equal(options.claudeBin, "/usr/local/bin/claude");
+    assert.equal(options.sessionName, "researcher");
+    assert.equal(options.resumeSessionId, undefined);
+    assert.equal(options.settingsFile, undefined);
+    assert.equal(options.permissionMode, undefined);
+    assert.deepEqual(options.disallowedTools, ["Agent", "Workflow"]);
+    assert.match(options.appendSystemPrompt, /Act as a leaf: do not delegate or use Agent\/Workflow\./);
+    assert.match(options.appendSystemPrompt, /Read\/review only/);
+    assert.equal(captured.write, false);
+    assert.deepEqual(captured.harnessInstance, {
+      harnessId: "claude-code",
+      instanceKey: "/data/.claude",
+    });
+  });
+
+  it("keeps write intent a prompt-level authority statement", async () => {
+    const { captured } = await captureTurn({ model: "opus", write: true, delegationMode: "leaf" });
+    assert.equal(captured.claudeOptions.dangerouslySkipPermissions, true);
+    assert.equal(captured.claudeOptions.permissionMode, undefined);
+    assert.match(captured.claudeOptions.appendSystemPrompt, /Task-scoped workspace mutation is allowed/);
+    assert.equal(captured.write, true);
+  });
+
+  it("keeps one bounded native Agent generation for the Fable orchestrator", async () => {
+    const { captured } = await captureTurn({
+      model: "claude-fable-5",
+      write: false,
+      delegationMode: "claude_orchestrator",
+    });
+    assert.deepEqual(captured.claudeOptions.disallowedTools, ["Workflow"]);
+    assert.match(
+      captured.claudeOptions.appendSystemPrompt,
+      /You may use Agent for one child generation; never use Workflow\./,
+    );
+    assert.match(captured.claudeOptions.appendSystemPrompt, /Join every child and synthesize them/);
+  });
+
+  it("resumes only the exact captured session and drops the fresh session name", async () => {
+    const { captured } = await captureTurn(
+      { model: "opus", write: false, delegationMode: "leaf" },
+      { resumeSessionId: "session-exact", sessionName: "researcher" },
+    );
+    assert.equal(captured.claudeOptions.resumeSessionId, "session-exact");
+    // buildArgs drops --name whenever a resume target is present; the Driver
+    // still forwards both so that owner stays a single place.
+    assert.equal(captured.claudeOptions.sessionName, "researcher");
+  });
+
+  it("normalizes a completed turn into exact session evidence and Claude-owned receipts", async () => {
+    const root = scratch("completed");
+    process.env.CC_RUNTIME_HOME = root;
+    try {
+      const { result } = await captureTurn(
+        { model: "opus", write: false, delegationMode: "leaf" },
+        {
+          cwd: root,
+          turn: {
+            status: "completed",
+            exitCode: 0,
+            sessionId: "session-complete",
+            finalMessage: "final answer",
+            failureClass: null,
+            failureReason: null,
+            resumable: false,
+            recoveryAttempts: 1,
+            attempts: [{ attempt: 1 }],
+            steering: { messages: [], latestAcknowledgedSequence: 0 },
+            runtimeReceipt: { claudeCodeVersion: "2.1.220" },
+            toolUses: [{ name: "Read" }],
+            touchedFiles: ["a.txt"],
+          },
+        },
+      );
+      assert.equal(result.status, "completed");
+      assert.equal(result.exitStatus, 0);
+      assert.equal(result.sessionExactness, "exact");
+      assert.deepEqual(result.nativeSession, {
+        harnessId: "claude-code",
+        instanceKey: "/data/.claude",
+        nativeSessionId: "session-complete",
+      });
+      assert.equal(result.finalMessage, "final answer");
+      assert.equal(result.finalMessageAbsenceReason, null);
+      assert.equal(result.failure.class, null);
+      assert.deepEqual(result.receipts.toolUses, [{ name: "Read" }]);
+      assert.equal(result.nativeReceipt.rawOutput, "final answer");
+      assert.equal(result.nativeReceipt.runtimeReceipt.executionProfile.name, "terminal-parity");
+      assert.equal(result.nativeReceipt.runtimeReceipt.executionProfile.inheritedClaudeConfiguration, true);
+      assert.equal(result.driverReceipt.harnessId, "claude-code");
+      assert.equal(result.driverReceipt.driverVersion, CLAUDE_CODE_DRIVER_VERSION);
+    } finally {
+      delete process.env.CC_RUNTIME_HOME;
+    }
+  });
+
+  it("refuses to treat a drifted session as exact continuation evidence", async () => {
+    const { result } = await captureTurn(
+      { model: "opus", write: false, delegationMode: "leaf" },
+      {
+        turn: {
+          status: "failed",
+          exitCode: 1,
+          sessionId: "observed-session",
+          finalMessage: "",
+          failureClass: "protocol_session_drift",
+          failureReason: "expected session-a, observed observed-session",
+          stderr: "native drift diagnostic",
+          resumable: false,
+          recoveryAttempts: 0,
+          attempts: [],
+          steering: { messages: [], latestAcknowledgedSequence: 0 },
+          runtimeReceipt: {},
+          toolUses: [],
+          touchedFiles: [],
+        },
+      },
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.sessionExactness, "unproven");
+    assert.equal(result.failure.class, "protocol_session_drift");
+    // Native failure text renders the turn but stays out of the durable receipt.
+    assert.equal(result.failure.detail, "native drift diagnostic");
+    assert.equal(Object.hasOwn(result.nativeReceipt, "stderr"), false);
+    assert.equal(result.finalMessage, null);
+    assert.equal(result.finalMessageAbsenceReason, "expected session-a, observed observed-session");
+  });
+
+  it("preserves the non-fallback account-limit result", async () => {
+    const { result } = await captureTurn(
+      { model: "opus", write: false, delegationMode: "leaf" },
+      {
+        turn: {
+          status: "failed",
+          exitCode: 1,
+          sessionId: null,
+          finalMessage: "",
+          failureClass: "usage_or_subscription_limit",
+          failureReason: "subscription quota exhausted",
+          resumable: false,
+          recoveryAttempts: 0,
+          attempts: [],
+          steering: { messages: [], latestAcknowledgedSequence: 0 },
+          runtimeReceipt: {},
+          toolUses: [],
+          touchedFiles: [],
+        },
+      },
+    );
+    assert.equal(result.failure.class, "usage_or_subscription_limit");
+    assert.equal(result.failure.resumable, false);
+    assert.equal(result.nativeSession, null);
+  });
+
+  it("derives its native instance identity from the fixed Claude configuration", () => {
+    assert.equal(driver.resolveInstanceKey({ CLAUDE_CONFIG_DIR: "/data/.claude" }), "/data/.claude");
+    assert.equal(
+      driver.resolveInstanceKey({ CLAUDE_CONFIG_DIR: "" }),
+      path.join(os.homedir(), ".claude"),
+    );
+  });
+
+  it("fails closed on an unavailable or unauthenticated host CLI", () => {
+    const root = scratch("preflight");
+    const receipt = driver.preflight({
+      cwd: root,
+      env: { PATH: root, CC_CLAUDE_BIN: path.join(root, "absent-claude"), CLAUDE_CONFIG_DIR: root },
+    });
+    assert.equal(receipt.ready, false);
+    assert.equal(receipt.availability.available, false);
+    assert.equal(receipt.instanceKey, fs.realpathSync.native(root));
+    assert.equal(
+      driver.describeUnreadiness(receipt),
+      "Claude Code CLI is unavailable. Install `claude` and ensure it is on PATH.",
+    );
+    assert.equal(
+      driver.describeUnreadiness({
+        availability: { available: true },
+        compatibility: { staticCompatible: true },
+        auth: { loggedIn: false },
+      }),
+      "Claude Code CLI is not authenticated. Run `claude auth login` in the same environment.",
+    );
+    assert.equal(
+      driver.describeUnreadiness({
+        availability: { available: true },
+        compatibility: { staticCompatible: true },
+        auth: { loggedIn: true },
+      }),
+      null,
+    );
+  });
+
+  it("reads bounded native assistant history through the established owner", () => {
+    const root = scratch("history");
+    const claudeConfigDir = path.join(root, ".claude");
+    const workspaceRoot = path.join(root, "workspace");
+    fs.mkdirSync(workspaceRoot);
+    const project = path.join(claudeConfigDir, "projects", workspaceRoot.replace(/[^a-zA-Z0-9]/g, "-"));
+    fs.mkdirSync(project, { recursive: true });
+    const sessionId = "history-session";
+    fs.writeFileSync(
+      path.join(project, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "assistant",
+          uuid: "m1",
+          timestamp: "2026-07-31T00:00:00.000Z",
+          sessionId,
+          message: { role: "assistant", content: [{ type: "text", text: "first" }] },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "m2",
+          timestamp: "2026-07-31T00:00:01.000Z",
+          sessionId,
+          message: { role: "assistant", content: [{ type: "text", text: "second" }] },
+        }),
+        "",
+      ].join("\n"),
+    );
+    const history = driver.readAssistantHistory(
+      {
+        claudeSessionId: sessionId,
+        claudeConfigDir,
+        workspaceRoot,
+      },
+      { limit: 1 },
+    );
+    assert.deepEqual(history.messages.map((message) => message.text), ["second"]);
+    assert.equal(history.nextBefore, "m2");
+  });
+});

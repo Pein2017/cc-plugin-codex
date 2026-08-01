@@ -14,6 +14,6 @@ unavailable, report Plugin startup or discovery failure; never use shell.
 
 The list includes nonresident current-root Agents. Cross-root `all` remains
 operator-only; completion comes from `$cc-for-pein:wait-agent`. Present names,
-immutable delegation mode, and only `starting`, `working`, `completed`,
+model, immutable delegation mode, and only `starting`, `working`, `completed`,
 `failed`, or `interrupted`; omit JSON, tokens, and final output unless debug was
 explicitly requested.

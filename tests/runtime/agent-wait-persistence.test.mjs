@@ -242,6 +242,7 @@ describe("Agent wait persistence", () => {
       agents: [{
         agent_name: created.path,
         agent_status: "completed",
+        model: "claude-haiku-4-5",
         delegation_mode: "leaf",
       }],
     });

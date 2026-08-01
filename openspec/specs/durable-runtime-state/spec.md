@@ -24,15 +24,19 @@ The runtime SHALL require a matching deterministic process identity for every si
 - **THEN** the requested platform-appropriate signal or termination may proceed
 
 ### Requirement: Transport recovery is bounded and exact-session
-The supervisor SHALL treat reconnect attempts as one logical job, use bounded backoff, preserve cumulative receipts, and resume only the captured Claude session when automatic replay is safe.
+The supervisor SHALL treat Driver-authorized reconnect attempts as one logical job, use bounded backoff, preserve cumulative receipts, and resume only the captured native session when the persisted capability snapshot declares `automaticRecovery=exact_session_transport` and the Driver proves replay safe. No recovery SHALL change Harness, route, Driver version, capability meaning, root owner, Agent, or native session target.
 
-#### Scenario: Transport closes after a session ID is captured
-- **WHEN** the failure is classified as transport-resumable and retry budget remains
-- **THEN** the supervisor starts a bounded reconnect attempt with `--resume` for that exact session
+#### Scenario: Transport closes after an exact native session is captured
+- **WHEN** the Driver classifies the failure as transport-resumable, its persisted capability snapshot admits exact-session recovery, and retry budget remains
+- **THEN** the supervisor permits that Driver to start a bounded reconnect attempt for the same Harness session and route
 
-#### Scenario: Possible side effects occur without a session ID
-- **WHEN** transport fails after write mode or observed tool side effects and no Claude session ID was captured
+#### Scenario: Possible side effects occur without exact session evidence
+- **WHEN** transport fails after observed or possible side effects and the Driver cannot prove an exact native session target
 - **THEN** the runtime refuses automatic replay and marks the job as requiring attention
+
+#### Scenario: Driver does not admit automatic recovery
+- **WHEN** a turn's persisted snapshot declares `automaticRecovery=none`
+- **THEN** the supervisor publishes the classified terminal failure without asking the Driver or another Harness to replay it
 
 ### Requirement: Terminal job retention is bounded per Codex owner root
 The runtime SHALL retain all active jobs and the newest 100 terminal job records per Codex owner root. Cleanup SHALL remove only pruned plugin job records and their default logs, SHALL preserve unread completion metadata, and SHALL never target Claude Code artifacts.
@@ -50,11 +54,11 @@ The runtime SHALL retain all active jobs and the newest 100 terminal job records
 - **THEN** no Claude Code session artifact under `CLAUDE_CONFIG_DIR` is deleted
 
 ### Requirement: Terminal records carry explicit recoverability evidence
-Every terminal Agent turn and completion event SHALL record Agent identity and resumability as an explicit classification with the supporting exact Claude session ID or blocking reason.
+Every terminal Agent turn and completion event SHALL record Agent identity, immutable Harness route, Driver version, capability snapshot, and continuation as an explicit classification with the supporting exact native-session reference or blocking reason. Opaque Driver receipts SHALL NOT be the sole evidence used to claim generic resumability.
 
-#### Scenario: Failure lacks safe resume evidence
-- **WHEN** the terminal classifier cannot prove exact-session continuation is safe
-- **THEN** the Agent becomes errored, its prior valid session pointer is preserved when appropriate, and the completion records the blocking reason
+#### Scenario: Failure lacks safe continuation evidence
+- **WHEN** the terminal classifier cannot prove continuation is safe under the persisted Driver capabilities
+- **THEN** the Agent becomes errored, its prior valid native-session reference is preserved when appropriate, and the completion records the blocking reason
 
 ### Requirement: Completion reconciliation is idempotent
 The runtime SHALL derive a deterministic completion-event identity from owner and job identity so restart reconciliation cannot publish duplicate terminal notifications.
@@ -75,11 +79,15 @@ The runtime SHALL use verified process identity and grace periods to distinguish
 - **THEN** it is retained for diagnostics or normal bounded cleanup and is not resumed as an active Agent turn
 
 ### Requirement: Session leases survive worker boundaries
-Session leases SHALL be stored outside individual worker memory and SHALL be released when a current Agent turn becomes completed, failed/errored, or interrupted. Legacy cancelled records SHALL not create new leases.
+Native-session leases SHALL be stored outside individual worker memory, keyed by canonical `(harnessId, instanceKey, nativeSessionId)`, and bound to the owning root, Agent, and job. They SHALL be released when the current Agent turn becomes completed, failed/errored, or interrupted. Legacy cancelled records SHALL not create new leases.
 
-#### Scenario: Worker exits normally
+#### Scenario: Harness worker exits normally
 - **WHEN** its internal job becomes completed, failed, or interrupted
-- **THEN** the matching active Claude session lease is released while the durable Agent session binding remains
+- **THEN** the matching active Harness session lease is released while any valid durable Agent session binding remains
+
+#### Scenario: Another Harness uses the same native ID text
+- **WHEN** two admitted Harnesses independently report the same native session ID string
+- **THEN** their different Harness IDs or instance keys prevent the leases and durable bindings from colliding
 
 ### Requirement: Agent registry updates are atomic and restart-safe
 The runtime SHALL persist Agent records, Agent mailbox entries, and root/name indexes with atomic compare/update semantics and SHALL reconcile them against linked jobs and completion events after restart. Durable internal job receipts are the fact source; Agent and completion records are rebuildable projections.
@@ -100,11 +108,11 @@ Internal jobs SHALL continue to use execution statuses such as `completed`, `fai
 - **THEN** it remains a legacy diagnostic artifact and does not activate or transition an Agent
 
 ### Requirement: Agent metadata outlives bounded job receipts
-The runtime SHALL retain root-owned Agent identity, Agent mailbox, latest job pointer, and latest validated Claude session pointer independently from the newest-100 terminal-job receipt bucket.
+The runtime SHALL retain root-owned Agent identity, immutable Harness route, accepted Driver contract, Agent mailbox, latest job pointer, and latest validated native-session reference independently from the newest-100 terminal-job receipt bucket.
 
 #### Scenario: All detailed jobs for an old Agent are pruned
-- **WHEN** the Agent remains in the root registry with a valid Claude session pointer
-- **THEN** it remains discoverable and eligible for exact-session follow-up
+- **WHEN** the Agent remains in the root registry with continuation evidence valid under its persisted Driver capabilities
+- **THEN** it remains discoverable and eligible for that exact capability-valid continuation path
 
 ### Requirement: Legacy job records remain non-destructive diagnostics
 Migration SHALL NOT delete existing job records or Claude artifacts, SHALL NOT auto-promote legacy jobs into Agents, and SHALL allow normal bounded job cleanup to remove them later.
@@ -114,15 +122,42 @@ Migration SHALL NOT delete existing job records or Claude artifacts, SHALL NOT a
 - **THEN** it leaves those files intact, excludes them from the Agent API, and can expose them only through explicit diagnostics
 
 ### Requirement: Plugin-created Claude session bindings are durable and root-owned
-The runtime SHALL persist canonical config/session-to-root/Agent bindings independently from process leases and SHALL require the binding for model-facing exact-session follow-up. Version 0.2 SHALL NOT adopt foreign or Terminal-created sessions.
+Version-1 Claude session bindings SHALL retain their existing canonical config/session ownership. Version-2 native-session bindings SHALL persist canonical `(harnessId, instanceKey, nativeSessionId)` ownership independently from process leases and SHALL require that binding for model-facing exact-session continuation. No version SHALL adopt foreign or Terminal-created sessions through the Agent API.
 
-#### Scenario: Lease is released after a turn
+#### Scenario: Lease is released after a v2 turn
 - **WHEN** an Agent turn becomes terminal
-- **THEN** the active lease is released while the durable root/Agent binding remains for sequential follow-up
+- **THEN** the active Harness lease is released while the durable root/Agent native-session binding remains for any supported sequential continuation
 
-#### Scenario: Bound session is requested by another root
-- **WHEN** another trusted root attempts to resume the same Claude session
+#### Scenario: Bound native session is requested by another root
+- **WHEN** another trusted root attempts to resume the same Harness session reference
 - **THEN** the runtime rejects it even when no active process lease exists
+
+#### Scenario: Version 1 binding is loaded
+- **WHEN** the v2 runtime encounters an existing valid Claude config/session binding
+- **THEN** it preserves that binding and interprets it as the equivalent Claude Code Harness session without expanding ownership
+
+### Requirement: Harness-neutral state migration preserves active ownership
+The v2 runtime SHALL interpret valid v1 Agent, job, session-binding, and lease records as Claude Code state. It MAY normalize terminal unowned v1 state on its next safe write, but SHALL NOT rewrite, lease, resume, signal, or steal an active or ownership-uncertain v1 record from its existing worker. New Agents SHALL be written only as v2 after mixed-state verification is enabled. A v1-only runtime SHALL reject v2 Agents and SHALL be unable to claim the v2 job queue state. Version-2 Claude session bindings and leases SHALL remain wire-readable by v1 so old processes observe existing root/Agent/session ownership rather than stealing a live native session.
+
+#### Scenario: Active version 1 worker exists during hot update
+- **WHEN** a v2 process observes a v1 job with verified live ownership or unresolved ownership
+- **THEN** it leaves that record and its lease under the existing worker until terminal reconciliation provides a safe transition
+
+#### Scenario: Terminal version 1 Agent receives a safe follow-up
+- **WHEN** a valid nonresident v1 Claude Agent is resumed by the v2 runtime
+- **THEN** the runtime preserves its root, Agent, config/session binding, route meaning, mailbox order, and exact-session semantics while writing the new activation in the v2 schema
+
+#### Scenario: Old worker sees a version 2 job
+- **WHEN** a runtime without Harness support encounters a v2 job prepared for detached execution
+- **THEN** the job's versioned queue status is not the literal v1 `queued` state, so the old worker refuses it before claiming or launching a native process
+
+#### Scenario: Old runtime sees a version 2 Agent
+- **WHEN** a runtime without v2 Agent support reads the Agent registry
+- **THEN** it rejects the unknown Agent record version rather than activating or rewriting it
+
+#### Scenario: Old runtime observes a version 2 Claude binding or lease
+- **WHEN** a v1 process reaches the byte-compatible Claude session ownership key
+- **THEN** it can observe the existing root, Agent, job, and workspace ownership fields and does not treat the native session as unbound, while it still cannot activate the v2 Agent or claim the v2 job
 
 ### Requirement: Linux runtime control state is durable and owner-only
 On supported Linux systems, the runtime SHALL persist control state using atomic

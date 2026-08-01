@@ -10,6 +10,7 @@ import {
   preparedStartDisposition,
 } from "../../runtime/internal-runtime.mjs";
 import {
+  HARNESS_QUEUED_JOB_STATUS,
   patchJob,
   readJobFile,
   reserveSessionLease,
@@ -166,7 +167,7 @@ describe("detached worker handoff", () => {
     let jobId = null;
     const { runtime, claudeConfigDir } = setup({
       spawn() {
-        transitionJob(workspace, jobId, ["queued"], "running", {
+        transitionJob(workspace, jobId, [HARNESS_QUEUED_JOB_STATUS], "running", {
           workerPid: child.pid,
           workerPidIdentity: "worker-47101",
           phase: "starting",
@@ -265,8 +266,11 @@ describe("detached worker handoff", () => {
     agentRuntime.store.updateAgent(agent.agentId, (current) => ({
       ...current,
       status: "completed",
-      claudeSessionId: "late-spawn-session",
-      claudeConfigDir: seed.claudeConfigDir,
+      nativeSessionRef: {
+        harnessId: "claude-code",
+        instanceKey: seed.claudeConfigDir,
+        nativeSessionId: "late-spawn-session",
+      },
       continuation: { mode: "exact_session", evidence: { reason: "fixture" } },
     }));
 
@@ -427,7 +431,7 @@ describe("detached worker handoff", () => {
     );
 
     const retained = readJobFile(workspace, prepared.jobId);
-    assert.equal(retained.status, "queued");
+    assert.equal(retained.status, HARNESS_QUEUED_JOB_STATUS);
     assert.equal(retained.launcherGeneration, "newer-launcher-generation");
     assert.equal(retained.workerPid, process.pid);
     assert.notEqual(retained.workerPid, child.pid);
@@ -459,7 +463,7 @@ describe("detached worker handoff", () => {
     );
 
     const retained = readJobFile(workspace, prepared.jobId);
-    assert.equal(retained.status, "queued");
+    assert.equal(retained.status, HARNESS_QUEUED_JOB_STATUS);
     assert.equal(retained.workerHandoffUncertainAt, undefined);
     assert.equal(child.killCount, 0);
     assert.equal(child.unrefCount, 0);
@@ -540,7 +544,7 @@ describe("detached worker handoff", () => {
         return "worker-47109";
       },
       publishWorkerIdentity(cwd, jobId) {
-        return transitionJob(cwd, jobId, ["queued"], "cancelled", {
+        return transitionJob(cwd, jobId, [HARNESS_QUEUED_JOB_STATUS], "cancelled", {
           phase: "cancelled_before_handoff",
           completedAt: new Date().toISOString(),
           workerPid: null,
@@ -579,7 +583,7 @@ describe("detached worker handoff", () => {
         return child;
       },
       getProcessIdentity() {
-        transitionJob(workspace, jobId, ["queued"], "running", {
+        transitionJob(workspace, jobId, [HARNESS_QUEUED_JOB_STATUS], "running", {
           workerPid: child.pid,
           workerPidIdentity: "worker-47107",
           phase: "starting",

@@ -73,8 +73,11 @@ function setup(label = "history") {
   runtime.store.updateAgent(agent.agentId, (current) => ({
     ...current,
     status: "completed",
-    claudeSessionId: sessionId,
-    claudeConfigDir,
+    nativeSessionRef: {
+      harnessId: "claude-code",
+      instanceKey: claudeConfigDir,
+      nativeSessionId: sessionId,
+    },
     continuation: { mode: "exact_session", evidence: { reason: "test_session" } },
   }));
   const transcript = path.join(project, `${sessionId}.jsonl`);

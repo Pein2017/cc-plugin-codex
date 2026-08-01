@@ -15,6 +15,44 @@ afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
+function findRegistryFileFor(agentId) {
+  const pending = [sharedRuntimeHome];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(candidate);
+        continue;
+      }
+      if (entry.name !== "registry.json") continue;
+      const registry = JSON.parse(fs.readFileSync(candidate, "utf8"));
+      if (registry.agents?.[agentId]) return { filePath: candidate, registry };
+    }
+  }
+  throw new Error(`No Agent registry contains ${agentId}.`);
+}
+
+/**
+ * Rewrite one Agent as a genuine version-1 record. Legacy model backfill only
+ * exists for Agents created before Harness state, so the migration contract has
+ * to be exercised against real version-1 storage rather than a v2 record.
+ */
+function downgradeToVersionOne(agentId, patch) {
+  const { filePath, registry } = findRegistryFileFor(agentId);
+  const stored = registry.agents[agentId];
+  const {
+    harnessId: _harnessId,
+    driverVersion: _driverVersion,
+    capabilities: _capabilities,
+    selectedEffort: _selectedEffort,
+    nativeSessionRef: _nativeSessionRef,
+    ...legacy
+  } = stored;
+  registry.agents[agentId] = { ...legacy, version: 1, ...patch };
+  fs.writeFileSync(filePath, JSON.stringify(registry));
+}
+
 function setup(model) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-model-migration-"));
   roots.push(root);
@@ -40,17 +78,17 @@ function setup(model) {
     },
   });
   const agent = runtime.store.createAgent({ task_name: "legacy" });
-  runtime.store.updateAgent(agent.agentId, (current) => ({
-    ...current,
+  downgradeToVersionOne(agent.agentId, {
     status: "completed",
     latestJobId: null,
+    selectedModel: null,
     claudeSessionId: sessionId,
     claudeConfigDir,
     continuation: {
       mode: "exact_session",
       evidence: { reason: "legacy_session_without_job_receipt" },
     },
-  }));
+  });
   return { runtime, agent, artifact };
 }
 

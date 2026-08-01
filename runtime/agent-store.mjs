@@ -11,13 +11,34 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  HARNESS_CAPABILITY_NAMES,
+  validateHarnessCapabilities,
+} from "./harness-capabilities.mjs";
+import {
+  V1_HARNESS_ID,
+  assertHarnessId,
+  canonicalNativeSessionRef,
+  harnessSessionKey,
+} from "./harness-contract.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
 import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
+// The registry container stays at version 1 so a root that still holds only
+// version-1 Agents remains readable by a runtime without Harness support. A
+// version-2 Agent record is what makes such a runtime fail closed.
 export const AGENT_STORE_VERSION = 1;
-export const AGENT_RECORD_VERSION = 1;
+export const AGENT_RECORD_VERSION = 2;
+export const LEGACY_AGENT_RECORD_VERSION = 1;
+export const AGENT_SESSION_BINDING_VERSION = 2;
 export const AGENT_MAILBOX_VERSION = 1;
+
+const SUPPORTED_AGENT_RECORD_VERSIONS = new Set([
+  LEGACY_AGENT_RECORD_VERSION,
+  AGENT_RECORD_VERSION,
+]);
+const SUPPORTED_SESSION_BINDING_VERSIONS = new Set([1, AGENT_SESSION_BINDING_VERSION]);
 
 const REGISTRY_DIRECTORY = "agent-registry";
 const ROOTS_DIRECTORY = "roots";
@@ -273,6 +294,36 @@ function defaultRegistry(rootThreadId, workspaceRoot, directory) {
   };
 }
 
+/**
+ * The neutral native-session reference for either schema. A version-1 record
+ * carries the Claude config directory and session ID; it is interpreted as the
+ * equivalent Claude Code reference without broadening its ownership.
+ */
+function internalNativeSessionRef(agent) {
+  if (agent?.nativeSessionRef) return agent.nativeSessionRef;
+  if (agent?.claudeSessionId && agent?.claudeConfigDir) {
+    return {
+      harnessId: V1_HARNESS_ID,
+      instanceKey: agent.claudeConfigDir,
+      nativeSessionId: agent.claudeSessionId,
+    };
+  }
+  return null;
+}
+
+function interpretedHarnessId(agent) {
+  return agent?.harnessId ?? V1_HARNESS_ID;
+}
+
+/** The Agent's immutable route, composed from its single-owner fields. */
+function interpretedRoute(agent) {
+  return {
+    harnessId: interpretedHarnessId(agent),
+    model: agent?.selectedModel ?? null,
+    delegationMode: agent?.delegationMode ?? "leaf",
+  };
+}
+
 function validateContinuation(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Agent continuation must be an object.");
@@ -315,7 +366,9 @@ function validateAgent(agent, rootThreadId, workspaceRoot) {
   if (!agent || typeof agent !== "object" || Array.isArray(agent)) {
     throw new Error("Agent record must be an object.");
   }
-  if (agent.version !== AGENT_RECORD_VERSION) throw new Error(`Unsupported Agent record version: ${agent.version}.`);
+  if (!SUPPORTED_AGENT_RECORD_VERSIONS.has(agent.version)) {
+    throw new Error(`Unsupported Agent record version: ${agent.version}.`);
+  }
   assertText(agent.agentId, "Agent ID");
   if (agent.rootThreadId !== rootThreadId) throw new Error("Agent root does not match its registry.");
   if (agent.workspaceRoot !== workspaceRoot) throw new Error("Agent workspace does not match its registry.");
@@ -338,9 +391,34 @@ function validateAgent(agent, rootThreadId, workspaceRoot) {
     const finalized = agent.finalizedJobIds.map((jobId) => assertText(jobId, "Agent finalized job ID"));
     if (new Set(finalized).size !== finalized.length) throw new Error("Agent finalized job IDs must be unique.");
   }
-  if (agent.claudeSessionId != null) {
-    assertText(agent.claudeSessionId, "Agent Claude session ID");
-    assertText(agent.claudeConfigDir, "Agent Claude config directory");
+  if (agent.version === AGENT_RECORD_VERSION) {
+    assertHarnessId(agent.harnessId);
+    assertText(agent.driverVersion, "Agent Driver version");
+    validateHarnessCapabilities(agent.capabilities, `Agent ${agent.agentId} capability snapshot`);
+    if (agent.nativeSessionRef != null) {
+      const nativeSession = canonicalNativeSessionRef(agent.nativeSessionRef);
+      if (nativeSession.harnessId !== agent.harnessId) {
+        throw new Error(
+          `Agent native session belongs to Harness ${nativeSession.harnessId}, not ${agent.harnessId}.`
+        );
+      }
+    }
+    if (agent.claudeSessionId != null || agent.claudeConfigDir != null) {
+      throw new Error("A version-2 Agent stores its native session only as a neutral reference.");
+    }
+  } else {
+    if (
+      agent.harnessId != null ||
+      agent.driverVersion != null ||
+      agent.nativeSessionRef != null ||
+      agent.capabilities != null
+    ) {
+      throw new Error("A version-1 Agent must not carry Harness-neutral fields.");
+    }
+    if (agent.claudeSessionId != null) {
+      assertText(agent.claudeSessionId, "Agent Claude session ID");
+      assertText(agent.claudeConfigDir, "Agent Claude config directory");
+    }
   }
   if (!agent.mailbox || typeof agent.mailbox !== "object" || Array.isArray(agent.mailbox)) {
     throw new Error("Agent mailbox must be an object.");
@@ -396,8 +474,13 @@ function validateRegistry(registry, rootThreadId, workspaceRoot, directory) {
   };
 }
 
-function sessionKey(configDir, sessionId) {
-  return digest(`${canonicalConfigDir(configDir)}\0${assertText(sessionId, "Claude session ID")}`);
+/**
+ * Canonical `(harnessId, instanceKey, nativeSessionId)` binding identity. For
+ * Claude Code this reproduces the version-1 `(config dir, session)` digest, so
+ * a runtime on either schema resolves the same ownership record.
+ */
+function sessionBindingKey(reference) {
+  return harnessSessionKey(reference);
 }
 
 function layout(cwd, rootThreadId) {
@@ -458,20 +541,29 @@ function withRegistry(cwd, rootThreadId, operation) {
 
 function publicAgent(agent) {
   const mailbox = agent.mailbox ?? { messages: [] };
+  const nativeSessionRef = internalNativeSessionRef(agent);
+  const claudeSession = nativeSessionRef?.harnessId === V1_HARNESS_ID ? nativeSessionRef : null;
   return {
     version: agent.version,
     agentId: agent.agentId,
     path: agent.path,
     name: agent.name,
     description: agent.description,
+    harnessId: interpretedHarnessId(agent),
+    route: interpretedRoute(agent),
+    driverVersion: agent.driverVersion ?? null,
+    capabilities: agent.capabilities ?? null,
+    nativeSessionRef,
     selectedModel: agent.selectedModel ?? null,
     delegationMode: agent.delegationMode ?? "leaf",
     rootThreadId: agent.rootThreadId,
     workspaceRoot: agent.workspaceRoot,
     activeJobId: agent.activeJobId,
     latestJobId: agent.latestJobId,
-    claudeSessionId: agent.claudeSessionId,
-    claudeConfigDir: agent.claudeConfigDir,
+    // The Claude Code projection of the neutral reference. Native history and
+    // legacy model recovery still read these names.
+    claudeSessionId: claudeSession?.nativeSessionId ?? null,
+    claudeConfigDir: claudeSession?.instanceKey ?? null,
     status: agent.status,
     continuation: clone(agent.continuation),
     latestCompletionSequence: agent.latestCompletionSequence,
@@ -501,7 +593,62 @@ function continuation(mode, evidence) {
   return { mode, evidence: { ...evidence, observedAt: evidence?.observedAt ?? nowIso() } };
 }
 
-function recordFromInput(input, rootThreadId, workspaceRoot) {
+/**
+ * The Harness contract a store may write. A read-only store (terminal session
+ * binding, operator listing) needs only the interpretation of version-1 state;
+ * a store that creates Agents must be given the resolved Driver's accepted
+ * version and capability snapshot.
+ */
+function normalizeStoreHarness(harness, claudeConfigDir) {
+  const harnessId = harness == null
+    ? V1_HARNESS_ID
+    : assertHarnessId(harness.harnessId);
+  const requestedInstanceKey = harness?.instanceKey ?? claudeConfigDir;
+  const instanceKey = harnessId === V1_HARNESS_ID
+    ? canonicalConfigDir(requestedInstanceKey)
+    : assertText(requestedInstanceKey, "Agent store Harness instance key");
+  if (!harness) {
+    return { harnessId: V1_HARNESS_ID, instanceKey, driverVersion: null, capabilities: null };
+  }
+  return {
+    harnessId,
+    instanceKey,
+    driverVersion: harness.driverVersion == null
+      ? null
+      : assertText(harness.driverVersion, "Agent store Driver version"),
+    capabilities: harness.capabilities == null
+      ? null
+      : validateHarnessCapabilities(harness.capabilities, "Agent store capability snapshot"),
+  };
+}
+
+/**
+ * A store that was not given a resolved Driver may read and bind existing
+ * state, but it cannot create an Agent: there is no accepted contract to record.
+ */
+function creationHarnessContract(input, storeHarness) {
+  for (const key of ["harnessId", "driverVersion", "capabilities"]) {
+    if (input?.[key] != null) {
+      throw new Error(
+        `Agent creation does not accept ${key}; the resolved Agent store Driver contract is authoritative.`
+      );
+    }
+  }
+  const driverVersion = storeHarness.driverVersion;
+  const capabilities = storeHarness.capabilities;
+  if (!driverVersion || capabilities == null) {
+    throw new Error(
+      "Creating an Agent requires the resolved Harness Driver version and capability snapshot; " +
+      "this Agent store was opened without one."
+    );
+  }
+  return {
+    driverVersion: assertText(driverVersion, "Agent Driver version"),
+    capabilities: validateHarnessCapabilities(capabilities, "Agent capability snapshot"),
+  };
+}
+
+function recordFromInput(input, rootThreadId, workspaceRoot, storeHarness) {
   const name = displayName(input?.taskName ?? input?.task_name ?? input?.name);
   const timestamp = nowIso();
   const agentId = generatedAgentId();
@@ -526,6 +673,7 @@ function recordFromInput(input, rootThreadId, workspaceRoot) {
         acknowledgedAt: null,
       }];
   return {
+    // New Agents are always written in the version-2 Harness-neutral schema.
     version: AGENT_RECORD_VERSION,
     agentId,
     rootThreadId,
@@ -534,14 +682,15 @@ function recordFromInput(input, rootThreadId, workspaceRoot) {
     normalizedName: normalizedName(name),
     path: agentPath(name),
     description: input?.description == null ? null : assertText(input.description, "Agent description"),
+    harnessId: storeHarness.harnessId,
+    ...creationHarnessContract(input, storeHarness),
     selectedModel: input?.selectedModel == null
       ? null
       : assertText(input.selectedModel, "Agent selected model"),
     delegationMode: input?.delegationMode ?? "leaf",
     activeJobId: null,
     latestJobId: null,
-    claudeSessionId: null,
-    claudeConfigDir: null,
+    nativeSessionRef: null,
     status: "pending_init",
     continuation: continuation("safe_fresh", { reason: "new_agent_no_session" }),
     latestCompletionSequence: 0,
@@ -599,6 +748,71 @@ function jobContinuation(job, priorSession) {
   });
 }
 
+/**
+ * Normalize a terminal, unowned version-1 record to version 2 on its next safe
+ * write. An active or ownership-uncertain record is never rewritten: its
+ * existing worker stays the lifecycle owner until terminal reconciliation, and
+ * a record whose legacy model is still unproven keeps its mutable v1 shape.
+ */
+function normalizedTerminalRecord(agent, job) {
+  if (agent.version === AGENT_RECORD_VERSION) return agent;
+  if (agent.activeJobId != null || !agent.selectedModel) return agent;
+  const harnessId = job?.harnessId;
+  const driverVersion = job?.driverVersion;
+  if (!harnessId || !driverVersion || job?.harnessCapabilities == null) return agent;
+  let capabilities;
+  try {
+    capabilities = validateHarnessCapabilities(
+      job.harnessCapabilities,
+      `Agent ${agent.agentId} capability snapshot`
+    );
+    assertHarnessId(harnessId);
+  } catch {
+    return agent;
+  }
+  const nativeSessionRef = internalNativeSessionRef(agent);
+  if (nativeSessionRef && nativeSessionRef.harnessId !== harnessId) return agent;
+  if (nativeSessionRef) {
+    // A legacy session pointer that cannot be expressed as a canonical neutral
+    // reference stays on its version-1 record rather than failing the terminal
+    // write that carries completion delivery.
+    try {
+      canonicalNativeSessionRef(nativeSessionRef);
+    } catch {
+      return agent;
+    }
+  }
+  const {
+    claudeSessionId: _session,
+    claudeConfigDir: _config,
+    selectedEffort: _legacyEffort,
+    ...rest
+  } = agent;
+  return {
+    ...rest,
+    version: AGENT_RECORD_VERSION,
+    harnessId,
+    driverVersion,
+    capabilities,
+    nativeSessionRef,
+  };
+}
+
+/**
+ * A Driver that does not declare exact continuation never produces an
+ * exact-resume pointer. The accepted snapshot recorded on the Agent, not the
+ * currently registered Driver, decides what its terminal session may claim.
+ */
+function boundedContinuation(agent, next) {
+  const accepted = agent?.capabilities?.continuation ?? null;
+  if (next.mode !== "exact_session" || !accepted || accepted === "exact_resume") return next;
+  return continuation("safe_fresh", {
+    ...next.evidence,
+    reason: "driver_continuation_fresh_only",
+    acceptedContinuation: accepted,
+  });
+}
+
 function lifecycleFromJob(job) {
   if (job.status === "completed") return "completed";
   if (job.status === "interrupted") return "interrupted";
@@ -617,6 +831,7 @@ function redactedAgent(agent) {
     path: agent.path,
     name: agent.name,
     rootHash: rootHash(agent.rootThreadId),
+    harnessId: interpretedHarnessId(agent),
     status: agent.status,
     delegationMode: agent.delegationMode ?? "leaf",
     activeJobId: agent.activeJobId,
@@ -643,19 +858,22 @@ function listRootRegistryFiles(cwd) {
  * security authorization primitive here.
  */
 /**
- * @param {{ cwd?: string, ownerRootId?: string, claudeConfigDir?: string }} [options]
+ * @param {{ cwd?: string, ownerRootId?: string, claudeConfigDir?: string,
+ *   harness?: { harnessId?: string, instanceKey?: string, driverVersion?: string,
+ *   capabilities?: object } }} [options]
  */
-export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
+export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness } = {}) {
   const workspace = assertText(cwd, "workspace cwd");
   const root = assertText(ownerRootId, "owner root ID");
-  const defaultClaudeConfigDir = canonicalConfigDir(claudeConfigDir);
+  const storeHarness = normalizeStoreHarness(harness, claudeConfigDir);
+  const defaultClaudeConfigDir = storeHarness.instanceKey;
 
   function getRegistry() {
     return readRegistry(workspace, root, false);
   }
 
   function createAgent(input = {}) {
-    const candidate = recordFromInput(input, root, canonicalWorkspace(workspace));
+    const candidate = recordFromInput(input, root, canonicalWorkspace(workspace), storeHarness);
     const result = withRegistry(workspace, root, (registry) => {
       const conflictId = registry.nameIndex[candidate.normalizedName];
       if (conflictId) {
@@ -716,6 +934,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
         throw new Error("Agent updater must return an Agent record.");
       }
       const immutable = [
+        "version",
         "agentId",
         "rootThreadId",
         "workspaceRoot",
@@ -724,9 +943,22 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
         "path",
         "delegationMode",
         "createdAt",
+        // A version-2 Agent's Harness and model route are fixed at creation.
+        // Version-1 records still allow the legacy model backfill to complete.
+        ...(current.version === AGENT_RECORD_VERSION
+          ? ["harnessId", "driverVersion", "selectedModel"]
+          : []),
       ];
       for (const key of immutable) {
         if (next[key] !== current[key]) throw new Error(`Agent updater must not change immutable field ${key}.`);
+      }
+      if (
+        current.version === AGENT_RECORD_VERSION &&
+        HARNESS_CAPABILITY_NAMES.some(
+          (name) => next.capabilities?.[name] !== current.capabilities?.[name]
+        )
+      ) {
+        throw new Error("Agent updater must not change immutable field capabilities.");
       }
       const agent = { ...next, updatedAt: nowIso() };
       return { registry: { ...registry, agents: { ...registry.agents, [agent.agentId]: agent } }, agent };
@@ -737,7 +969,12 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
   function rollbackReservation(target, options = {}) {
     const result = withRegistry(workspace, root, (registry) => {
       const agent = internalAgent(registry, target);
-      if (agent.status !== "pending_init" || agent.activeJobId || agent.latestJobId || agent.claudeSessionId) {
+      if (
+        agent.status !== "pending_init" ||
+        agent.activeJobId ||
+        agent.latestJobId ||
+        internalNativeSessionRef(agent)
+      ) {
         return { registry, write: false, rolledBack: false, reason: "agent_already_launched" };
       }
       const removableMessageId = options.removableMessageId == null
@@ -923,22 +1160,54 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
     return mutateMessage(target, messageReference, "dispatched", "acknowledged", options);
   }
 
-  function sessionBindingPath(configDir, sessionId) {
+  function sessionBindingPath(reference) {
     const paths = layout(workspace, root);
-    const canonical = canonicalConfigDir(configDir ?? defaultClaudeConfigDir);
     return {
       directory: ensureDirectory(paths.sessionsDirectory),
-      filePath: path.join(paths.sessionsDirectory, `${sessionKey(canonical, sessionId)}.json`),
-      canonical,
+      filePath: path.join(paths.sessionsDirectory, `${sessionBindingKey(reference)}.json`),
     };
   }
 
-  function readSessionBinding(configDir, sessionId) {
-    const descriptor = sessionBindingPath(configDir, sessionId);
-    try { return JSON.parse(fs.readFileSync(descriptor.filePath, "utf8")); } catch (error) {
+  function readSessionBinding(reference) {
+    const descriptor = sessionBindingPath(reference);
+    let stored;
+    try {
+      stored = JSON.parse(fs.readFileSync(descriptor.filePath, "utf8"));
+    } catch (error) {
       if (error?.code === "ENOENT") return null;
       throw error;
     }
+    if (!SUPPORTED_SESSION_BINDING_VERSIONS.has(stored?.version)) {
+      throw new Error(`Unsupported native session binding version: ${stored?.version}.`);
+    }
+    // A version-1 binding names only a Claude config directory and session.
+    return {
+      ...stored,
+      harnessId: stored.harnessId ?? V1_HARNESS_ID,
+      instanceKey: stored.instanceKey ?? stored.claudeConfigDir,
+      nativeSessionId: stored.nativeSessionId ?? stored.claudeSessionId,
+    };
+  }
+
+  /**
+   * Record the Agent's validated native session. A version-2 record owns the
+   * neutral reference; a version-1 record keeps its Claude fields so an active
+   * legacy worker is never rewritten into a schema it does not understand.
+   */
+  function applyAgentSessionRef(agent, reference) {
+    if (agent.version === AGENT_RECORD_VERSION) {
+      return { ...agent, nativeSessionRef: reference };
+    }
+    if (reference.harnessId !== V1_HARNESS_ID) {
+      throw new Error(
+        `Agent ${agent.path} predates Harness state and cannot bind a ${reference.harnessId} session.`
+      );
+    }
+    return {
+      ...agent,
+      claudeSessionId: reference.nativeSessionId,
+      claudeConfigDir: reference.instanceKey,
+    };
   }
 
   function markSessionDrift(target, expectedSessionId, observedSessionId, jobId) {
@@ -957,29 +1226,48 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
   }
 
   function bindSession(target, sessionId, options = {}) {
-    const session = assertText(sessionId, "Claude session ID");
+    const session = assertText(sessionId, "native session ID");
     const jobId = normalizeJobId(options.jobId);
-    const configDir = canonicalConfigDir(options.claudeConfigDir ?? defaultClaudeConfigDir);
     const targetAgent = resolveTarget(target);
+    const harnessId = options.harnessId ?? targetAgent.harnessId;
+    const requestedInstanceKey = options.instanceKey
+      ?? options.claudeConfigDir
+      ?? defaultClaudeConfigDir;
+    const reference = canonicalNativeSessionRef({
+      harnessId,
+      // Claude Code's instance key is a filesystem path. Canonicalize it here
+      // so a symlinked configuration directory cannot produce a second binding
+      // identity for one native session. Another Harness owns its own
+      // canonical derivation and its key is taken verbatim.
+      instanceKey: harnessId === V1_HARNESS_ID
+        ? canonicalConfigDir(requestedInstanceKey)
+        : requestedInstanceKey,
+      nativeSessionId: session,
+    });
     if (targetAgent.activeJobId !== jobId && !(options.allowTerminal === true && targetAgent.activeJobId == null)) {
       throw new Error(`Agent ${targetAgent.path} is not active for job ${jobId}; session observation is rejected.`);
     }
-    if (targetAgent.claudeSessionId && targetAgent.claudeSessionId !== session) {
-      markSessionDrift(target, targetAgent.claudeSessionId, session, jobId);
+    const priorSessionId = targetAgent.nativeSessionRef?.nativeSessionId ?? null;
+    if (priorSessionId && priorSessionId !== session) {
+      markSessionDrift(target, priorSessionId, session, jobId);
       throw new Error("Claude session drift detected; the prior Agent session pointer was preserved.");
     }
-    const descriptor = sessionBindingPath(configDir, session);
+    const descriptor = sessionBindingPath(reference);
     const lock = acquireLock(descriptor.directory, `${path.basename(descriptor.filePath)}.lock`);
     try {
-      const existing = readSessionBinding(configDir, session);
+      const existing = readSessionBinding(reference);
       if (existing && (existing.rootThreadId !== root || existing.agentId !== targetAgent.agentId)) {
         throw new Error("Claude session is already bound to a different logical root or Agent.");
       }
+      if (existing && existing.harnessId !== reference.harnessId) {
+        throw new Error("Native session is already bound to a different Harness.");
+      }
       const binding = existing ?? {
-        version: AGENT_STORE_VERSION,
-        key: sessionKey(configDir, session),
-        claudeConfigDir: configDir,
-        claudeSessionId: session,
+        version: AGENT_SESSION_BINDING_VERSION,
+        key: sessionBindingKey(reference),
+        harnessId: reference.harnessId,
+        instanceKey: reference.instanceKey,
+        nativeSessionId: reference.nativeSessionId,
         rootThreadId: root,
         agentId: targetAgent.agentId,
         createdAt: nowIso(),
@@ -989,10 +1277,11 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
         if (current.activeJobId !== jobId && !(options.allowTerminal === true && current.activeJobId == null)) {
           throw new Error(`Agent ${current.path} changed active job while binding a Claude session.`);
         }
-        if (current.claudeSessionId && current.claudeSessionId !== session) {
+        const currentRef = internalNativeSessionRef(current);
+        if (currentRef && currentRef.nativeSessionId !== session) {
           throw new Error("Claude session drift detected during binding.");
         }
-        return { ...current, claudeSessionId: session, claudeConfigDir: configDir };
+        return applyAgentSessionRef(current, reference);
       });
       return { binding: clone(binding), agent };
     } finally {
@@ -1011,7 +1300,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
     let sessionBindingError = null;
     const candidateIsCurrent = agentBefore.activeJobId === jobId
       || (agentBefore.activeJobId == null && (agentBefore.latestJobId == null || agentBefore.latestJobId === jobId));
-    if (candidateIsCurrent && observedSessionId && !agentBefore.claudeSessionId) {
+    if (candidateIsCurrent && observedSessionId && !agentBefore.nativeSessionRef) {
       try {
         sessionBinding = bindSession(target, observedSessionId, {
           jobId,
@@ -1046,17 +1335,23 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir } = {}) {
           agent,
         };
       }
-      const nextContinuation = sessionBindingError
-        ? continuation("blocked", {
-            reason: "session_binding_conflict",
-            jobId,
-            detail: sessionBindingError,
-          })
-        : jobContinuation(job, current.claudeSessionId);
+      const nextContinuation = boundedContinuation(
+        current,
+        sessionBindingError
+          ? continuation("blocked", {
+              reason: "session_binding_conflict",
+              jobId,
+              detail: sessionBindingError,
+            })
+          : jobContinuation(job, internalNativeSessionRef(current)?.nativeSessionId ?? null),
+      );
       const blockedByIdentity = ["session_drift", "session_binding_conflict"]
         .includes(nextContinuation.evidence.reason);
       const agent = {
-        ...current,
+        ...normalizedTerminalRecord(
+          { ...current, activeJobId: current.activeJobId === jobId ? null : current.activeJobId },
+          job,
+        ),
         activeJobId: current.activeJobId === jobId ? null : current.activeJobId,
         latestJobId: jobId,
         lastTerminalJobId: jobId,

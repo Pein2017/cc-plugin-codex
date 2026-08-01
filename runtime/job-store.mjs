@@ -22,8 +22,17 @@ import {
   markCompletionDetailedResultUnavailable,
   reconcileTerminalJobCompletion,
 } from "./completion-inbox.mjs";
+import {
+  V1_HARNESS_ID,
+  assertHarnessId,
+  canonicalNativeSessionRef,
+  harnessSessionKey,
+} from "./harness-contract.mjs";
 
 const STATE_VERSION = 1;
+/** Version-2 leases name their Harness; version-1 leases are read as Claude Code. */
+const SESSION_LEASE_VERSION = 2;
+const SUPPORTED_SESSION_LEASE_VERSIONS = new Set([STATE_VERSION, SESSION_LEASE_VERSION]);
 let ensuredPluginDataRoot = null;
 const CONFIG_FILE_NAME = "config.json";
 const JOBS_DIR_NAME = "jobs";
@@ -34,8 +43,15 @@ const MAX_TERMINAL_JOBS_PER_SESSION = 100;
 const REAP_GRACE_MS = 2_000;
 const RESERVED_JOB_FILE_MAX_AGE_MS = 60 * 60 * 1000;
 export const JOB_RESERVATION_SUFFIX = ".reserve";
+/**
+ * Version-2 jobs never expose the literal queue state accepted by a
+ * pre-Harness detached worker. This wire-level state is the hot-rollback
+ * execution fence; old workers reject it before claiming or launching.
+ */
+export const HARNESS_QUEUED_JOB_STATUS = "harness_queued";
 export const ACTIVE_JOB_STATUSES = new Set([
   "queued",
+  HARNESS_QUEUED_JOB_STATUS,
   "running",
   "interrupting",
   "cancelling",
@@ -319,23 +335,64 @@ function canonicalPath(candidate) {
   }
 }
 
-function sessionLeaseIdentity(claudeConfigDir, sessionId) {
-  sanitizeId(sessionId, "Claude session ID");
-  const configIdentity = canonicalPath(
-    claudeConfigDir || path.join(os.homedir(), ".claude")
-  );
-  const key = createHash("sha256")
-    .update(`${configIdentity}\0${sessionId}`)
-    .digest("hex");
-  return { configIdentity, sessionId, key };
+/**
+ * Accept either a version-2 `{ harnessId, instanceKey }` descriptor or the
+ * version-1 positional Claude config directory. Both resolve to the same
+ * canonical identity for Claude Code, so a lease written by either schema is
+ * observed by the other instead of being silently duplicated.
+ */
+function normalizeHarnessInstance(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const harnessId = assertHarnessId(value.harnessId);
+    const instanceKey = String(value.instanceKey ?? "").trim();
+    if (!instanceKey || instanceKey.includes("\0")) {
+      throw new Error("Harness instance key must be non-empty text.");
+    }
+    return {
+      harnessId,
+      // Claude Code's instance is a config directory and must remain
+      // symlink-canonical for v1 lease compatibility. Other Drivers own an
+      // opaque identity and must not be reinterpreted as a filesystem path.
+      instanceKey: harnessId === V1_HARNESS_ID ? canonicalPath(instanceKey) : instanceKey,
+    };
+  }
+  return {
+    harnessId: V1_HARNESS_ID,
+    instanceKey: canonicalPath(value || path.join(os.homedir(), ".claude")),
+  };
 }
 
-function resolveSessionLeaseFile(claudeConfigDir, sessionId) {
-  const identity = sessionLeaseIdentity(claudeConfigDir, sessionId);
+function sessionLeaseIdentity(harnessInstance, sessionId) {
+  sanitizeId(sessionId, "native session ID");
+  const reference = canonicalNativeSessionRef({
+    ...normalizeHarnessInstance(harnessInstance),
+    nativeSessionId: sessionId,
+  });
+  return {
+    harnessId: reference.harnessId,
+    instanceKey: reference.instanceKey,
+    // Retained so version-1 readers keep resolving the same lease descriptor.
+    configIdentity: reference.instanceKey,
+    sessionId,
+    key: harnessSessionKey(reference),
+  };
+}
+
+function resolveSessionLeaseFile(harnessInstance, sessionId) {
+  const identity = sessionLeaseIdentity(harnessInstance, sessionId);
   return {
     ...identity,
     leaseFile: path.join(resolveStateRoot(), SESSION_LEASES_DIR_NAME, `${identity.key}.json`),
   };
+}
+
+function interpretStoredLease(lease) {
+  if (!lease) return null;
+  const version = Number(lease.version ?? STATE_VERSION);
+  if (!SUPPORTED_SESSION_LEASE_VERSIONS.has(version)) {
+    throw new Error(`Unsupported native session lease version: ${lease.version}.`);
+  }
+  return { ...lease, harnessId: lease.harnessId ?? V1_HARNESS_ID };
 }
 
 function activeLeaseOwner(lease) {
@@ -356,8 +413,8 @@ function activeLeaseOwner(lease) {
   return alive ? owner : null;
 }
 
-export function reserveSessionLease(cwd, claudeConfigDir, sessionId, jobId) {
-  const descriptor = resolveSessionLeaseFile(claudeConfigDir, sessionId);
+export function reserveSessionLease(cwd, harnessInstance, sessionId, jobId) {
+  const descriptor = resolveSessionLeaseFile(harnessInstance, sessionId);
   fs.mkdirSync(path.dirname(descriptor.leaseFile), { recursive: true, mode: 0o700 });
   const ownership = acquireJobLock(`${descriptor.leaseFile}.lock`);
   try {
@@ -367,8 +424,15 @@ export function reserveSessionLease(cwd, claudeConfigDir, sessionId, jobId) {
       try {
         const stat = fs.statSync(descriptor.leaseFile);
         existingAgeMs = Date.now() - stat.mtimeMs;
-        existing = JSON.parse(fs.readFileSync(descriptor.leaseFile, "utf8"));
-      } catch {}
+        existing = interpretStoredLease(JSON.parse(fs.readFileSync(descriptor.leaseFile, "utf8")));
+      } catch (error) {
+        if (/Unsupported native session lease version/.test(String(error?.message))) throw error;
+      }
+      if (existing && existing.harnessId !== descriptor.harnessId) {
+        throw new Error(
+          `Native session ${sessionId} is owned by Harness ${existing.harnessId}, not ${descriptor.harnessId}.`
+        );
+      }
       if (existing?.jobId === jobId) return existing;
       const owner = activeLeaseOwner(existing);
       if (owner || existingAgeMs < SESSION_LEASE_PENDING_GRACE_MS) {
@@ -381,8 +445,11 @@ export function reserveSessionLease(cwd, claudeConfigDir, sessionId, jobId) {
     }
 
     const lease = {
-      version: STATE_VERSION,
+      version: SESSION_LEASE_VERSION,
       key: descriptor.key,
+      harnessId: descriptor.harnessId,
+      instanceKey: descriptor.instanceKey,
+      nativeSessionId: sessionId,
       configIdentity: descriptor.configIdentity,
       sessionId,
       jobId,
@@ -396,9 +463,9 @@ export function reserveSessionLease(cwd, claudeConfigDir, sessionId, jobId) {
   }
 }
 
-export function releaseSessionLease(claudeConfigDir, sessionId, jobId) {
+export function releaseSessionLease(harnessInstance, sessionId, jobId) {
   if (!sessionId || !jobId) return false;
-  const descriptor = resolveSessionLeaseFile(claudeConfigDir, sessionId);
+  const descriptor = resolveSessionLeaseFile(harnessInstance, sessionId);
   if (!fs.existsSync(descriptor.leaseFile)) return false;
   const ownership = acquireJobLock(`${descriptor.leaseFile}.lock`);
   try {
@@ -416,28 +483,40 @@ export function releaseSessionLease(claudeConfigDir, sessionId, jobId) {
   }
 }
 
-export function claimJobSessionLease(cwd, jobId, claudeConfigDir, sessionId) {
-  const lease = reserveSessionLease(cwd, claudeConfigDir, sessionId, jobId);
+export function claimJobSessionLease(cwd, jobId, harnessInstance, sessionId) {
+  const lease = reserveSessionLease(cwd, harnessInstance, sessionId, jobId);
   try {
     mutateJob(cwd, jobId, (job) => ({
       ...job,
       sessionLease: {
+        harnessId: lease.harnessId,
+        instanceKey: lease.instanceKey,
         configIdentity: lease.configIdentity,
         sessionId: lease.sessionId,
       },
     }));
     return lease;
   } catch (error) {
-    releaseSessionLease(claudeConfigDir, sessionId, jobId);
+    releaseSessionLease(harnessInstance, sessionId, jobId);
     throw error;
   }
 }
 
+function jobLeaseInstance(job) {
+  const lease = job?.sessionLease;
+  if (!lease) return null;
+  if (lease.harnessId && lease.instanceKey) {
+    return { harnessId: lease.harnessId, instanceKey: lease.instanceKey };
+  }
+  // Version-1 receipts stored only the Claude config identity.
+  return lease.configIdentity ?? null;
+}
+
 function releaseJobSessionLease(job) {
   const sessionId = job?.sessionLease?.sessionId;
-  const configIdentity = job?.sessionLease?.configIdentity;
-  if (sessionId && configIdentity) {
-    return releaseSessionLease(configIdentity, sessionId, job.id);
+  const instance = jobLeaseInstance(job);
+  if (sessionId && instance) {
+    return releaseSessionLease(instance, sessionId, job.id);
   }
   return true;
 }
@@ -629,10 +708,14 @@ function prepareTerminalAgentSessionBinding(cwd, job) {
   try {
     store.bindSession(agent.agentId, sessionId, {
       jobId: job.id,
+      harnessId: job.harnessId ?? agent.harnessId,
       // Early releases did not duplicate the Agent config directory into
-      // every job receipt. The Agent's validated directory is the only safe
+      // every job receipt. The Agent's validated instance is the only safe
       // fallback; never silently substitute a process-global config path.
-      claudeConfigDir: job.claudeConfigDir ?? agent.claudeConfigDir,
+      instanceKey: job.harnessInstanceKey
+        ?? job.claudeConfigDir
+        ?? agent.nativeSessionRef?.instanceKey
+        ?? agent.claudeConfigDir,
       allowTerminal: agent.activeJobId == null,
     });
     return job;
@@ -748,7 +831,13 @@ function partitionJobsForRetention(jobs) {
   return { retained, pruned };
 }
 
-const REAPABLE_STATUSES = new Set(["queued", "running", "interrupting", "cancelling"]);
+const REAPABLE_STATUSES = new Set([
+  "queued",
+  HARNESS_QUEUED_JOB_STATUS,
+  "running",
+  "interrupting",
+  "cancelling",
+]);
 
 function mostRecentJobTimestamp(job) {
   const candidates = [job.updatedAt, job.startedAt, job.createdAt]
@@ -973,7 +1062,7 @@ export function enqueueSteeringMessage(cwd, jobId, text, options = {}) {
   /** @type {any} */
   let queuedMessage = null;
   mutateJob(cwd, jobId, (job) => {
-    if (!["queued", "running"].includes(job.status)) {
+    if (!["queued", HARNESS_QUEUED_JOB_STATUS, "running"].includes(job.status)) {
       throw new Error(`Job ${jobId} is ${job.status}; use an explicit follow-up.`);
     }
     if (job.acceptingSteering === false) {

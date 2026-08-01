@@ -48,7 +48,6 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
   child generation. Fable must join every child and return one self-contained
   synthesis; only the Fable parent enters the CC registry. `Workflow` remains
   disabled. Haiku/Sonnet/Opus orchestration requests must fail.
-
 ## Parent join policy
 
 Classify the result before spawn:

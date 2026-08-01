@@ -1,9 +1,11 @@
 # CC for Pein: durable Claude Agents for Codex
 
-CC for Pein is a checkout-owned Codex Plugin that runs the host `claude` CLI
-in headless stream-json mode. It owns durable orchestration only; Claude Code
-continues to own authentication, project configuration, memory, hooks,
-plugins, skills, MCP configuration, sessions, and tool execution.
+CC for Pein is a checkout-owned Codex Plugin with one durable Agent supervisor
+and a static Harness Driver seam. Claude Code is the only admitted production
+Harness and runs in headless stream-json mode. Claude Code remains responsible
+for authentication, configuration, hooks, skills/MCP surfaces, sessions, and
+tool execution. Future Harnesses require their own accepted OpenSpec and Driver;
+they are not public placeholders in the current API.
 
 > **Experimental feature:** the seven CC Agent skills are an evolving local
 > orchestration surface. They preserve durable Claude work, but cannot make an
@@ -11,10 +13,10 @@ plugins, skills, MCP configuration, sessions, and tool execution.
 > that needs a child result must keep the join obligation inside its active
 > turn.
 
-Version 0.9 makes a named Agent—not an internal job ID—the public object. A
-Claude turn is temporary. An Agent has a stable root-scoped identity, a native
-Claude session pointer when safe, a durable message queue, and nonresident
-history after its worker exits.
+A named Agent—not an internal job ID—is the public object. A native turn is
+temporary. An Agent has a stable root-scoped identity, immutable Harness/model
+route, native session pointer when safe, durable message queue, and nonresident
+logical history after its worker exits.
 
 The runtime has no source or runtime dependency on Sendbird, upstream
 installers, Codex forwarding hooks, or a versioned plugin Cache. Codex caches a
@@ -74,15 +76,15 @@ the parent reports one concise sentence with the model role, Agent name, and
 status—never final Claude text or raw JSON. `send-message` and `followup-task`
 return only `agent_name` plus their delivery disposition. `interrupt-agent`
 returns only `agent_name` and operation status. `list-agents` reports only
-canonical name/status/delegation-mode records. Internal execution evidence
+canonical name/status/model/delegation-mode records. Internal execution evidence
 remains available through operator diagnostics.
 `wait-agent` reports at most one update: by default an acknowledgement-bearing
 completion with the complete stored Claude final message for parent synthesis,
 or one coalesced safe progress update when explicitly requested.
-`read-agent-messages` retrieves recent outer-assistant
-text from the exact Agent's bound native Claude transcript without activating it.
+`read-agent-messages` retrieves recent outer-assistant text from the exact
+Agent's bound native Claude transcript without activation.
 
-The runtime model surface normalizes its accepted aliases to four canonical IDs:
+The runtime model surface normalizes accepted aliases to four canonical IDs:
 `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, and
 `claude-fable-5`. Relative Plugin guidance, not exact pricing: approximate
 capability and spend rise from Haiku < Sonnet < Opus < Fable. Haiku is the
@@ -100,7 +102,7 @@ arguments, and `x-high` maps to `xhigh`. Older model IDs, dated backend snapshot
 IDs, and other Claude models fail before Claude launches. Follow-up turns
 inherit the Agent's selected model.
 
-Every Agent defaults to immutable `delegation_mode: "leaf"`. The runtime
+Every Agent defaults to immutable `delegation_mode: "leaf"`. The Claude runtime
 appends a bounded Codex-lead role envelope and denies Claude Code's native
 `Agent` and `Workflow` tools for leaf turns. Only exact `claude-fable-5` with explicit
 `delegation_mode: "claude_orchestrator"` may use Claude-native subagents. Those
@@ -318,8 +320,8 @@ npm run doctor -- --json
 Doctor is zero-model-cost and not exposed as a Skill or MCP tool. It checks the
 canonical checkout and installed snapshot, production Node dependencies,
 Claude CLI version/static compatibility and login, the fixed Claude config and
-9090 proxy envelope, exactly seven MCP tools, bounded checkout-routed
-compatibility shells, and aggregate local storage. Its
+9090 proxy envelope, exactly seven
+MCP tools, bounded checkout-routed compatibility shells, and aggregate local storage. Its
 output is redacted: it never reports account email, organization IDs, tokens,
 proxy credentials, arbitrary environment values, prompts, messages, or session
 contents. A required failure exits nonzero with a recovery command.

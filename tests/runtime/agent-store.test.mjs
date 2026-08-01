@@ -6,6 +6,17 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { createAgentStore } from "../../runtime/agent-store.mjs";
+import {
+  CLAUDE_CODE_CAPABILITIES,
+  CLAUDE_CODE_DRIVER_VERSION,
+  CLAUDE_CODE_HARNESS_ID,
+} from "../../runtime/claude-code-driver.mjs";
+
+const HARNESS = {
+  harnessId: CLAUDE_CODE_HARNESS_ID,
+  driverVersion: CLAUDE_CODE_DRIVER_VERSION,
+  capabilities: CLAUDE_CODE_CAPABILITIES,
+};
 
 const roots = [];
 const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
@@ -29,7 +40,7 @@ function setup(ownerRootId = "codex-root-agent-test") {
     workspace,
     claudeConfigDir,
     ownerRootId,
-    store: createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir }),
+    store: createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS }),
   };
 }
 
@@ -68,12 +79,16 @@ function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, 
   const source = [
     `import { createAgentStore } from ${JSON.stringify(storeUrl)};`,
     "const [workspace, config, root, target, start, count] = process.argv.slice(1);",
-    "const store = createAgentStore({ cwd: workspace, ownerRootId: root, claudeConfigDir: config });",
+    "const store = createAgentStore({ cwd: workspace, ownerRootId: root, claudeConfigDir: config, harness: JSON.parse(process.env.CC_TEST_HARNESS) });",
     "for (let index = 0; index < Number(count); index += 1) store.enqueueMessage(target, `message-${Number(start) + index}`);",
   ].join("\n");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", source, workspace, claudeConfigDir, ownerRootId, target, String(start), String(count)], {
-      env: { ...process.env, CC_RUNTIME_HOME: runtimeHome },
+      env: {
+        ...process.env,
+        CC_RUNTIME_HOME: runtimeHome,
+        CC_TEST_HARNESS: JSON.stringify(HARNESS),
+      },
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
@@ -97,6 +112,7 @@ describe("Agent durable store", () => {
       cwd: workspace,
       ownerRootId: "codex-root-other",
       claudeConfigDir,
+      harness: HARNESS,
     });
     const other = otherRoot.createAgent({ task_name: "researcher" });
     assert.notEqual(other.agentId, created.agentId);
@@ -128,7 +144,7 @@ describe("Agent durable store", () => {
     delete registry.agents[legacy.agentId].delegationMode;
     fs.writeFileSync(registryFile, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
 
-    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS });
     assert.equal(restarted.resolveTarget(legacy.agentId).delegationMode, "leaf");
     restarted.updateAgent(legacy.agentId, (current) => ({ ...current, status: "completed" }));
     const normalized = JSON.parse(fs.readFileSync(registryFile, "utf8"));
@@ -170,7 +186,7 @@ describe("Agent durable store", () => {
     const queued = store.enqueueMessage(agent.path, "later message");
     assert.equal(queued.delivery, "queued_no_turn");
 
-    const afterRestart = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    const afterRestart = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS });
     assert.equal(afterRestart.listMessages(agent.path, { state: "queued" }).length, 1);
     const activation = afterRestart.reserveActivation(agent.path, "job-mailbox-2");
     assert.equal(activation.reserved, true);
@@ -244,11 +260,18 @@ describe("Agent durable store", () => {
     store.reserveActivation(agent.path, "job-session-1", { initial: true });
     const bound = store.bindSession(agent.path, "claude-shared-session", { jobId: "job-session-1" });
     assert.equal(bound.agent.claudeSessionId, "claude-shared-session");
-    assert.equal(store.readSessionBinding(claudeConfigDir, "claude-shared-session").agentId, agent.agentId);
+    assert.equal(
+      store.readSessionBinding({
+        harnessId: CLAUDE_CODE_HARNESS_ID,
+        instanceKey: claudeConfigDir,
+        nativeSessionId: "claude-shared-session",
+      }).agentId,
+      agent.agentId,
+    );
 
     const otherWorkspace = path.join(root, "other-workspace");
     fs.mkdirSync(otherWorkspace);
-    const other = createAgentStore({ cwd: otherWorkspace, ownerRootId: "codex-root-session-other", claudeConfigDir });
+    const other = createAgentStore({ cwd: otherWorkspace, ownerRootId: "codex-root-session-other", claudeConfigDir, harness: HARNESS });
     const foreignAgent = other.createAgent({ task_name: "foreign" });
     other.reserveActivation(foreignAgent.path, "job-session-foreign", { initial: true });
     assert.throws(
@@ -293,7 +316,7 @@ describe("Agent durable store", () => {
     assert.equal(drift.agent.continuation.mode, "blocked");
     assert.equal(drift.agent.claudeSessionId, "claude-agent-session-1");
 
-    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS });
     const reconciled = restarted.reconcileFromJobs([terminalJob(agent, "job-life-2", {
       recoverability: { resumable: false, mode: "blocked", reason: "fatal" },
       status: "failed",

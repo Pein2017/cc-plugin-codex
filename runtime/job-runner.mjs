@@ -337,7 +337,7 @@ export async function runTrackedJob(job, runner, options = {}) {
   const claim = transitionJob(
     job.workspaceRoot,
     job.id,
-    ["queued"],
+    options.claimStatuses ?? ["queued"],
     "running",
     runningRecord
   );

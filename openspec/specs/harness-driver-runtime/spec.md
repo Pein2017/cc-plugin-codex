@@ -1,5 +1,8 @@
-## ADDED Requirements
+# harness-driver-runtime Specification
 
+## Purpose
+Define the coarse turn-level Harness Driver boundary, capability vocabulary, deterministic driver registry, Claude behavior-preserving first adapter, and the separation between lead routing policy and supervisor lifecycle.
+## Requirements
 ### Requirement: One deterministic supervisor owns Harness-neutral Agent lifecycle
 The runtime SHALL use one deterministic supervisor for root ownership, durable Agent identity, mailbox ordering, active-turn arbitration, jobs, completion delivery, bounded wait/progress semantics, verified process control, leases, retention, and reconciliation. The supervisor SHALL accept only an explicit caller-selected route and SHALL NOT decompose tasks, choose a Harness, model, effort, or topology, synthesize Agent results, perform cross-Harness fallback, or retry an account-limit failure through another route.
 
@@ -12,7 +15,7 @@ The runtime SHALL use one deterministic supervisor for root ownership, durable A
 - **THEN** the supervisor preserves that failure and starts no fallback Harness or model
 
 ### Requirement: Harness Drivers own one complete native turn
-Each Harness Driver SHALL own executable discovery, native configuration and authentication, route validation, command construction, system-envelope integration, protocol parsing, native tool and subagent behavior, bounded in-turn transport recovery, native session evidence, compatibility checks, Harness-specific failure classification, and optional native history for one complete Agent turn. The supervisor SHALL interact with the Driver only through versioned preflight, start-turn, assigned-input, interrupt, terminal-result, and optional bounded-history operations; it SHALL NOT require token-level or tool-schema parity between Harnesses.
+Each Harness Driver SHALL own executable discovery, native configuration and authentication, Harness-specific unreadiness explanation, prepared-preflight validation and immediate pre-turn revalidation, route validation, command construction, system-envelope integration, protocol parsing, native tool and subagent behavior, bounded in-turn transport recovery, native session evidence, compatibility checks, Harness-specific failure classification, and optional native history for one complete Agent turn. The supervisor SHALL interact with the Driver only through versioned preflight, unreadiness explanation, prepared-preflight validation/revalidation, start-turn, assigned-input, interrupt, terminal-result, and optional bounded-history operations; it SHALL NOT require token-level or tool-schema parity between Harnesses.
 
 #### Scenario: A Driver completes a turn
 - **WHEN** the native Harness reaches a terminal state
@@ -21,6 +24,10 @@ Each Harness Driver SHALL own executable discovery, native configuration and aut
 #### Scenario: Native tool protocol differs
 - **WHEN** a future admitted Harness reports tools or subagents differently from Claude Code
 - **THEN** its Driver may retain bounded versioned native receipts without changing the shared supervisor lifecycle or pretending protocol-level parity
+
+#### Scenario: Terminal evidence is contradictory or foreign
+- **WHEN** a Driver returns inconsistent status and exit evidence, a native session owned by another Harness, a non-normalized final message, an unclassified failure, or an over-bound Driver receipt
+- **THEN** the supervisor rejects the turn result rather than projecting a false terminal Agent state
 
 ### Requirement: Driver capabilities are closed, versioned, and fail closed
 Each admitted Driver SHALL publish a versioned capability snapshot for active input, continuation, history, interruption, automatic recovery, authority enforcement, leaf enforcement, and native orchestration using the specification's closed values. Every prepared Agent turn SHALL persist the accepted Driver version and capability snapshot. An unknown value, missing required capability, caller-supplied override, or operation unsupported by that snapshot SHALL fail before native process launch or return an explicit unsupported result without mutating Agent continuity.

@@ -124,7 +124,7 @@ describe("operator doctor", () => {
     fs.mkdirSync(path.dirname(snapshotRoot), { recursive: true });
     fs.cpSync(pluginRoot, snapshotRoot, { recursive: true });
     const secretEmail = "private@example.invalid";
-    const fakeSpawn = (_command, args) => {
+    const fakeSpawn = (command, args) => {
       if (args.join(" ") === "plugin list --json") {
         return {
           status: 0,

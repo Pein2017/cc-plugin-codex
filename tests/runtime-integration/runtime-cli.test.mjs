@@ -293,6 +293,24 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /Act as a leaf/i);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /read(?: and|\/)review only/i);
+
+    // Every prepared turn records the Driver contract that launched it, so a
+    // later recovery is judged against the same accepted capabilities.
+    const record = agent(test, spawned.agent_name);
+    const launched = readInternalJob(test, record.latestJobId);
+    assert.equal(launched.harnessStateVersion, 2);
+    assert.equal(launched.harnessId, "claude-code");
+    assert.equal(launched.driverVersion, "claude-code@1");
+    assert.equal(launched.harnessCapabilities.continuation, "exact_resume");
+    assert.equal(launched.harnessCapabilities.authorityEnforcement, "prompt_only");
+    assert.deepEqual(launched.harnessRoute, {
+      harnessId: "claude-code",
+      model: "claude-haiku-4-5",
+      effort: "low",
+      delegationMode: "leaf",
+      write: false,
+    });
+    assert.equal(launched.harnessInstanceKey, path.join(path.dirname(test.workspace), ".claude"));
   });
 
   it("launches Fable with canonical model and explicit max effort", () => {
@@ -446,7 +464,13 @@ describe("canonical Agent runtime CLI", () => {
     ]);
     const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     assert.equal(terminal.continuation.mode, "exact_session");
-    assert.equal(terminal.claudeSessionId, "fake-session-resume");
+    assert.equal(terminal.version, 2);
+    assert.equal(terminal.harnessId, "claude-code");
+    assert.deepEqual(terminal.nativeSessionRef, {
+      harnessId: "claude-code",
+      instanceKey: path.join(path.dirname(test.workspace), ".claude"),
+      nativeSessionId: "fake-session-resume",
+    });
     const queued = run(test, ["send_message", terminal.path, "queued before follow-up", "--json"]);
     assert.deepEqual(queued, {
       agent_name: terminal.path,
@@ -497,7 +521,7 @@ describe("canonical Agent runtime CLI", () => {
       "utf8",
     );
     const longMessage = `${"界".repeat(24_000)}-complete-tail`;
-    writeNativeTranscript(test, terminal.claudeSessionId, [
+    writeNativeTranscript(test, terminal.nativeSessionRef.nativeSessionId, [
       {
         type: "assistant",
         uuid: "old-message",
@@ -580,6 +604,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(firstList.agents, [{
       agent_name: spawned.agent_name,
       agent_status: "completed",
+      model: "claude-sonnet-5",
       delegation_mode: "leaf",
     }]);
     assert.equal(JSON.stringify(firstList).includes("completionInbox"), false);

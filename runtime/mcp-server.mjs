@@ -58,7 +58,7 @@ const optionalWrite = z.boolean().optional().describe(
 const TOOL_DEFINITIONS = Object.freeze({
   spawn_agent: {
     description:
-      "Experimental: start a durable CC Agent asynchronously; leaf by default, Fable orchestrator only when explicit.",
+      "Experimental: start a durable Claude Agent asynchronously; leaf by default, Fable orchestrator only when explicit.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
@@ -253,7 +253,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental CC Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Ordinary wait is completion-first; never repeat progress waiting by reflex. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Ordinary wait is completion-first; never repeat progress waiting by reflex. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

@@ -98,15 +98,25 @@ describe("Agent completion projection", () => {
 
     const listBeforeAcknowledgement = runtime.listAgents();
     assert.deepEqual(listBeforeAcknowledgement, {
-      agents: [{ agent_name: agent.path, agent_status: "completed", delegation_mode: "leaf" }],
+      agents: [{
+        agent_name: agent.path,
+        agent_status: "completed",
+        model: null,
+        delegation_mode: "leaf",
+      }],
     });
     const unrelated = runtime.store.createAgent({ task_name: "unrelated" });
     assert.deepEqual(runtime.listAgents({ path_prefix: "/root/proj" }), {
-      agents: [{ agent_name: agent.path, agent_status: "completed", delegation_mode: "leaf" }],
+      agents: [{
+        agent_name: agent.path,
+        agent_status: "completed",
+        model: null,
+        delegation_mode: "leaf",
+      }],
     });
     assert.deepEqual(runtime.listAgents().agents, [
-      { agent_name: agent.path, agent_status: "completed", delegation_mode: "leaf" },
-      { agent_name: unrelated.path, agent_status: "starting", delegation_mode: "leaf" },
+      { agent_name: agent.path, agent_status: "completed", model: null, delegation_mode: "leaf" },
+      { agent_name: unrelated.path, agent_status: "starting", model: null, delegation_mode: "leaf" },
     ]);
 
     runtime.store.updateAgent(agent.agentId, (current) => ({

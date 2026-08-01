@@ -58,7 +58,7 @@ Version-1 Claude session bindings SHALL retain their existing canonical config/s
 ## ADDED Requirements
 
 ### Requirement: Harness-neutral state migration preserves active ownership
-The v2 runtime SHALL interpret valid v1 Agent, job, session-binding, and lease records as Claude Code state. It MAY normalize terminal unowned v1 state on its next safe write, but SHALL NOT rewrite, lease, resume, signal, or steal an active or ownership-uncertain v1 record from its existing worker. New Agents SHALL be written only as v2 after mixed-state verification is enabled. A v1-only runtime SHALL fail closed on v2 state.
+The v2 runtime SHALL interpret valid v1 Agent, job, session-binding, and lease records as Claude Code state. It MAY normalize terminal unowned v1 state on its next safe write, but SHALL NOT rewrite, lease, resume, signal, or steal an active or ownership-uncertain v1 record from its existing worker. New Agents SHALL be written only as v2 after mixed-state verification is enabled. A v1-only runtime SHALL reject v2 Agents and SHALL be unable to claim the v2 job queue state. Version-2 Claude session bindings and leases SHALL remain wire-readable by v1 so old processes observe existing root/Agent/session ownership rather than stealing a live native session.
 
 #### Scenario: Active version 1 worker exists during hot update
 - **WHEN** a v2 process observes a v1 job with verified live ownership or unresolved ownership
@@ -68,6 +68,14 @@ The v2 runtime SHALL interpret valid v1 Agent, job, session-binding, and lease r
 - **WHEN** a valid nonresident v1 Claude Agent is resumed by the v2 runtime
 - **THEN** the runtime preserves its root, Agent, config/session binding, route meaning, mailbox order, and exact-session semantics while writing the new activation in the v2 schema
 
-#### Scenario: Old runtime sees version 2 state
-- **WHEN** a runtime without v2 support encounters a v2 Agent, job, binding, or lease record
-- **THEN** it refuses lifecycle control instead of interpreting the record as v1 or launching a competing Harness process
+#### Scenario: Old worker sees a version 2 job
+- **WHEN** a runtime without Harness support encounters a v2 job prepared for detached execution
+- **THEN** the job's versioned queue status is not the literal v1 `queued` state, so the old worker refuses it before claiming or launching a native process
+
+#### Scenario: Old runtime sees a version 2 Agent
+- **WHEN** a runtime without v2 Agent support reads the Agent registry
+- **THEN** it rejects the unknown Agent record version rather than activating or rewriting it
+
+#### Scenario: Old runtime observes a version 2 Claude binding or lease
+- **WHEN** a v1 process reaches the byte-compatible Claude session ownership key
+- **THEN** it can observe the existing root, Agent, job, and workspace ownership fields and does not treat the native session as unbound, while it still cannot activate the v2 Agent or claim the v2 job

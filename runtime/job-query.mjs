@@ -77,7 +77,7 @@ function formatElapsedDuration(startValue, endValue = null) {
   return `${seconds}s`;
 }
 
-const ACTIVE_STATUSES = new Set(["running", "interrupting", "cancelling"]);
+const ACTIVE_STATUSES = new Set(["harness_queued", "running", "interrupting", "cancelling"]);
 const TERMINAL_STATUSES = new Set([
   "completed",
   "failed",
@@ -232,7 +232,7 @@ export function resolveCancelableJob(cwd, reference) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) =>
-    ["running", "queued", "interrupting"].includes(job.status)
+    ["running", "queued", "harness_queued", "interrupting"].includes(job.status)
   );
   if (reference) {
     const selected = matchJobReference(activeJobs, reference);

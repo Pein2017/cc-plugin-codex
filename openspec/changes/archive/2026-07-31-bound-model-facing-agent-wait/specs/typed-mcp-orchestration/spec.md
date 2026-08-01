@@ -1,3 +1,8 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: MCP transport timeout exceeds the public wait maximum`
+- TO: `### Requirement: MCP transport timeout exceeds the fixed model wait`
+
 ## MODIFIED Requirements
 
 ### Requirement: MCP call boundaries preserve asynchronous Agents and explicit joins
@@ -34,3 +39,6 @@ The Plugin MCP declaration SHALL configure an outer tool-call timeout greater th
 - **WHEN** no completion or explicitly eligible progress is available during the fixed 600000 ms model-facing wait
 - **THEN** the MCP transport leaves sufficient margin for the runtime to return an honest timeout before Codex ends the tool call
 
+#### Scenario: Caller requests the maximum wait
+- **WHEN** a checkout CLI or runtime observation uses the retained 3600000 ms maximum
+- **THEN** the declared transport timeout still leaves a margin for that non-MCP observation's own bound without shortening Agent execution lifetime

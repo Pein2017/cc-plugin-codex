@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: wait_agent returns bounded root mailbox activity
-Model-facing `wait_agent` SHALL accept optional `wake_on_progress` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL NOT expose `timeout_ms`, SHALL use a fixed 600000 ms observation upper bound, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and SHALL then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. Model-facing guidance SHALL make omission of `wake_on_progress` the canonical ordinary join and SHALL reserve `wake_on_progress: true` for one intentional intermediate observation whose result changes scheduling. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token. A progress update SHALL include only one safe bounded public-progress projection per active Agent job when the caller opted in and that job has not already exposed progress. It SHALL omit hook activity, raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call.
+Model-facing `wait_agent` SHALL accept optional `wake_on_progress` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL NOT expose `timeout_ms`, SHALL use a fixed 600000 ms observation upper bound, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and SHALL then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. Model-facing guidance SHALL make omission of `wake_on_progress` the canonical ordinary join and SHALL reserve `wake_on_progress: true` for one intentional intermediate observation whose result changes scheduling. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token. A progress update SHALL include only one safe bounded public-progress projection per active Agent job when the caller opted in and that job has not already exposed progress. It SHALL omit hook activity, raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call. The checkout CLI and public runtime operation MAY retain an explicit 0..3600000 ms diagnostic bound that is never reachable from the model-facing boundary.
 
 #### Scenario: Unread activity predates wait
 - **WHEN** the root inbox already contains an unread Agent completion
@@ -31,9 +31,17 @@ Model-facing `wait_agent` SHALL accept optional `wake_on_progress` plus the CC d
 - **WHEN** the fixed 600000 ms observation window expires without unread current-root completion or eligible first progress activity
 - **THEN** wait returns an honest timeout without interrupting or changing any Agent
 
-#### Scenario: Model supplies timeout override
-- **WHEN** the parent includes `timeout_ms` in a model-facing wait request
-- **THEN** the strict typed boundary rejects the field before changing Agent or delivery state
+#### Scenario: Ordinary caller omits timeout and progress wakeup
+- **WHEN** the parent performs an ordinary required join without a specific scheduling deadline
+- **THEN** it supplies no timeout field at all, omits `wake_on_progress`, observes for the fixed 600000 ms upper bound, and may return earlier on completion
+
+#### Scenario: Caller intentionally overrides timeout
+- **WHEN** the parent attempts an immediate probe, shorter observation window, or longer bounded wait by supplying `timeout_ms`
+- **THEN** the model-facing boundary rejects that field before changing Agent or delivery state, leaving explicit bounds available only to the checkout CLI and runtime
+
+#### Scenario: Caller exceeds the maximum
+- **WHEN** a checkout CLI or direct runtime observation requests a timeout greater than 3600000 ms
+- **THEN** the runtime rejects the invalid bound before changing Agent or delivery state
 
 ### Requirement: Parent orchestration uses explicit join policy
 The spawn and wait skill contracts SHALL require the parent to classify delegated work as required, parallel-then-join, or explicitly detached. The parent SHALL NOT give its final answer while a required or parallel-then-join result remains undisposed, SHALL continue meaningful non-overlapping work before waiting when possible, and SHALL use detached mode only when the user clearly requests background execution and the result is not needed in the current answer. The parent SHALL call `wait_agent` only when the critical path is blocked: an ordinary join SHALL use the fixed completion-first observation, while an explicit progress wakeup SHALL be used only for one intentional intermediate observation and SHALL NOT be reflexively repeated.
@@ -53,4 +61,3 @@ The spawn and wait skill contracts SHALL require the parent to classify delegate
 #### Scenario: User explicitly requests background execution
 - **WHEN** the user asks to detach work whose result is not needed for the current answer
 - **THEN** the parent may end after reporting the durable Agent identity and the lack of automatic host reactivation
-

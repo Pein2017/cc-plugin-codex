@@ -507,6 +507,7 @@ export async function runDoctor(options = {}) {
       auth,
       auth.loggedIn ? null : `Run CLAUDE_CONFIG_DIR=${EXPECTED_CLAUDE_CONFIG_DIR} claude auth login.`,
     ));
+
   } else {
     checks.push(makeCheck("claude-cli", "fail", "Claude CLI check skipped because the fixed environment is invalid."));
     checks.push(makeCheck("claude-auth", "fail", "Claude auth check skipped because the fixed environment is invalid."));

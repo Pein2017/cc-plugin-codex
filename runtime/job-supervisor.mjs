@@ -228,6 +228,7 @@ export async function runClaudeTaskSession({
   prompt,
   write,
   claudeOptions = {},
+  harnessInstance = null,
   onProgress = null,
   onSpawn = null,
   runAttempt = runClaudeTurn,
@@ -237,6 +238,9 @@ export async function runClaudeTaskSession({
 }) {
   /** @type {{ env?: NodeJS.ProcessEnv, resumeSessionId?: string | null, [key: string]: unknown }} */
   const optionBag = claudeOptions;
+  // The Driver owns its native instance identity; the version-1 fallback keeps
+  // a direct caller that only knows the Claude config directory working.
+  const sessionOwner = harnessInstance ?? optionBag.env?.CLAUDE_CONFIG_DIR;
   const policy = normalizedRetryPolicy(retryPolicy, optionBag.env ?? process.env);
   const attempts = [];
   let recoveryAttempts = 0;
@@ -287,7 +291,7 @@ export async function runClaudeTaskSession({
             claimJobSessionLease(
               workspaceRoot,
               jobId,
-              optionBag.env?.CLAUDE_CONFIG_DIR,
+              sessionOwner,
               observedSessionId
             );
             leasedSessionId = observedSessionId;
@@ -405,7 +409,7 @@ export async function runClaudeTaskSession({
         claimJobSessionLease(
           workspaceRoot,
           jobId,
-          optionBag.env?.CLAUDE_CONFIG_DIR,
+          sessionOwner,
           result.sessionId
         );
         leasedSessionId = result.sessionId;

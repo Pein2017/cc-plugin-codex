@@ -34,7 +34,7 @@ load implementation from a versioned Plugin Cache or an upstream repository.
   delegates one complete Harness turn at a time.
 - Preserve the existing Claude Code behavior by extracting it behind the first
   `claude-code` Driver rather than rewriting its protocol.
-- Make Harness identity, immutable route, capability evidence, native session
+- Make Harness identity, immutable model/topology route, capability evidence, native session
   identity, and lease ownership explicit in versioned durable state.
 - Keep routing, decomposition, fallback, and final acceptance with the Codex lead and
   its `agent-routing` policy.
@@ -64,14 +64,17 @@ The durable vocabulary is:
 
 - **Harness**: the executable agent runtime and its native configuration/session
   environment, identified by a stable `harnessId` such as `claude-code`.
-- **Route**: an immutable Harness-owned model and effort selection for an Agent, plus
-  any topology mode admitted by that Harness.
+- **Route**: an immutable Harness-owned model and topology selection for an Agent.
+- **Turn parameters**: explicit effort and write intent selected by the lead for one
+  activation; a follow-up may change them without changing the Agent route.
 - **Agent**: the supervisor-owned durable logical identity, mailbox, lifecycle, and
   continuation history.
 - **Turn**: one bounded activation of an Agent through its fixed Harness route.
 
 The model-facing lead chooses the route explicitly. The supervisor validates and
 records it but never infers a route from a task or changes it after Agent creation.
+It validates effort and write intent on every turn and records them on that job,
+rather than representing the first turn's effort as immutable Agent identity.
 
 **Alternative considered:** Treat each model as a Harness. Rejected because model
 labels do not own authentication, session storage, tools, transport, or recovery;
@@ -96,7 +99,8 @@ makes lifecycle recovery nondeterministic.
 ### 3. The Driver boundary is one complete turn
 
 The internal contract is coarse-grained and asynchronous. A Driver implementation
-provides stable identity and capability metadata, validates a prepared route, starts
+provides stable identity and capability metadata, validates and revalidates prepared
+preflight evidence, explains an unready preflight in Harness-owned terms, validates a prepared route, starts
 one complete turn, accepts supervisor-assigned input when supported, interrupts the
 owned process when supported, and optionally reads bounded native assistant history.
 The turn returns one normalized terminal result with:
@@ -163,9 +167,10 @@ first extraction and first new implementation land together.
 
 ### 6. Durable state advances to explicit version 2
 
-Version-2 Agent records add immutable `harnessId`, immutable `route`,
+Version-2 Agent records add immutable `harnessId`, immutable model/topology `route`,
 `driverVersion`, `capabilities`, and a neutral `nativeSessionRef`. Version-2 jobs copy
-those launch-critical fields and retain a Harness-owned opaque receipt namespace.
+those launch-critical fields, add the explicit per-turn effort/write parameters, and
+retain a Harness-owned opaque receipt namespace.
 Session bindings and active leases are keyed by canonical `(harnessId, instanceKey,
 nativeSessionId)` and remain separately bound to one root and Agent.
 
@@ -259,8 +264,10 @@ wait-call workflow as an accidental multi-Harness invariant.
 
 Rollback before step 6 removes the internal Driver composition and keeps v1 state
 unchanged. After v2 creation is enabled, rollback means restoring the last v2-aware
-runtime; an older v1-only runtime must fail closed on v2 records and must never be
-used to resume them.
+runtime. Version-2 jobs use a queue state that a v1 detached worker cannot claim;
+v2 Agents are rejected by the v1 registry. Claude binding and lease records remain
+wire-readable by v1 intentionally so an older process observes existing ownership
+instead of treating the native session as unowned.
 
 ## Open Questions
 

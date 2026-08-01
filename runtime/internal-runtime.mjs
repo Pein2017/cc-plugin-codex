@@ -10,29 +10,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  cancelClaudeProcess,
-  getClaudeAuthStatus,
-  getClaudeAvailability,
-  interruptClaudeProcess,
-} from "./claude-headless-adapter.mjs";
-import {
-  createExecutionProfile,
-  validateExecutionProfileOptions,
-} from "./execution-profile.mjs";
-import {
-  assertPreparedClaudeCompatibility,
-  formatClaudeCompatibilityError,
-  inspectClaudeCompatibility,
-  recordSuccessfulClaudeTurn,
-} from "./claude-version-compatibility.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
-import { runClaudeTaskSession } from "./job-supervisor.mjs";
+import {
+  HARNESS_CAPABILITY_NAMES,
+  assertHarnessCapability,
+  validateHarnessCapabilities,
+} from "./harness-capabilities.mjs";
+import { validateHarnessTurnResult } from "./harness-contract.mjs";
+import { DEFAULT_HARNESS_ID, resolveHarnessDriver } from "./harness-registry.mjs";
 import {
   ACTIVE_JOB_STATUSES,
+  HARNESS_QUEUED_JOB_STATUS,
   cleanupOldJobs,
   claimJobPublicProgress,
-  enqueueSteeringMessage,
   generateJobId,
   getSteeringSnapshot,
   getStateProtectionReceipt,
@@ -87,6 +77,8 @@ const HANDOFF_DISPOSITIONS = new Set([
 ]);
 const CHILD_SPAWN_WAIT_MS = 1_000;
 const CHILD_EXIT_WAIT_MS = 1_000;
+/** Version-2 durable Harness evidence on every job this runtime prepares. */
+export const HARNESS_JOB_STATE_VERSION = 2;
 
 export function preparedStartDisposition(error) {
   const value = String(error?.handoffDisposition ?? "");
@@ -116,7 +108,7 @@ function isTerminalJob(job) {
 }
 
 function matchesClaimedWorker(job, childPid, childIdentity = null) {
-  if (!job || !["queued", "running"].includes(job.status)) return false;
+  if (!job || !["queued", HARNESS_QUEUED_JOB_STATUS, "running"].includes(job.status)) return false;
   if (!Number.isFinite(childPid) || job.workerPid !== childPid) return false;
   const storedIdentity = nonEmptyString(job.workerPidIdentity);
   if (!storedIdentity) return false;
@@ -127,7 +119,7 @@ function matchesClaimedWorker(job, childPid, childIdentity = null) {
 function matchesLauncherOwnership(job, launcher) {
   return Boolean(
     job &&
-    job.status === "queued" &&
+    ["queued", HARNESS_QUEUED_JOB_STATUS].includes(job.status) &&
     Number.isFinite(launcher?.pid) &&
     job.workerPid === launcher.pid &&
     nonEmptyString(job.workerPidIdentity) === nonEmptyString(launcher.identity) &&
@@ -247,7 +239,7 @@ async function fenceQueuedWorkerAndTerminate({
 }) {
   let fence;
   try {
-    fence = transitionJob(cwd, jobId, ["queued"], "cancelling", {
+    fence = transitionJob(cwd, jobId, ["queued", HARNESS_QUEUED_JOB_STATUS], "cancelling", {
       phase: "worker_handoff_cancelling",
       workerHandoffFenceAt: nowIso(),
       workerHandoffUncertainAt: nowIso(),
@@ -471,7 +463,9 @@ function projectPublicProgress(job, ownerRootId, jobId = null, options = {}) {
       }
       let summary = template.summary;
       if (activity === "tool") {
-        const match = String(progress?.summary ?? "").match(/^Claude is using ([A-Za-z0-9_.:-]{1,80})\.$/);
+        const match = String(progress?.summary ?? "").match(
+          /^Claude is using ([A-Za-z0-9_.:-]{1,80})\.$/
+        );
         const tool = safePublicToolName(match?.[1]);
         if (tool) summary = `Claude is using ${tool}.`;
       }
@@ -541,22 +535,50 @@ class ClaudeRuntime {
       getProcessIdentity: options.launchDependencies?.getProcessIdentity ?? getProcessIdentity,
       createWorkerLogStdio: options.launchDependencies?.createWorkerLogStdio ?? createWorkerLogStdio,
       publishWorkerIdentity: options.launchDependencies?.publishWorkerIdentity ??
-        ((cwd, jobId, workerPid, workerPidIdentity, launcher) => transitionJob(cwd, jobId, ["queued"], "queued", {
-          workerPid,
-          workerPidIdentity,
-          workerHandoffAt: nowIso(),
-        }, {
-          predicate: (job) => matchesLauncherOwnership(job, launcher),
-        })),
+        ((cwd, jobId, workerPid, workerPidIdentity, launcher) => {
+          const current = readJobFile(cwd, jobId);
+          const status = current?.status;
+          if (!["queued", HARNESS_QUEUED_JOB_STATUS].includes(status)) {
+            return { transitioned: false, job: current, previousStatus: status ?? null };
+          }
+          return transitionJob(cwd, jobId, [status], status, {
+            workerPid,
+            workerPidIdentity,
+            workerHandoffAt: nowIso(),
+          }, {
+            predicate: (job) => matchesLauncherOwnership(job, launcher),
+          });
+        }),
       recordWorkerHandoffUncertainty:
         options.launchDependencies?.recordWorkerHandoffUncertainty ?? recordWorkerHandoffUncertainty,
     };
+    // Preserve the historical default projection for internal callers while
+    // resolving every durable Agent/job from its own admitted Harness route.
+    this.driver = resolveHarnessDriver(DEFAULT_HARNESS_ID, { env: this.env });
+    this.harnessInstance = Object.freeze({
+      harnessId: this.driver.harnessId,
+      instanceKey: this.driver.resolveInstanceKey(this.env),
+    });
     this.operatorMode = options.operatorMode === true;
     this.ownerRootId = String(
       this.operatorMode && options.ownerRootId
         ? options.ownerRootId
         : inheritedOwnerRootId
     ).trim() || null;
+  }
+
+  driverForHarness(harnessId = DEFAULT_HARNESS_ID) {
+    // Preserve the existing in-process test seam while production composition
+    // still resolves every non-default route from the static registry.
+    if (this.driver?.harnessId === harnessId) return this.driver;
+    return resolveHarnessDriver(harnessId, { env: this.env });
+  }
+
+  harnessInstanceFor(driver) {
+    return Object.freeze({
+      harnessId: driver.harnessId,
+      instanceKey: driver.resolveInstanceKey(this.env),
+    });
   }
 
   assertOwnerRoot() {
@@ -573,22 +595,17 @@ class ClaudeRuntime {
     return patchJob(this.cwd, job.id, { ownerRootId: this.ownerRootId }) ?? job;
   }
 
-  readiness() {
-    const availability = getClaudeAvailability(this.cwd, { env: this.env });
-    const compatibility = inspectClaudeCompatibility(this.cwd, {
-      availability,
-      env: this.env,
-    });
-    const auth = availability.available
-      ? getClaudeAuthStatus(this.cwd, { env: this.env })
-      : { available: false, loggedIn: false, detail: availability.detail };
+  readiness(harnessId = DEFAULT_HARNESS_ID) {
+    const driver = this.driverForHarness(harnessId);
+    const preflight = driver.preflight({ cwd: this.cwd, env: this.env });
     return {
-      ready: Boolean(
-        availability.available && compatibility.staticCompatible && auth.loggedIn
-      ),
-      availability,
-      compatibility,
-      auth,
+      ...preflight,
+      harness: {
+        harnessId: driver.harnessId,
+        driverVersion: driver.driverVersion,
+        instanceKey: preflight.instanceKey,
+        capabilities: driver.capabilities,
+      },
       cwd: this.cwd,
       claudeConfigDir: this.env.CLAUDE_CONFIG_DIR ?? null,
       environment: this.environmentReceipt,
@@ -602,36 +619,21 @@ class ClaudeRuntime {
     };
   }
 
-  assertReady() {
-    const receipt = this.readiness();
-    if (!receipt.availability.available) {
-      throw new Error("Claude Code CLI is unavailable. Install `claude` and ensure it is on PATH.");
-    }
-    if (!receipt.compatibility?.staticCompatible) {
-      throw new Error(formatClaudeCompatibilityError(receipt.compatibility));
-    }
-    if (!receipt.auth.loggedIn) {
-      throw new Error("Claude Code CLI is not authenticated. Run `claude auth login` in the same environment.");
-    }
+  assertReady(harnessId = DEFAULT_HARNESS_ID) {
+    const driver = this.driverForHarness(harnessId);
+    const receipt = this.readiness(driver.harnessId);
+    const unready = driver.describeUnreadiness(receipt);
+    if (unready) throw new Error(unready);
     return receipt;
   }
 
-  assertPreparedReadiness(receipt) {
-    if (receipt == null) return this.assertReady();
-    if (
-      receipt?.ready !== true ||
-      receipt?.availability?.available !== true ||
-      receipt?.compatibility?.staticCompatible !== true ||
-      !String(receipt?.compatibility?.fingerprint ?? "").trim() ||
-      !String(receipt?.compatibility?.executable ?? "").trim() ||
-      receipt?.auth?.loggedIn !== true ||
-      receipt?.cwd !== this.cwd ||
-      receipt?.claudeConfigDir !== (this.env.CLAUDE_CONFIG_DIR ?? null) ||
-      receipt?.sourceRoot !== this.sourceRoot
-    ) {
-      throw new Error("Internal start received an invalid readiness receipt.");
-    }
-    return receipt;
+  assertPreparedReadiness(receipt, driver = this.driver) {
+    if (receipt == null) return this.assertReady(driver.harnessId);
+    return driver.validatePreparedPreflight(receipt, {
+      cwd: this.cwd,
+      env: this.env,
+      sourceRoot: this.sourceRoot,
+    });
   }
 
   list() {
@@ -681,7 +683,9 @@ class ClaudeRuntime {
     // Keep this validation ahead of readiness and all durable job writes. The
     // public lifecycle validates first for caller-facing failure semantics;
     // preparation repeats it so internal callers cannot bypass that boundary.
-    const executionProfile = validateExecutionProfileOptions({
+    const driver = this.driverForHarness(options.harnessId ?? DEFAULT_HARNESS_ID);
+    const harnessInstance = this.harnessInstanceFor(driver);
+    const executionProfile = driver.validateRoute({
       profile: options.profile,
       write: options.write,
       model: options.model,
@@ -696,7 +700,7 @@ class ClaudeRuntime {
     // before it publishes an active Agent reservation. Reuse that exact,
     // scope-bound receipt here so the small reservation-to-job window contains
     // only local durable writes and worker launch.
-    const readiness = this.assertPreparedReadiness(options.readinessReceipt);
+    const readiness = this.assertPreparedReadiness(options.readinessReceipt, driver);
     const jobId = String(options.jobId ?? "").trim() || generateJobId("cc");
     if (!/^[\w.-]+$/.test(jobId)) throw new Error(`Invalid internal Claude job id: ${jobId}.`);
     const title = options.title ?? "Claude Code Task";
@@ -745,13 +749,28 @@ class ClaudeRuntime {
       };
       writeJobFile(this.cwd, jobId, {
         ...base,
-        status: "queued",
+        // Every prepared turn records the Driver contract that launched it, so
+        // recovery is later judged against the same capabilities rather than
+        // whatever the current registry happens to publish.
+        harnessStateVersion: HARNESS_JOB_STATE_VERSION,
+        harnessId: driver.harnessId,
+        driverVersion: driver.driverVersion,
+        harnessInstanceKey: harnessInstance.instanceKey,
+        harnessCapabilities: driver.capabilities,
+        harnessRoute: {
+          harnessId: driver.harnessId,
+          model: executionProfile.model,
+          effort: executionProfile.effort ?? null,
+          delegationMode: executionProfile.delegationMode,
+          write: Boolean(options.write),
+        },
+        status: HARNESS_QUEUED_JOB_STATUS,
         phase: "activation_prepared",
         activationPrepared: true,
         activationAttached: false,
         preClaudeLaunch: true,
         safeFreshRetry: true,
-        acceptingSteering: true,
+        acceptingSteering: driver.capabilities.activeInput === "acknowledged_active_stream",
         // The caller owning this prepared fact is an identity-verified launch
         // boundary. Reaping consults this PID, so a slow local lease/write
         // cannot be mistaken for a dead reservation while the caller lives.
@@ -858,9 +877,14 @@ class ClaudeRuntime {
     let launched = null;
     let receipt = null;
     let failure = null;
+    const harnessInstance = Object.freeze({
+      harnessId: nonEmptyString(current.harnessId) ?? DEFAULT_HARNESS_ID,
+      instanceKey: nonEmptyString(current.harnessInstanceKey) ??
+        this.driverForHarness(current.harnessId ?? DEFAULT_HARNESS_ID).resolveInstanceKey(this.env),
+    });
     try {
       sessionLease = resumeSessionId
-        ? reserveSessionLease(this.cwd, this.env.CLAUDE_CONFIG_DIR, resumeSessionId, jobId)
+        ? reserveSessionLease(this.cwd, harnessInstance, resumeSessionId, jobId)
         : null;
       launched = patchJob(this.cwd, jobId, {
         summary: summaryOf(prompt),
@@ -868,6 +892,8 @@ class ClaudeRuntime {
         activationPrepared: false,
         ...(sessionLease ? {
           sessionLease: {
+            harnessId: sessionLease.harnessId,
+            instanceKey: sessionLease.instanceKey,
             configIdentity: sessionLease.configIdentity,
             sessionId: sessionLease.sessionId,
           },
@@ -877,7 +903,7 @@ class ClaudeRuntime {
           prompt: prompt || "Continue where you left off.",
         },
       });
-      if (!launched || launched.status !== "queued") {
+      if (!launched || launched.status !== HARNESS_QUEUED_JOB_STATUS) {
         throw new Error(`Prepared job ${jobId} could not enter the queued launch state.`);
       }
       const marked = patchJob(this.cwd, jobId, { workerLaunchStartedAt: nowIso() });
@@ -1024,7 +1050,7 @@ class ClaudeRuntime {
 
     if (failure) {
       if (preparedStartDisposition(failure) === "rollback_safe" && sessionLease) {
-        releaseSessionLease(sessionLease.configIdentity, sessionLease.sessionId, jobId);
+        releaseSessionLease(harnessInstance, sessionLease.sessionId, jobId);
       }
       throw failure;
     }
@@ -1059,113 +1085,178 @@ class ClaudeRuntime {
     if (jobOwnerRootId(stored) !== ownerRootId) {
       throw new Error(`Stored Claude job ${id} does not belong to the current Codex root scope.`);
     }
-    if (stored.status !== "queued") {
-      throw new Error(`Claude job ${id} is ${stored.status}; worker requires queued.`);
+    const requiredQueueStatus = stored.harnessStateVersion === HARNESS_JOB_STATE_VERSION
+      ? HARNESS_QUEUED_JOB_STATUS
+      : "queued";
+    if (stored.status !== requiredQueueStatus) {
+      throw new Error(
+        `Claude job ${id} is ${stored.status}; worker requires ${requiredQueueStatus}.`
+      );
     }
     const progress = createProgressReporter({
       logFile: stored.logFile ?? resolveJobLogFile(this.cwd, id),
       onEvent: createJobProgressUpdater(this.cwd, id),
     });
     return runTrackedJob(stored, (onSpawn) => {
-      const availability = getClaudeAvailability(this.cwd, { env: this.env });
-      const compatibility = assertPreparedClaudeCompatibility(
-        this.cwd,
-        stored.readiness?.compatibility,
-        { availability, env: this.env },
-      );
-      return this.execute(stored, progress, onSpawn, compatibility);
+      const driver = this.assertJobDriver(stored);
+      const launchContext = driver.revalidatePreparedPreflight(stored.readiness, {
+        cwd: this.cwd,
+        env: this.env,
+        sourceRoot: this.sourceRoot,
+      });
+      return this.execute(stored, progress, onSpawn, launchContext);
     }, {
       logFile: stored.logFile,
+      claimStatuses: [requiredQueueStatus],
     });
   }
 
-  async execute(job, onProgress, onSpawn, launchCompatibility) {
+  /**
+   * Run one prepared turn through this job's immutable Driver route. Native
+   * protocol, prompt envelope, recovery, and failure detection stay behind the
+   * Driver; the supervisor only normalizes the terminal result into its own
+   * durable receipt.
+   */
+  async execute(job, onProgress, onSpawn, launchContext) {
     const request = job.request ?? {};
-    const profile = createExecutionProfile({
-      profile: request.profile,
-      write: request.write,
-      model: request.model,
-      effort: request.effort,
-      permissionMode: request.permissionMode,
-      dangerouslySkipPermissions: request.dangerouslySkipPermissions,
-      allowedTools: request.allowedTools,
-      delegationMode: request.delegationMode,
+    const driver = this.assertJobDriver(job);
+    const turn = validateHarnessTurnResult(await driver.startTurn({
+      workspaceRoot: this.cwd,
+      cwd: this.cwd,
+      jobId: job.id,
+      prompt: request.prompt,
+      route: {
+        profile: request.profile,
+        write: request.write,
+        model: request.model,
+        effort: request.effort,
+        permissionMode: request.permissionMode,
+        dangerouslySkipPermissions: request.dangerouslySkipPermissions,
+        allowedTools: request.allowedTools,
+        delegationMode: request.delegationMode,
+      },
       env: this.env,
-    });
-    try {
-      const result = await runClaudeTaskSession({
+      launchContext,
+      sessionName: request.sessionName ?? undefined,
+      resumeSessionId: request.resumeSessionId ?? undefined,
+      onProgress,
+      onSpawn,
+    }), driver);
+    const rawOutput = String(turn.finalMessage ?? "");
+    const nativeSessionId = turn.nativeSession?.nativeSessionId ?? null;
+    const receipts = turn.receipts ?? {};
+    const payload = {
+      status: turn.status,
+      sessionId: nativeSessionId,
+      rawOutput,
+      partialOutput: rawOutput,
+      warning: turn.warning ?? null,
+      failureClass: turn.failure.class ?? null,
+      failureReason: turn.failure.reason ?? null,
+      resumable: turn.failure.resumable === true,
+      recoveryAttempts: receipts.recoveryAttempts ?? 0,
+      attempts: receipts.attempts ?? [],
+      steering: receipts.steering ?? null,
+      lastByteAt: turn.lastActivityAt ?? null,
+      manualResumeCommand: turn.manualContinuationCommand ?? null,
+      requiresAttention: Boolean(turn.failure.requiresAttention),
+      toolUses: receipts.toolUses ?? [],
+      touchedFiles: receipts.touchedFiles ?? [],
+      harnessId: turn.harnessId,
+      driverVersion: turn.driverVersion,
+      nativeSessionRef: turn.nativeSession,
+      sessionExactness: turn.sessionExactness,
+      driverReceipt: turn.driverReceipt,
+      runtimeReceipt: {
+        ...(turn.runtime ?? {}),
+        environment: this.environmentReceipt,
         workspaceRoot: this.cwd,
-        jobId: job.id,
-        cwd: this.cwd,
-        prompt: request.prompt,
-        write: Boolean(request.write),
-        claudeOptions: {
-          ...profile.claudeOptions,
-          claudeBin: launchCompatibility?.executable,
-          sessionName: request.sessionName ?? undefined,
-          resumeSessionId: request.resumeSessionId ?? undefined,
-        },
-        onProgress,
-        onSpawn,
-      });
-      const rawOutput = String(result.finalMessage ?? "");
-      const compatibilityObservation = result.status === "completed"
-        ? recordSuccessfulClaudeTurn(
-            this.cwd,
-            launchCompatibility,
-            result.runtimeReceipt?.claudeCodeVersion,
-            { env: this.env },
-          )
-        : {
-            recorded: false,
-            compatibility: launchCompatibility,
-            runtimeVersion: result.runtimeReceipt?.claudeCodeVersion ?? null,
-          };
-      const payload = {
-        status: result.status,
-        sessionId: result.sessionId ?? null,
+        sourceRoot: this.sourceRoot,
+      },
+    };
+    return {
+      exitStatus: turn.exitStatus,
+      threadId: nativeSessionId,
+      turnId: null,
+      payload,
+      rendered: renderTaskResult({
         rawOutput,
-        partialOutput: rawOutput,
-        warning: result.warning ?? null,
-        failureClass: result.failureClass ?? null,
-        failureReason: result.failureReason ?? null,
-        resumable: result.resumable === true,
-        recoveryAttempts: result.recoveryAttempts ?? 0,
-        attempts: result.attempts ?? [],
-        steering: result.steering ?? getSteeringSnapshot(this.cwd, job.id),
-        runtimeReceipt: {
-          ...(result.runtimeReceipt ?? {}),
-          executionProfile: profile.receipt,
-          environment: this.environmentReceipt,
-          workspaceRoot: this.cwd,
-          sourceRoot: this.sourceRoot,
-          hostClaudeVersion: job.readiness?.compatibility?.version ?? null,
-          preparedClaudeFingerprint: launchCompatibility?.fingerprint ?? null,
-          claudeCompatibility: compatibilityObservation.compatibility,
-          compatibilityObservationRecorded: compatibilityObservation.recorded,
-          compatibilityObservationReason: compatibilityObservation.reason ?? null,
-        },
-        lastByteAt: result.lastByteAt ?? null,
-        manualResumeCommand: result.manualResumeCommand ?? null,
-        requiresAttention: Boolean(result.requiresAttention),
-        toolUses: result.toolUses ?? [],
-        touchedFiles: result.touchedFiles ?? [],
-      };
-      return {
-        exitStatus: result.status === "completed" ? 0 : (result.exitCode || 1),
-        threadId: result.sessionId ?? null,
-        turnId: null,
-        payload,
-        rendered: renderTaskResult({
-          rawOutput,
-          failureReason: result.failureReason,
-          failureMessage: result.stderr,
-        }),
-        summary: summaryOf(rawOutput || result.failureReason || job.summary),
-      };
-    } finally {
-      profile.cleanup();
+        failureReason: turn.failure.reason,
+        failureMessage: turn.failure.detail,
+      }),
+      summary: summaryOf(rawOutput || turn.failure.reason || job.summary),
+    };
+  }
+
+  /**
+   * Deliver supervisor-assigned input to an already-running turn. A Driver
+   * whose persisted snapshot admits only the initial prompt refuses here rather
+   * than letting the supervisor claim an unproven active delivery.
+   */
+  assignInput(job, text, options = {}) {
+    const driver = this.assertJobDriver(job);
+    assertHarnessCapability(
+      job?.harnessCapabilities ?? driver.capabilities,
+      "activeInput",
+      ["acknowledged_active_stream"],
+      `Harness ${driver.harnessId} does not accept input for a running turn`
+    );
+    return driver.assignInput({
+      cwd: this.cwd,
+      jobId: job.id,
+      text,
+      kind: options.kind,
+      messageId: options.messageId,
+    });
+  }
+
+  /**
+   * Resolve the Driver a durable turn was launched with. A record naming
+   * another Harness, Driver version, or capability vocabulary fails closed
+   * instead of being executed by the currently registered Driver.
+   */
+  assertJobDriver(job, options = {}) {
+    const stateVersion = job?.harnessStateVersion;
+    if (stateVersion != null && stateVersion !== HARNESS_JOB_STATE_VERSION) {
+      throw new Error(
+        `Claude job ${job.id} carries Harness state version ${stateVersion}; ` +
+        `this runtime owns version ${HARNESS_JOB_STATE_VERSION}.`
+      );
     }
+    const harnessId = nonEmptyString(job?.harnessId) ?? DEFAULT_HARNESS_ID;
+    const driver = this.driverForHarness(harnessId);
+    const driverVersion = nonEmptyString(job?.driverVersion);
+    // Stopping a live turn must stay possible across a Driver version bump:
+    // process control needs the Harness and its interrupt capability, not an
+    // identical Driver build. Executing or steering a turn still requires one.
+    if (
+      options.allowDriverVersionDrift !== true &&
+      driverVersion &&
+      driverVersion !== driver.driverVersion
+    ) {
+      throw new Error(
+        `Harness job ${job.id} was prepared by Driver ${driverVersion}; this runtime provides ${driver.driverVersion}.`
+      );
+    }
+    if (job?.harnessCapabilities != null) {
+      // An unknown capability name or value always fails here. A snapshot that
+      // parses but disagrees with the resolved Driver means the record was
+      // written by a contract this process cannot execute; process control
+      // instead judges the persisted snapshot on its own terms.
+      const persisted = validateHarnessCapabilities(
+        job.harnessCapabilities,
+        `Claude job ${job.id} capability snapshot`
+      );
+      for (const name of options.allowDriverVersionDrift === true ? [] : HARNESS_CAPABILITY_NAMES) {
+        if (persisted[name] !== driver.capabilities[name]) {
+          throw new Error(
+            `Harness job ${job.id} was prepared with ${name}=${persisted[name]}; ` +
+            `this runtime provides ${name}=${driver.capabilities[name]}.`
+          );
+        }
+      }
+    }
+    return driver;
   }
 
   steer(jobId, message) {
@@ -1173,7 +1264,7 @@ class ClaudeRuntime {
     if (!ACTIVE_JOB_STATUSES.has(job.status) || job.status === "cancelling" || job.status === "interrupting") {
       throw new Error(`Claude job ${job.id} is ${job.status}; use followUp for a resumable terminal job.`);
     }
-    const queued = enqueueSteeringMessage(this.cwd, job.id, message);
+    const queued = this.assignInput(job, message);
     return {
       jobId: job.id,
       status: job.status,
@@ -1214,6 +1305,13 @@ class ClaudeRuntime {
   async interrupt(jobId) {
     const job = this.status(jobId);
     const stored = readJobFile(this.cwd, job.id) ?? job;
+    const driver = this.assertJobDriver(stored, { allowDriverVersionDrift: true });
+    assertHarnessCapability(
+      stored.harnessCapabilities ?? driver.capabilities,
+      "interrupt",
+      ["graceful_flush_proven", "best_effort_signal"],
+      `Harness ${driver.harnessId} cannot interrupt an active turn`
+    );
     const transition = transitionJob(this.cwd, job.id, ["running"], "interrupting", {
       acceptingSteering: false,
       phase: "interrupting",
@@ -1233,12 +1331,15 @@ class ClaudeRuntime {
           controlFailure: "missing_identity",
         };
       } else {
-        receipt = await interruptClaudeProcess(stored.pid, stored.pidIdentity);
+        receipt = await driver.interruptTurn({
+          pid: stored.pid,
+          pidIdentity: stored.pidIdentity,
+        });
       }
     }
     if (!receipt.interrupted) {
       const forced = !receipt.controlFailure && stored.pid && stored.pidIdentity
-        ? await cancelClaudeProcess(stored.pid, stored.pidIdentity)
+        ? await driver.cancelTurn({ pid: stored.pid, pidIdentity: stored.pidIdentity })
         : { cancelled: false, note: receipt.note };
       if (forced.cancelled) {
         const current = readJobFile(this.cwd, job.id) ?? stored;

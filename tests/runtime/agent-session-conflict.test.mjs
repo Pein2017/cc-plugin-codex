@@ -6,10 +6,21 @@ import { afterEach, describe, it } from "node:test";
 
 import { createAgentStore } from "../../runtime/agent-store.mjs";
 import {
+  CLAUDE_CODE_CAPABILITIES,
+  CLAUDE_CODE_DRIVER_VERSION,
+  CLAUDE_CODE_HARNESS_ID,
+} from "../../runtime/claude-code-driver.mjs";
+import {
   readUnreadCompletionEvents,
   reconcileTerminalJobCompletion,
 } from "../../runtime/completion-inbox.mjs";
 import { listJobs, readJobFile, transitionJob, writeJobFile } from "../../runtime/job-store.mjs";
+
+const HARNESS = {
+  harnessId: CLAUDE_CODE_HARNESS_ID,
+  driverVersion: CLAUDE_CODE_DRIVER_VERSION,
+  capabilities: CLAUDE_CODE_CAPABILITIES,
+};
 
 const roots = [];
 const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
@@ -53,12 +64,13 @@ describe("Agent session-binding conflict projection", () => {
       cwd: foreignWorkspace,
       ownerRootId: foreignRootId,
       claudeConfigDir,
+      harness: HARNESS,
     });
     const foreign = foreignStore.createAgent({ task_name: "foreign_transition" });
     foreignStore.reserveActivation(foreign.agentId, "job-foreign-transition", { initial: true });
     foreignStore.bindSession(foreign.agentId, sharedSessionId, { jobId: "job-foreign-transition" });
 
-    const store = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    const store = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS });
     const agent = store.createAgent({ task_name: "local_transition" });
     const jobId = "job-local-transition-conflict";
     store.reserveActivation(agent.agentId, jobId, { initial: true });
@@ -105,12 +117,13 @@ describe("Agent session-binding conflict projection", () => {
       cwd: foreignWorkspace,
       ownerRootId: foreignRootId,
       claudeConfigDir,
+      harness: HARNESS,
     });
     const foreign = foreignStore.createAgent({ task_name: "foreign" });
     foreignStore.reserveActivation(foreign.agentId, "job-foreign", { initial: true });
     foreignStore.bindSession(foreign.agentId, sharedSessionId, { jobId: "job-foreign" });
 
-    const store = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir });
+    const store = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS });
     const agent = store.createAgent({ task_name: "local" });
     const jobId = "job-local-conflict";
     store.reserveActivation(agent.agentId, jobId, { initial: true });

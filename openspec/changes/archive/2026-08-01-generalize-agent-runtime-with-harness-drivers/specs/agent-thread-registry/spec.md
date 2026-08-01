@@ -1,11 +1,11 @@
 ## MODIFIED Requirements
 
 ### Requirement: Agent Thread has a stable durable identity
-The runtime SHALL persist each v2 Agent with a schema version, stable generated ID, flat `/root/<task_name>` path, root-unique name, optional description, immutable Harness ID, immutable validated route, immutable delegation/topology mode, accepted Driver version and capability snapshot, root thread ID identical to hardened `ownerRootId`, canonical workspace root, separate active and latest job pointers, validated neutral native-session reference, lifecycle status, explicit continuation classification and evidence, timestamps, and latest completion sequence. A valid v1 Agent SHALL be interpreted as a Claude Code Agent with its existing Claude route, delegation mode, and session semantics.
+The runtime SHALL persist each v2 Agent with a schema version, stable generated ID, flat `/root/<task_name>` path, root-unique name, optional description, immutable Harness ID, immutable validated model route, immutable delegation/topology mode, immutable accepted Driver version and capability snapshot, root thread ID identical to hardened `ownerRootId`, canonical workspace root, separate active and latest job pointers, validated same-Harness neutral native-session reference, lifecycle status, explicit continuation classification and evidence, timestamps, and latest completion sequence. Effort and write intent SHALL be validated and persisted per turn rather than frozen into Agent identity. A valid v1 Agent SHALL be interpreted as a Claude Code Agent with its existing Claude route, delegation mode, and session semantics.
 
 #### Scenario: Agent finishes its first v2 turn
 - **WHEN** the initial job reaches a terminal state
-- **THEN** the same Agent ID, path, Harness, route, topology, and Driver contract remain while its lifecycle, continuation, active/latest job pointers, native session, and completion sequence are atomically updated
+- **THEN** the same Agent ID, path, Harness, model route, topology, and Driver contract remain while its lifecycle, continuation, active/latest job pointers, native session, and completion sequence are atomically updated; a later turn may use a different explicit effort or write intent
 
 #### Scenario: Version 1 Agent is read
 - **WHEN** the v2 runtime loads a valid existing Agent record without Harness-neutral fields

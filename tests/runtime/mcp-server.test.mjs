@@ -66,6 +66,7 @@ describe("typed CC MCP server", () => {
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "fork_turns"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
+    assert.equal(Object.hasOwn(spawn.inputSchema.properties, "harness"), false);
     assert.deepEqual(spawn.inputSchema.properties.delegation_mode.enum, ["leaf", "claude_orchestrator"]);
     assert.match(spawn.inputSchema.properties.write.description, /Required behavioral authority[\s\S]*false[\s\S]*true permits[\s\S]*Process access is unchanged/i);
     const followup = listed.tools.find((tool) => tool.name === "followup_task");

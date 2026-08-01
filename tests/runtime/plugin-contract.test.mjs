@@ -192,7 +192,7 @@ describe("native plugin contract", () => {
     assert.doesNotMatch(text, /receipt exactly as returned/i);
   });
 
-  it("documents exact Claude model and effort identifiers without invented fallback", () => {
+  it("documents exact admitted model and effort identifiers without invented fallback", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
