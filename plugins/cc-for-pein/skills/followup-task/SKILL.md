@@ -19,6 +19,11 @@ discovery failure; never use a shell fallback.
 - Model and delegation mode are immutable. An idle Agent resumes its exact
   session or a receipt-proven safe-fresh path; a running Agent receives one
   durable message. Never substitute a Terminal Claude session.
+- `activation_pending` means this message is durably assigned to an activation
+  that is starting. Join or observe that existing Agent with
+  `$cc-for-pein:wait-agent`; do not resend the follow-up while startup is
+  pending. A queued idle message is different: it remains `queued_no_turn`
+  until a follow-up activates the Agent.
 - A blocked Agent rejects with a closed `reason`/`scope`/`retry` instead of
   raw internal evidence; `retry: new_agent` means that identity and name stay
   unusable and the lane needs a new Agent.

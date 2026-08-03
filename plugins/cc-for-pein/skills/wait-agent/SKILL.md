@@ -20,8 +20,11 @@ bound. Set `wake_on_progress: true` only when one intermediate update per active
 Agent job changes scheduling. Then do useful work, steer, or return to an
 ordinary completion-first join; never repeat progress waiting for that job.
 
-- A later call may acknowledge only prior contiguous `delivery_token` values.
-  A newly returned completion stays unread for crash-safe redelivery.
+- A later call may acknowledge only prior contiguous `delivery_token` values,
+  and must pass a consumed completion token exactly once when that later wait
+  is made. A caller that ends after consuming the completion does not need an
+  acknowledgement-only call. A newly returned completion stays unread for
+  crash-safe redelivery.
 - Completion has priority and includes the complete stored
   `completion_message`, legacy truncation flag, and token. Use it directly; do
   not follow up, read history, or request a file merely to recover that result.

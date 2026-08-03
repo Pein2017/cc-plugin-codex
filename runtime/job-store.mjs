@@ -153,7 +153,9 @@ function ensurePluginDataLayout() {
   if (ensuredPluginDataRoot === destinationRoot) {
     return;
   }
-  fs.mkdirSync(resolvePluginStateRoot(), { recursive: true, mode: 0o700 });
+  const pluginStateRoot = resolvePluginStateRoot();
+  fs.mkdirSync(pluginStateRoot, { recursive: true, mode: 0o700 });
+  fs.chmodSync(pluginStateRoot, 0o700);
   ensuredPluginDataRoot = destinationRoot;
 }
 
@@ -186,7 +188,11 @@ export function resolveJobsDir(cwd) {
 }
 
 export function ensureStateDir(cwd) {
-  fs.mkdirSync(resolveJobsDir(cwd), { recursive: true, mode: 0o700 });
+  const stateDir = resolveStateDir(cwd);
+  const jobsDir = resolveJobsDir(cwd);
+  fs.mkdirSync(jobsDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(stateDir, 0o700);
+  fs.chmodSync(jobsDir, 0o700);
 }
 
 export function getStateProtectionReceipt(cwd, options = {}) {
@@ -398,27 +404,63 @@ function interpretStoredLease(lease) {
   return { ...lease, harnessId: lease.harnessId ?? V1_HARNESS_ID };
 }
 
+/**
+ * Return the one lifecycle ownership decision shared by lease admission and
+ * stale-job reaping. A job may have both a detached worker and a Claude child;
+ * either identity is sufficient to keep the job owned. The unresolved
+ * pre-Claude handoff and short startup grace are deliberately included here so
+ * callers cannot disagree about whether a job is still in a protected window.
+ */
+export function inspectJobResidency(job, options = {}) {
+  const validate = options.validateProcessIdentity ?? validateProcessIdentity;
+  const verifiedOwners = [];
+  const candidates = [
+    { role: "worker", pid: job?.workerPid, identity: job?.workerPidIdentity },
+    { role: "child", pid: job?.pid, identity: job?.pidIdentity },
+  ];
+
+  for (const candidate of candidates) {
+    if (!Number.isFinite(candidate.pid) || !String(candidate.identity ?? "").trim()) {
+      continue;
+    }
+    let verified = false;
+    try {
+      verified = validate(candidate.pid, candidate.identity, options) === true;
+    } catch {
+      verified = false;
+    }
+    if (verified) verifiedOwners.push(candidate.role);
+  }
+
+  const unresolvedHandoff = job?.preClaudeLaunch === true && Boolean(job?.workerHandoffUncertainAt);
+  const withinGrace = isWithinReapGracePeriod(job, options.now ?? Date.now());
+  return {
+    active: verifiedOwners.length > 0 || unresolvedHandoff || withinGrace,
+    verifiedOwners,
+    unresolvedHandoff,
+    withinGrace,
+    reason: verifiedOwners.length > 0
+      ? "verified_process"
+      : unresolvedHandoff
+        ? "unresolved_worker_handoff"
+        : withinGrace
+          ? "startup_grace"
+          : "no_verified_process",
+  };
+}
+
 function activeLeaseOwner(lease) {
   if (!lease?.workspaceRoot || !lease?.jobId) return null;
   const owner = readJobFile(lease.workspaceRoot, lease.jobId);
   if (!owner || !ACTIVE_JOB_STATUSES.has(owner.status)) return null;
-  // A launcher that detached from an unresolved worker handoff intentionally
-  // has no trustworthy PID. It remains the exact-session owner until normal
-  // terminal/reaper lifecycle resolves that durable pre-Claude fact; otherwise
-  // the short grace window would let a second resume steal the same session.
-  if (owner.preClaudeLaunch === true && owner.workerHandoffUncertainAt) return owner;
-  if (isWithinReapGracePeriod(owner)) return owner;
-  const controlPid = owner.pid ?? owner.workerPid ?? null;
-  const controlIdentity = owner.pid ? owner.pidIdentity : owner.workerPidIdentity;
-  if (!controlPid) return null;
-  if (!controlIdentity) return null;
-  const alive = validateProcessIdentity(controlPid, controlIdentity);
-  return alive ? owner : null;
+  return inspectJobResidency(owner).active ? owner : null;
 }
 
 export function reserveSessionLease(cwd, harnessInstance, sessionId, jobId) {
   const descriptor = resolveSessionLeaseFile(harnessInstance, sessionId);
-  fs.mkdirSync(path.dirname(descriptor.leaseFile), { recursive: true, mode: 0o700 });
+  const leaseDirectory = path.dirname(descriptor.leaseFile);
+  fs.mkdirSync(leaseDirectory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(leaseDirectory, 0o700);
   const ownership = acquireJobLock(`${descriptor.leaseFile}.lock`);
   try {
     if (fs.existsSync(descriptor.leaseFile)) {
@@ -864,7 +906,7 @@ function isWithinReapGracePeriod(job, now = Date.now()) {
 export function reapStaleJobs(cwd, jobs) {
   return jobs.map((job) => {
     if (!REAPABLE_STATUSES.has(job.status)) return job;
-    if (isWithinReapGracePeriod(job)) return job;
+    if (inspectJobResidency(job).active) return job;
 
     const controlPid = job.pid ?? job.workerPid ?? null;
     const controlIdentity = job.pid

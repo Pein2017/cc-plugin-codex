@@ -138,6 +138,7 @@ describe("local plugin installation", () => {
           const snapshot = path.join(pluginCacheRoot, version);
           fs.mkdirSync(snapshot, { recursive: true });
           fs.writeFileSync(path.join(snapshot, "marker"), version);
+          fs.writeFileSync(path.join(snapshot, ".mcp.json"), "{}\n");
           const stamp = new Date(1_700_000_000_000 + index * 1_000);
           fs.utimesSync(snapshot, stamp, stamp);
         }
@@ -146,8 +147,10 @@ describe("local plugin installation", () => {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.2.0+codex.old")), false);
-    assert.equal(fs.readFileSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", "marker"), "utf8"), "0.3.0+codex.middle");
-    assert.equal(fs.readFileSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", "marker"), "utf8"), "0.4.0+codex.recent");
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", "marker")), false);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", "marker")), false);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", ".mcp.json")), true);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", ".mcp.json")), true);
   });
 
   it("restores selected discovery shells when Codex installation fails", () => {
@@ -158,14 +161,13 @@ describe("local plugin installation", () => {
         const snapshot = path.join(pluginCacheRoot, "0.5.0+codex.previous");
         fs.mkdirSync(snapshot, { recursive: true });
         fs.writeFileSync(path.join(snapshot, "marker"), "preserved");
+        fs.writeFileSync(path.join(snapshot, ".mcp.json"), "{}\n");
         return { FAKE_DELETE_CACHE: "1", FAKE_INSTALL_FAILURE: "1" };
       },
     });
     assert.notEqual(result.status, 0);
-    assert.equal(
-      fs.readFileSync(path.join(pluginCacheRoot, "0.5.0+codex.previous", "marker"), "utf8"),
-      "preserved",
-    );
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.5.0+codex.previous", "marker")), false);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.5.0+codex.previous", ".mcp.json")), true);
   });
 
   it("replaces only the Codex cachebuster suffix", () => {

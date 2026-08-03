@@ -210,4 +210,33 @@ describe("job store and mailbox", () => {
     assert.equal(job.status, "running");
     assert.equal(job.phase, "reconnect_backoff");
   });
+
+  it("keeps a live worker authoritative when its Claude child exited before terminal CAS", () => {
+    const { workspace } = setup();
+    const old = new Date(Date.now() - 60_000).toISOString();
+    fs.writeFileSync(resolveJobFile(workspace, "cc-1"), `${JSON.stringify({
+      id: "cc-1",
+      workspaceRoot: workspace,
+      status: "running",
+      createdAt: old,
+      updatedAt: old,
+      // The child has exited, but the detached worker still owns the job.
+      pid: 99_999_999,
+      pidIdentity: "exited-child",
+      workerPid: process.pid,
+      workerPidIdentity: getProcessIdentity(process.pid),
+    })}\n`);
+
+    const configDir = path.join(path.dirname(workspace), ".claude");
+    const otherWorkspace = path.join(path.dirname(workspace), "other-workspace");
+    fs.mkdirSync(otherWorkspace);
+    reserveSessionLease(workspace, configDir, "session-child-exit", "cc-1");
+
+    const job = listJobs(workspace).find((candidate) => candidate.id === "cc-1");
+    assert.equal(job.status, "running");
+    assert.throws(
+      () => reserveSessionLease(otherWorkspace, configDir, "session-child-exit", "cc-2"),
+      /already owned by active job cc-1/
+    );
+  });
 });

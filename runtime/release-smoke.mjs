@@ -43,7 +43,7 @@ function paidSmokeError(error) {
   return bounded;
 }
 
-async function runPaidSmoke(client, meta, options = {}) {
+export async function runPaidSmoke(client, meta, options = {}) {
   const taskName = `release_smoke_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`;
   let spawned;
   try {
@@ -69,9 +69,12 @@ async function runPaidSmoke(client, meta, options = {}) {
     const timeoutMs = Math.min(600_000, Math.max(0, deadline - Date.now()));
     let waited;
     try {
+      // The model-facing schema has a fixed completion-first wait. Keep the
+      // outer smoke deadline as a transport bound, never as a private MCP
+      // timeout argument that the public tool deliberately does not accept.
       waited = await client.callTool({
         name: "wait_agent",
-        arguments: { timeout_ms: timeoutMs },
+        arguments: {},
         _meta: meta,
       }, undefined, callOptions(timeoutMs + 60_000));
     } catch (error) {
@@ -87,13 +90,9 @@ async function runPaidSmoke(client, meta, options = {}) {
     if (!message.includes("CC_RELEASE_SMOKE_OK")) {
       throw new Error("Haiku release smoke completed without the expected marker.");
     }
-    if (update.delivery_token) {
-      await client.callTool({
-        name: "wait_agent",
-        arguments: { timeout_ms: 0, acknowledge_tokens: [update.delivery_token] },
-        _meta: meta,
-      }, undefined, callOptions(60_000));
-    }
+    // This is the final wait in the smoke. Completion acknowledgement is
+    // conditional: a caller that ends after consuming the handoff does not
+    // need an acknowledgement-only call.
     return {
       requested: true,
       model: REAL_SMOKE_MODEL,

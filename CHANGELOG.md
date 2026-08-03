@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.12.0 - 2026-08-03
+
+- Harden supervisor residency and Linux signal truth, preserve only the latest
+  complete outer-assistant handoff, restrict recovery classification to native
+  execution evidence, bound persisted tool metadata, enforce owner-only
+  runtime evidence, redact model-facing errors, validate blocking tuples, and
+  whitelist compatibility-shell discovery files. Align wait guidance and the
+  optional paid release smoke with the current public schema.
+
 - **Breaking:** compact successful `spawn_agent` to `agent_name`, `model`, and
   `status`; `followup_task` to `agent_name` and `delivery`; and
   `interrupt_agent` to `agent_name` and operation `status`. Preserve internal

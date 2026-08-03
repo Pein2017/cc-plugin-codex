@@ -14,6 +14,7 @@ import {
   CODEX_SANDBOX_META_KEY,
   createCcMcpServer,
   invokeIsolatedRuntimeOperation,
+  redactMcpErrorMessage,
 } from "../../runtime/mcp-server.mjs";
 import { CC_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
 import { PACKAGE_VERSION } from "../../runtime/version.mjs";
@@ -78,7 +79,7 @@ describe("typed CC MCP server", () => {
     assert.match(wait.description, /critical-path[\s\S]*10-minute completion-first[\s\S]*one progress update per Agent turn[\s\S]*never repeat/i);
   });
 
-  it("fixes model wait at ten minutes and preserves optional progress plus acknowledgement", async () => {
+  it("uses the fixed model wait and preserves optional progress plus acknowledgement", async () => {
     const calls = [];
     const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
       calls.push({ name, input });
@@ -102,17 +103,37 @@ describe("typed CC MCP server", () => {
     });
 
     assert.deepEqual(calls, [
-      { name: "wait_agent", input: { timeout_ms: 600_000 } },
+      { name: "wait_agent", input: {} },
       {
         name: "wait_agent",
         input: {
           wake_on_progress: true,
           acknowledge_tokens: ["delivery-prior"],
-          timeout_ms: 600_000,
         },
       },
     ]);
     assert.equal(rejected.isError, true);
+  });
+
+  it("redacts private runtime identities and absolute paths while keeping public error categories", () => {
+    const message = redactMcpErrorMessage(
+      [
+        "Claude session abc-123 in internal job job-456 failed at /data/CoordExp/cc-plugin-codex/runtime/state/jobs/job-456.json:",
+        "(/data/CoordExp/.codex/plugins/data/cc/state/private.json)",
+        "`/data/CoordExp/.codex/plugins/data/cc/state/private.json`",
+        "/root/.codex/plugins/data/cc/state/session-leases/private.json",
+        "/root/.claude /root/project",
+        "Agent /root/public_agent authentication required",
+      ].join(" "),
+    );
+    assert.match(message, /authentication required/i);
+    assert.equal(message.includes("abc-123"), false);
+    assert.equal(message.includes("job-456"), false);
+    assert.equal(message.includes("/data/CoordExp"), false);
+    assert.equal(message.includes("/root/.codex"), false);
+    assert.equal(message.includes("/root/.claude"), false);
+    assert.equal(message.includes("/root/project"), false);
+    assert.match(message, /\/root\/public_agent/);
   });
 
   it("forwards a non-null wait_agent blocking object unchanged, with no output schema or supplementation", async () => {

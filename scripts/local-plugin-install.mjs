@@ -18,6 +18,32 @@ const sourceRoot = fs.realpathSync.native(
 const codex = process.platform === "win32" ? "codex.cmd" : "codex";
 const COMPATIBILITY_SHELL_LIMIT = 2;
 
+// These are the only files an already-loaded Codex shell needs when its
+// versioned snapshot is cleaned up: discovery metadata, Skill descriptors, and
+// bootstrap shims that route lifecycle execution back to the checkout. Runtime
+// source and arbitrary old-cache content are deliberately excluded.
+const COMPATIBILITY_DISCOVERY_FILES = Object.freeze([
+  ".codex-plugin/plugin.json",
+  ".mcp.json",
+  "bootstrap/cc-mcp.mjs",
+  "bootstrap/cc-runtime.mjs",
+  "bootstrap/dependency-preflight.mjs",
+  "skills/followup-task/SKILL.md",
+  "skills/followup-task/agents/openai.yaml",
+  "skills/interrupt-agent/SKILL.md",
+  "skills/interrupt-agent/agents/openai.yaml",
+  "skills/list-agents/SKILL.md",
+  "skills/list-agents/agents/openai.yaml",
+  "skills/read-agent-messages/SKILL.md",
+  "skills/read-agent-messages/agents/openai.yaml",
+  "skills/send-message/SKILL.md",
+  "skills/send-message/agents/openai.yaml",
+  "skills/spawn-agent/SKILL.md",
+  "skills/spawn-agent/agents/openai.yaml",
+  "skills/wait-agent/SKILL.md",
+  "skills/wait-agent/agents/openai.yaml",
+]);
+
 function parseArguments(argv) {
   let refreshOnly = false;
   for (const argument of argv) {
@@ -124,6 +150,17 @@ function compatibilityVersionsRoot() {
   return path.join(codexHome, "plugins", "cache", MARKETPLACE, PLUGIN);
 }
 
+function copyCompatibilityDiscoveryFiles(source, target) {
+  for (const relative of COMPATIBILITY_DISCOVERY_FILES) {
+    const sourceFile = path.join(source, relative);
+    if (!fs.existsSync(sourceFile) || !fs.lstatSync(sourceFile).isFile()) continue;
+    const targetFile = path.join(target, relative);
+    if (fs.existsSync(targetFile)) continue;
+    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+    fs.copyFileSync(sourceFile, targetFile);
+  }
+}
+
 function backUpCompatibilityShells(currentVersion) {
   const versionsRoot = compatibilityVersionsRoot();
   if (!fs.existsSync(versionsRoot)) return { versionsRoot, temporaryRoot: null, versions: [] };
@@ -139,11 +176,10 @@ function backUpCompatibilityShells(currentVersion) {
   if (candidates.length === 0) return { versionsRoot, temporaryRoot: null, versions: [] };
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-for-pein-compat-"));
   for (const { version } of candidates) {
-    fs.cpSync(path.join(versionsRoot, version), path.join(temporaryRoot, version), {
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-    });
+    const source = path.join(versionsRoot, version);
+    const target = path.join(temporaryRoot, version);
+    fs.mkdirSync(target, { recursive: true });
+    copyCompatibilityDiscoveryFiles(source, target);
   }
   return { versionsRoot, temporaryRoot, versions: candidates.map(({ version }) => version) };
 }
@@ -153,13 +189,9 @@ function restoreCompatibilityShells(backup) {
   fs.mkdirSync(backup.versionsRoot, { recursive: true });
   for (const version of backup.versions) {
     const target = path.join(backup.versionsRoot, version);
-    if (!fs.existsSync(target)) {
-      fs.cpSync(path.join(backup.temporaryRoot, version), target, {
-        recursive: true,
-        errorOnExist: true,
-        force: false,
-      });
-    }
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.mkdirSync(target, { recursive: true });
+    copyCompatibilityDiscoveryFiles(path.join(backup.temporaryRoot, version), target);
   }
 }
 

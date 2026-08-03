@@ -61,7 +61,7 @@ function patchSupervisorJob(workspaceRoot, jobId, patch) {
 }
 
 function transportText(result) {
-  return [result?.stderr, result?.finalMessage, result?.warning]
+  return [result?.stderr, result?.warning]
     .filter(Boolean)
     .join("\n");
 }
@@ -452,7 +452,9 @@ export async function runClaudeTaskSession({
       return withAggregateReceipts({
         ...result,
         sessionId,
-        finalMessage: combinedOutput,
+        // Attempt aggregation is progress evidence only. The Driver-selected
+        // outer-assistant message from the completed attempt is the handoff.
+        finalMessage: result.finalMessage,
         attempts,
         recoveryAttempts,
         steering: getSteeringSnapshot(workspaceRoot, jobId),

@@ -248,5 +248,11 @@ export function assertAgentBlocking(value, label = "blocking evidence") {
   if (!AGENT_BLOCKING_RETRIES.includes(retry)) {
     throw new Error(`${label} has an unsupported retry: ${JSON.stringify(retry ?? null)}.`);
   }
+  if (scope === "harness" && retry !== "operator_required") {
+    throw new Error(`${label} must use operator_required retry for Harness-scoped reasons.`);
+  }
+  if (scope === "agent" && retry === "operator_required") {
+    throw new Error(`${label} must not use operator_required retry for Agent-scoped reasons.`);
+  }
   return { reason, scope, retry };
 }

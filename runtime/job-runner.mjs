@@ -106,6 +106,7 @@ function appendToBoundedLog(logFile, text) {
   if (!logFile || !text) {
     return;
   }
+  fs.chmodSync(logFile, 0o600);
   fs.appendFileSync(logFile, text, "utf8");
   trimLogFile(logFile);
 }
@@ -203,8 +204,9 @@ export function createJobLogFile(workspaceRoot, jobId, title) {
   ensureStateDir(workspaceRoot);
   const logFile = resolveJobLogFile(workspaceRoot, jobId);
   if (!fs.existsSync(logFile)) {
-    fs.writeFileSync(logFile, "", "utf8");
+    fs.writeFileSync(logFile, "", { encoding: "utf8", mode: 0o600 });
   }
+  fs.chmodSync(logFile, 0o600);
   if (title && fs.statSync(logFile).size === 0) {
     appendLogLine(logFile, `Starting ${title}.`);
   }

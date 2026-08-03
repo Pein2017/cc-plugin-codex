@@ -276,5 +276,7 @@ describe("Agent blocking projection", () => {
     assert.throws(() => assertAgentBlocking({ reason: "auth_required", scope: "agent", retry: "operator_required" }));
     assert.throws(() => assertAgentBlocking({ reason: "worker_lost", scope: "agent", retry: "not_a_retry" }));
     assert.throws(() => assertAgentBlocking("blocked"));
+    assert.throws(() => assertAgentBlocking({ reason: "auth_required", scope: "harness", retry: "same_agent_followup" }));
+    assert.throws(() => assertAgentBlocking({ reason: "worker_lost", scope: "agent", retry: "operator_required" }));
   });
 });

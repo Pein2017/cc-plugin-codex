@@ -66,4 +66,58 @@ describe("cross-platform process control", () => {
     assert.equal(mismatch.controlFailure, "identity_mismatch");
     assert.equal(signalled, false);
   });
+
+  it("keeps non-ESRCH Linux signal failures explicit for interrupt and cancel", async () => {
+    const denied = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    const options = {
+      platform: "linux",
+      validateProcessIdentityImpl: () => true,
+      killImpl: () => { throw denied; },
+    };
+
+    const interrupted = await interruptClaudeProcess(42, "identity", options);
+    assert.equal(interrupted.interrupted, false);
+    assert.equal(interrupted.controlFailure, "EPERM");
+    assert.equal(interrupted.controlFailureCode, "EPERM");
+    assert.match(interrupted.note, /EPERM/);
+
+    const cancelled = await cancelClaudeProcess(42, "identity", options);
+    assert.equal(cancelled.cancelled, false);
+    assert.equal(cancelled.controlFailure, "EPERM");
+    assert.equal(cancelled.controlFailureCode, "EPERM");
+    assert.match(cancelled.note, /EPERM/);
+  });
+
+  it("keeps non-ESRCH Linux liveness probe failures explicit after a delivered signal", async () => {
+    const denied = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    let calls = 0;
+    const cancelled = await cancelClaudeProcess(42, "identity", {
+      platform: "linux",
+      validateProcessIdentityImpl: () => true,
+      killImpl: (_target, signal) => {
+        calls += 1;
+        if (signal === 0) throw denied;
+      },
+    });
+    assert.equal(cancelled.cancelled, false);
+    assert.equal(cancelled.controlFailure, "EPERM");
+    assert.equal(calls, 2, "SIGTERM plus one liveness probe");
+  });
+
+  it("treats only ESRCH as an already-absent Linux process group", async () => {
+    const absent = Object.assign(new Error("no such process"), { code: "ESRCH" });
+    const options = {
+      platform: "linux",
+      validateProcessIdentityImpl: () => true,
+      killImpl: () => { throw absent; },
+    };
+
+    const interrupted = await interruptClaudeProcess(42, "identity", options);
+    assert.equal(interrupted.interrupted, true);
+    assert.match(interrupted.note, /ESRCH/);
+
+    const cancelled = await cancelClaudeProcess(42, "identity", options);
+    assert.equal(cancelled.cancelled, true);
+    assert.match(cancelled.note, /ESRCH/);
+  });
 });

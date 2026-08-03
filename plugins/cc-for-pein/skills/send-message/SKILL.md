@@ -20,3 +20,8 @@ Present one concise sentence from `agent_name` and `delivery`: sent for
 `dispatched_active`, durably accepted for `activation_pending`, or queued and
 idle for `queued_no_turn`. Do not repeat the message or JSON unless debug was
 explicitly requested.
+
+`activation_pending` means an activation already owns the message; join or
+observe that Agent rather than submitting a duplicate follow-up. `queued_no_turn`
+means the message is still idle and requires `$cc-for-pein:followup-task` when
+the work must run.

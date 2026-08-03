@@ -84,6 +84,53 @@ describe("job supervisor", () => {
     assert.equal(result.finalMessage, "partial then done");
   });
 
+  it("returns only the completed recovery attempt handoff", async () => {
+    const { workspace } = setup();
+    let attempts = 0;
+    const result = await runClaudeTaskSession({
+      workspaceRoot: workspace,
+      jobId: "cc-1",
+      cwd: workspace,
+      prompt: "task",
+      write: false,
+      retryPolicy: { maxReconnectAttempts: 1, baseDelayMs: 0, jitterRatio: 0 },
+      runAttempt: async () => {
+        attempts += 1;
+        return attempts === 1
+          ? { ...failed(), finalMessage: "intermediate narration" }
+          : { ...completed(), finalMessage: "final evidence memo" };
+      },
+    });
+
+    assert.equal(result.finalMessage, "final evidence memo");
+    assert.equal(readJobFile(workspace, "cc-1").partialOutput, "intermediate narration\nfinal evidence memo");
+  });
+
+  it("does not reconnect from transport-shaped assistant prose", async () => {
+    const { workspace } = setup();
+    let attempts = 0;
+    const result = await runClaudeTaskSession({
+      workspaceRoot: workspace,
+      jobId: "cc-1",
+      cwd: workspace,
+      prompt: "audit transport handling",
+      write: false,
+      retryPolicy: { maxReconnectAttempts: 1, baseDelayMs: 0, jitterRatio: 0 },
+      runAttempt: async () => {
+        attempts += 1;
+        return {
+          ...failed(),
+          stderr: "",
+          failureClass: "fatal",
+          finalMessage: "The report discusses HTTP 429 and a socket reset in another system.",
+        };
+      },
+    });
+
+    assert.equal(attempts, 1);
+    assert.equal(result.failureClass, "fatal");
+  });
+
   it("lets cancellation win during reconnect backoff", async () => {
     const { workspace } = setup();
     let attempts = 0;

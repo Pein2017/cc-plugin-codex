@@ -40,7 +40,7 @@ tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, delegation_mode? })
 send_message({ target, message })
 followup_task({ target, message, write?, reasoning_effort? })
-wait_agent({ timeout_ms?, wake_on_progress?, acknowledge_tokens? })
+wait_agent({ wake_on_progress?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
@@ -78,9 +78,10 @@ return only `agent_name` plus their delivery disposition. `interrupt-agent`
 returns only `agent_name` and operation status. `list-agents` reports only
 canonical name/status/model/delegation-mode records. Internal execution evidence
 remains available through operator diagnostics.
-`wait-agent` reports at most one update: by default an acknowledgement-bearing
-completion with the complete stored Claude final message for parent synthesis,
-or one coalesced safe progress update when explicitly requested.
+`wait-agent` reports at most one update: by default a completion with the
+complete stored Claude final message for parent synthesis, or one coalesced safe
+progress update when explicitly requested. The model-facing wait has a fixed
+10-minute completion-first window and accepts no timeout argument.
 `read-agent-messages` retrieves recent outer-assistant text from the exact
 Agent's bound native Claude transcript without activation.
 
@@ -139,8 +140,8 @@ discovery/startup failure instead of silently falling back to a shell command.
 `spawn_agent` and an activating `followup_task` are asynchronous at the Agent
 boundary: they return after the durable detached-worker handoff, so no Codex
 background terminal is needed. `wait_agent` is the explicit synchronous join.
-It defaults to a completion-first 10-minute upper bound, accepts at most one
-hour, and returns immediately when completion arrives. Set
+It uses a fixed completion-first 10-minute upper bound and returns immediately
+when completion arrives; model-facing callers do not pass a timeout. Set
 `wake_on_progress: true` only for one intentional intermediate progress
 observation; the next call defaults back to completion-first. Cancelling the MCP
 call stops only that observation; it never interrupts or cancels the Agent.
@@ -230,7 +231,10 @@ A completion update includes the complete stored final message and a
 legacy-compatible truncation flag. New completions are not truncated by this
 Plugin; an older event that already lost bytes retains its honest provenance.
 It remains unread until a later call echoes its token, so a lost host response
-safely redelivers the same message. The parent should synthesize it directly;
+safely redelivers the same message. If the parent performs another `wait_agent`
+call, that next call must pass the completion token exactly once; if it ends
+after consuming the handoff, no acknowledgement-only call is required. The
+parent should synthesize it directly;
 it must not start a follow-up, read history, or ask Claude to write a
 temporary/repository file solely to recover the current completed result.
 Legacy unowned events remain stored but cannot block Agent-linked delivery.

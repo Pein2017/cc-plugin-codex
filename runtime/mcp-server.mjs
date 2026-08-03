@@ -35,7 +35,6 @@ const SOURCE_ROOT = fs.realpathSync.native(
 const FIXED_ENV_FILE = path.join(SOURCE_ROOT, "config", "runtime.env");
 const RUNTIME_MODULE_URL = pathToFileURL(path.join(SOURCE_ROOT, "runtime", "index.mjs"));
 const MCP_CALL_WORKER_URL = new URL("./mcp-call-worker.mjs", import.meta.url);
-const MODEL_FACING_WAIT_TIMEOUT_MS = 600_000;
 const MODEL_IDS = [
   "claude-haiku-4-5",
   "claude-sonnet-5",
@@ -86,7 +85,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: use only for a blocked critical-path join. The fixed 10-minute completion-first wait returns early; opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex.",
+      "Experimental: use only for a blocked critical-path join. The fixed 10-minute completion-first wait returns early; model callers do not pass a timeout. Opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex. If a completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait.",
     inputSchema: z.object({
       wake_on_progress: z.boolean().optional().describe(
         "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit."
@@ -124,6 +123,45 @@ function contextError(detail) {
     `CC MCP requires trusted Codex thread and local sandbox workspace metadata: ${detail}. ` +
     "Start a new Codex task with the installed cc-for-pein Plugin enabled."
   );
+}
+
+const PRIVATE_ID_PATTERNS = [
+  /\b(?:native\s+)?Claude\s+session(?:\s+ID)?\s*[:=]?\s*(?=[A-Za-z0-9._:-]*[0-9_-])[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:native\s+)?session\s+(?:ID|id)\s*[:=]?\s*[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:native\s+)?session(?:\s+(?:ID|id))?\s*[:=]?\s+(?=[A-Za-z0-9._:-]*[0-9_-])[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:internal\s+)?(?:Claude\s+)?job(?:\s+(?:ID|id)?|\s*[:=])\s*(?=[A-Za-z0-9._:-]*[0-9_-])[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:session|job)(?:Id|ID)\s*[:=]\s*[A-Za-z0-9][A-Za-z0-9._:-]*/g,
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+];
+
+function redactAbsolutePaths(message) {
+  // Preserve only one flat public Agent path. `/root/.../...` is a private
+  // filesystem path and must be redacted like every other absolute path.
+  return message.replace(
+    /(^|[\s"'`=,:([{])\/[^\s"'`<>\])};,]+/g,
+    (match, prefix, offset, source) => {
+      const candidate = match.slice(prefix.length);
+      const pathStart = offset + prefix.length;
+      const context = source.slice(Math.max(0, pathStart - 32), pathStart);
+      const publicAgentPath = /^\/root\/[a-z0-9_]+$/u.test(candidate)
+        && /\bAgent(?: path)?\s*$/i.test(context);
+      return publicAgentPath
+        ? match
+        : `${prefix}<runtime path>`;
+    }
+  );
+}
+
+export function redactMcpErrorMessage(value) {
+  let message = String(value ?? "").replaceAll("\0", "").trim();
+  for (const pattern of PRIVATE_ID_PATTERNS) {
+    message = message.replace(pattern, (match) => {
+      if (/job/i.test(match)) return "internal job";
+      return "Claude session";
+    });
+  }
+  message = redactAbsolutePaths(message);
+  return message.slice(0, 8_000) || "CC MCP tool call failed.";
 }
 
 export function resolveCodexMcpContext(meta, signal = null) {
@@ -174,9 +212,9 @@ export function runtimeReceiptResult(receipt) {
   };
 }
 
-function sanitizedError(error) {
+export function sanitizedError(error) {
   const messageText = error instanceof Error ? error.message : String(error);
-  const sanitized = new Error(messageText.replaceAll("\0", "").slice(0, 8_000) || "CC MCP tool call failed.");
+  const sanitized = new Error(redactMcpErrorMessage(messageText));
   if (typeof /** @type {any} */ (error)?.code === "string") {
     /** @type {any} */ (sanitized).code = /** @type {any} */ (error).code;
   }
@@ -253,7 +291,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Ordinary wait is completion-first; never repeat progress waiting by reflex. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Model-facing wait_agent has a fixed 10-minute completion-first window and accepts no timeout argument; never repeat progress waiting by reflex. If completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 
@@ -262,12 +300,9 @@ export function createCcMcpServer(options = {}) {
     /** @type {any} */ (server).registerTool(name, definition, async (input, extra) => {
       try {
         const context = resolveCodexMcpContext(extra._meta, extra.signal);
-        const operationInput = name === "wait_agent"
-          ? { ...input, timeout_ms: MODEL_FACING_WAIT_TIMEOUT_MS }
-          : input;
         const receipt = runtimeFactory
-          ? await runtimeFactory(context)[name](operationInput)
-          : await runtimeInvoker({ operation: name, input: operationInput, context, signal: extra.signal });
+          ? await runtimeFactory(context)[name](input)
+          : await runtimeInvoker({ operation: name, input, context, signal: extra.signal });
         return runtimeReceiptResult(receipt);
       } catch (error) {
         throw sanitizedError(error);

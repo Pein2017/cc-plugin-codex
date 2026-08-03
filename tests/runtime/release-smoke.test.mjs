@@ -7,6 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   isClaudeSubscriptionLimit,
   probeInstalledMcp,
+  runPaidSmoke,
   runReleaseSmoke,
 } from "../../runtime/release-smoke.mjs";
 import { SOURCE_ROOT } from "../../runtime/version.mjs";
@@ -128,5 +129,37 @@ describe("release smoke", () => {
   it("distinguishes subscription exhaustion from a generic HTTP 429", () => {
     assert.equal(isClaudeSubscriptionLimit("You have reached your weekly usage limit"), true);
     assert.equal(isClaudeSubscriptionLimit("HTTP 429 transient rate limit"), false);
+  });
+
+  it("runs the paid control flow against a zero-Claude fake transport using the current wait schema", async () => {
+    const calls = [];
+    const client = {
+      async callTool(request) {
+        calls.push(request);
+        if (request.name === "spawn_agent") {
+          return { isError: false, structuredContent: { status: "working" } };
+        }
+        assert.equal(request.name, "wait_agent");
+        assert.deepEqual(request.arguments, {});
+        return {
+          isError: false,
+          structuredContent: {
+            update: {
+              kind: "completion",
+              summary: "Agent turn completed.",
+              completion_message: "CC_RELEASE_SMOKE_OK",
+              delivery_token: "delivery-fake",
+            },
+          },
+        };
+      },
+    };
+    const result = await runPaidSmoke(client, { threadId: "fake", "codex/sandbox-state-meta": {} }, { maxMs: 5_000 });
+    assert.equal(result.status, "completed");
+    assert.equal(result.markerObserved, true);
+    assert.deepEqual(calls.map((call) => [call.name, call.arguments]), [
+      ["spawn_agent", calls[0].arguments],
+      ["wait_agent", {}],
+    ]);
   });
 });

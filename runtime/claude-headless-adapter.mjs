@@ -232,6 +232,9 @@ export function getClaudeAuthStatus(cwd, options = {}) {
 export class StreamParser {
   constructor() {
     this.buffer = "";
+    this.currentAssistantMessage = null;
+    this.lastCompleteAssistantMessage = null;
+    this.unboundedAssistantText = "";
     this.state = {
       sessionId: null,
       finalMessage: "",
@@ -288,11 +291,11 @@ export class StreamParser {
             event,
             MAX_STREAM_PARSER_TERMINAL_EVENTS
           );
-          if (event.result) {
-            this.state.finalMessage = mergeTerminalResultText(
-              this.state.finalMessage,
-              event.result
-            );
+          if (this.lastCompleteAssistantMessage !== null) {
+            this.state.finalMessage = this.lastCompleteAssistantMessage;
+          } else if (event.result || this.currentAssistantMessage || this.unboundedAssistantText) {
+            const streamedFallback = this.currentAssistantMessage ?? this.unboundedAssistantText;
+            this.state.finalMessage = mergeTerminalResultText(streamedFallback, event.result);
           }
           if (Object.prototype.hasOwnProperty.call(event, "structured_output")) {
             this.state.structuredOutput = event.structured_output ?? null;
@@ -334,9 +337,26 @@ export class StreamParser {
 
   _handleStreamEvent(event) {
     const inner = event.event;
+    if (inner?.type === "message_start" && inner.message?.role === "assistant") {
+      this.currentAssistantMessage = "";
+      return null;
+    }
+    if (inner?.type === "message_stop" && this.currentAssistantMessage !== null) {
+      this.lastCompleteAssistantMessage = this.currentAssistantMessage;
+      this.state.finalMessage = this.currentAssistantMessage;
+      this.currentAssistantMessage = null;
+      this.unboundedAssistantText = "";
+      return null;
+    }
     const delta = inner?.delta;
     if (delta?.type === "text_delta" && delta.text) {
-      this.state.finalMessage += delta.text;
+      if (this.currentAssistantMessage !== null) {
+        this.currentAssistantMessage += delta.text;
+        this.state.finalMessage = this.currentAssistantMessage;
+      } else {
+        this.unboundedAssistantText += delta.text;
+        this.state.finalMessage = this.unboundedAssistantText;
+      }
       return {
         kind: "text",
         text: delta.text,
@@ -349,7 +369,13 @@ export class StreamParser {
     if (inner?.type === "content_block_delta") {
       const blockDelta = inner.delta;
       if (blockDelta?.type === "text_delta" && blockDelta.text) {
-        this.state.finalMessage += blockDelta.text;
+        if (this.currentAssistantMessage !== null) {
+          this.currentAssistantMessage += blockDelta.text;
+          this.state.finalMessage = this.currentAssistantMessage;
+        } else {
+          this.unboundedAssistantText += blockDelta.text;
+          this.state.finalMessage = this.unboundedAssistantText;
+        }
         return {
           kind: "text",
           text: blockDelta.text,
@@ -372,23 +398,31 @@ export class StreamParser {
     if (inner?.type === "content_block_start") {
       const cb = inner.content_block;
       if (cb?.type === "tool_use") {
+        const tool = sliceTextTailByBytes(String(cb.name ?? "unknown"), 256);
+        const inputKeys = cb.input && typeof cb.input === "object" && !Array.isArray(cb.input)
+          ? Object.keys(cb.input)
+              .sort()
+              .slice(0, 32)
+              .map((key) => sliceTextTailByBytes(key, 256))
+          : [];
         pushBoundedTail(
           this.state.toolUses,
-          { tool: cb.name, input: cb.input },
+          { tool, inputKeys },
           MAX_STREAM_PARSER_TOOL_USES
         );
         if (cb.name === "Write" || cb.name === "Edit") {
+          const touchedPath = cb.input?.file_path ?? cb.input?.path ?? null;
           pushUniqueBoundedTail(
             this.state.touchedFiles,
-            cb.input?.file_path ?? cb.input?.path ?? null,
+            touchedPath == null ? null : sliceTextTailByBytes(String(touchedPath), 2_048),
             MAX_STREAM_PARSER_TOUCHED_FILES
           );
         }
         return {
           kind: "tool_use",
-          tool: cb.name,
-          input: cb.input,
-          message: `Using tool: ${cb.name}`,
+          tool,
+          inputKeys,
+          message: `Using tool: ${tool}`,
           phase: "tool",
           threadId: this.state.sessionId,
         };
@@ -533,46 +567,45 @@ export function classifyClaudeFailure(result = {}) {
     }
     return values;
   });
-  const text = [
-    result.finalMessage,
+  const nativeFailureText = [
     result.stderr,
     result.warning,
     ...terminalFailureText,
   ]
     .filter(Boolean)
     .join("\n");
-  if (/\b(authentication|not authenticated|unauthorized|forbidden|invalid api key|oauth|permission denied)\b/i.test(text)) {
-    return { kind: "auth_or_permission", resumable: false, reason: text };
+  if (/\b(authentication|not authenticated|unauthorized|forbidden|invalid api key|oauth|permission denied)\b/i.test(nativeFailureText)) {
+    return { kind: "auth_or_permission", resumable: false, reason: nativeFailureText };
   }
-  if (/\b(context window|maximum context|prompt is too long|request (?:is )?invalid|invalid request|malformed request|unprocessable)\b/i.test(text)) {
-    return { kind: "context_or_request_invalid", resumable: false, reason: text };
+  if (/\b(context window|maximum context|prompt is too long|request (?:is )?invalid|invalid request|malformed request|unprocessable)\b/i.test(nativeFailureText)) {
+    return { kind: "context_or_request_invalid", resumable: false, reason: nativeFailureText };
   }
 
-  const callerBudgetLimit = /\b(?:maximum|max)\s+budget\b|error_max_budget_usd|--max-budget-usd/i.test(text);
+  const callerBudgetLimit = /\b(?:maximum|max)\s+budget\b|error_max_budget_usd|--max-budget-usd/i.test(nativeFailureText);
   const accountCapacityScope = "(?:subscription|quota|credits?|weekly|monthly|allowance|billing[- ]period)";
   const exhaustionSignal = "(?:hit|reached|exceeded|exhausted|depleted|used[ -]up|no remaining|insufficient)";
   const explicitAccountLimit = !callerBudgetLimit && (
-    new RegExp(`\\b${accountCapacityScope}\\b[^\\n]{0,100}\\b${exhaustionSignal}\\b`, "i").test(text) ||
-    new RegExp(`\\b${exhaustionSignal}\\b[^\\n]{0,100}\\b${accountCapacityScope}\\b`, "i").test(text) ||
-    /\busage\s+(?:limit|quota|allowance)\b[^\n]{0,60}\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b/i.test(text) ||
-    /\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b[^\n]{0,60}\busage\s+(?:limit|quota|allowance)\b/i.test(text) ||
-    /\b(?:insufficient|no|zero)\s+(?:remaining\s+)?credits?\b/i.test(text) ||
-    /\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:limit|quota)\b/i.test(text)
+    new RegExp(`\\b${accountCapacityScope}\\b[^\\n]{0,100}\\b${exhaustionSignal}\\b`, "i").test(nativeFailureText) ||
+    new RegExp(`\\b${exhaustionSignal}\\b[^\\n]{0,100}\\b${accountCapacityScope}\\b`, "i").test(nativeFailureText) ||
+    /\busage\s+(?:limit|quota|allowance)\b[^\n]{0,60}\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b/i.test(nativeFailureText) ||
+    /\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b[^\n]{0,60}\busage\s+(?:limit|quota|allowance)\b/i.test(nativeFailureText) ||
+    /\b(?:insufficient|no|zero)\s+(?:remaining\s+)?credits?\b/i.test(nativeFailureText) ||
+    /\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:limit|quota)\b/i.test(nativeFailureText)
   );
   if (explicitAccountLimit) {
     return {
       kind: "usage_or_subscription_limit",
       resumable: false,
-      reason: text,
+      reason: nativeFailureText,
     };
   }
 
-  const transportFailure = /connection closed mid-response|socket (?:closed|reset|hang up)|\bECONNRESET\b|\bEPIPE\b|stream(?:ing)? (?:idle )?timeout|timed out while streaming|\bHTTP\s*(?:408|429|5\d\d)\b/i.test(text);
+  const transportFailure = /connection closed mid-response|socket (?:closed|reset|hang up)|\bECONNRESET\b|\bEPIPE\b|stream(?:ing)? (?:idle )?timeout|timed out while streaming|\bHTTP\s*(?:408|429|5\d\d)\b/i.test(nativeFailureText);
   if (transportFailure && result.sessionId) {
     return {
       kind: "transport_closed_resumable",
       resumable: true,
-      reason: text,
+      reason: nativeFailureText,
     };
   }
 
@@ -593,12 +626,12 @@ export function classifyClaudeFailure(result = {}) {
   }
 
   if (transportFailure) {
-    return { kind: "protocol_unknown", resumable: false, reason: text };
+    return { kind: "protocol_unknown", resumable: false, reason: nativeFailureText };
   }
   if (result.status === "unknown") {
-    return { kind: "protocol_unknown", resumable: false, reason: text || null };
+    return { kind: "protocol_unknown", resumable: false, reason: nativeFailureText || null };
   }
-  return { kind: "fatal", resumable: false, reason: text || null };
+  return { kind: "fatal", resumable: false, reason: nativeFailureText || null };
 }
 
 export function encodeStreamUserMessage(text) {
@@ -1259,6 +1292,7 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
  */
 export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
   const platform = options.platform ?? process.platform;
+  const validateIdentity = options.validateProcessIdentityImpl ?? validateProcessIdentity;
   if (!pidIdentity) {
     return {
       interrupted: false,
@@ -1266,7 +1300,7 @@ export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
       controlFailure: "missing_identity",
     };
   }
-  if (!validateProcessIdentity(pid, pidIdentity, options)) {
+  if (!validateIdentity(pid, pidIdentity, options)) {
     return {
       interrupted: false,
       note: "Refusing to signal a process whose identity no longer matches.",
@@ -1281,14 +1315,27 @@ export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
     };
   }
 
-  try {
-    process.kill(-pid, "SIGINT");
-  } catch {
-    return { interrupted: true, note: "Process not found" };
+  const signal = signalProcessGroup(pid, "SIGINT", options);
+  if (signal.absent) return { interrupted: true, note: signal.note };
+  if (signal.controlFailure) {
+    return {
+      interrupted: false,
+      note: signal.note,
+      controlFailure: signal.controlFailure,
+      controlFailureCode: signal.controlFailureCode,
+    };
   }
 
-  const dead = await waitForProcessGroup(pid, 5000);
-  if (dead) return { interrupted: true };
+  const observed = await waitForProcessGroup(pid, 5000, options);
+  if (observed.controlFailure) {
+    return {
+      interrupted: false,
+      note: observed.note,
+      controlFailure: observed.controlFailure,
+      controlFailureCode: observed.controlFailureCode,
+    };
+  }
+  if (observed.absent) return { interrupted: true };
   return {
     interrupted: false,
     note: `Process group ${pid} did not exit after SIGINT; it was not force-killed`,
@@ -1301,6 +1348,7 @@ export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
  */
 export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
   const platform = options.platform ?? process.platform;
+  const validateIdentity = options.validateProcessIdentityImpl ?? validateProcessIdentity;
   if (!pidIdentity) {
     return {
       cancelled: false,
@@ -1308,7 +1356,7 @@ export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
       controlFailure: "missing_identity",
     };
   }
-  if (!validateProcessIdentity(pid, pidIdentity, options)) {
+  if (!validateIdentity(pid, pidIdentity, options)) {
     return {
       cancelled: false,
       note: "Refusing to terminate a process whose identity no longer matches.",
@@ -1332,20 +1380,33 @@ export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
   }
 
   // SIGTERM to entire process group
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    return { cancelled: true, note: "Process not found" };
+  const terminate = signalProcessGroup(pid, "SIGTERM", options);
+  if (terminate.absent) return { cancelled: true, note: terminate.note };
+  if (terminate.controlFailure) {
+    return {
+      cancelled: false,
+      note: terminate.note,
+      controlFailure: terminate.controlFailure,
+      controlFailureCode: terminate.controlFailureCode,
+    };
   }
 
   // Wait for process group to die
-  const dead = await waitForProcessGroup(pid, 5000);
-  if (dead) {
+  const observed = await waitForProcessGroup(pid, 5000, options);
+  if (observed.controlFailure) {
+    return {
+      cancelled: false,
+      note: observed.note,
+      controlFailure: observed.controlFailure,
+      controlFailureCode: observed.controlFailureCode,
+    };
+  }
+  if (observed.absent) {
     return { cancelled: true };
   }
 
   // Escalate to SIGKILL
-  if (!validateProcessIdentity(pid, pidIdentity, options)) {
+  if (!validateIdentity(pid, pidIdentity, options)) {
     return {
       cancelled: false,
       note: "Process identity was lost during SIGTERM wait; refusing SIGKILL.",
@@ -1353,12 +1414,27 @@ export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
     };
   }
 
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {}
+  const kill = signalProcessGroup(pid, "SIGKILL", options);
+  if (kill.absent) return { cancelled: true, note: kill.note };
+  if (kill.controlFailure) {
+    return {
+      cancelled: false,
+      note: kill.note,
+      controlFailure: kill.controlFailure,
+      controlFailureCode: kill.controlFailureCode,
+    };
+  }
 
-  const killedDead = await waitForProcessGroup(pid, 3000);
-  if (killedDead) {
+  const killed = await waitForProcessGroup(pid, 3000, options);
+  if (killed.controlFailure) {
+    return {
+      cancelled: false,
+      note: killed.note,
+      controlFailure: killed.controlFailure,
+      controlFailureCode: killed.controlFailureCode,
+    };
+  }
+  if (killed.absent) {
     return { cancelled: true };
   }
 
@@ -1368,13 +1444,43 @@ export async function cancelClaudeProcess(pid, pidIdentity, options = {}) {
   };
 }
 
-function isProcessGroupAlive(pgid) {
+function signalProcessGroup(pgid, signal, options = {}) {
+  const killImpl = options.killImpl ?? process.kill.bind(process);
   try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch {
-    return false;
+    killImpl(-pgid, signal);
+    return { delivered: true, absent: false, controlFailure: null };
+  } catch (error) {
+    const code = typeof error?.code === "string" ? error.code : "signal_failed";
+    if (code === "ESRCH") {
+      return {
+        delivered: false,
+        absent: true,
+        controlFailure: null,
+        note: "Process group is already absent (ESRCH).",
+      };
+    }
+    const detail = error instanceof Error ? error.message : String(error ?? "unknown error");
+    return {
+      delivered: false,
+      absent: false,
+      controlFailure: code,
+      controlFailureCode: code,
+      note: `Process-group ${signal} failed (${code}): ${detail}`,
+    };
   }
+}
+
+function probeProcessGroup(pgid, options = {}) {
+  const probe = signalProcessGroup(pgid, 0, options);
+  if (probe.delivered) return { alive: true, absent: false, controlFailure: null };
+  if (probe.absent) return { alive: false, absent: true, controlFailure: null };
+  return {
+    alive: null,
+    absent: false,
+    controlFailure: probe.controlFailure,
+    controlFailureCode: probe.controlFailureCode,
+    note: `Process-group liveness probe failed: ${probe.note}`,
+  };
 }
 
 async function waitForProcessExit(pid, timeoutMs, options = {}) {
@@ -1387,11 +1493,12 @@ async function waitForProcessExit(pid, timeoutMs, options = {}) {
   return !alive(pid);
 }
 
-async function waitForProcessGroup(pgid, timeoutMs) {
+async function waitForProcessGroup(pgid, timeoutMs, options = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (!isProcessGroupAlive(pgid)) return true;
+    const probe = probeProcessGroup(pgid, options);
+    if (probe.absent || probe.controlFailure) return probe;
     await new Promise((r) => setTimeout(r, 100));
   }
-  return !isProcessGroupAlive(pgid);
+  return probeProcessGroup(pgid, options);
 }
