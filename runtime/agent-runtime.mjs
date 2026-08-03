@@ -1263,14 +1263,31 @@ class AgentRuntime {
     const progressJobIds = () => this.store.listAgents()
       .map((agent) => agent.activeJobId)
       .filter(Boolean);
-    const waited = await this.jobs.wait(null, {
+    let waited = await this.jobs.wait(null, {
       timeoutMs: timeout,
       acknowledgeTokens,
       wakeOnProgress,
       progressJobIds,
       signal: this.abortSignal,
     });
+    // Exit-time reconciliation can publish a completion the bounded wait above
+    // never observed. When the bounded result was not already a completion,
+    // take exactly one more zero-time, completion-only look at the same inbox
+    // (no acknowledgement tokens, no progress wakeup) so a completion visible
+    // at this linearization point replaces a stale timeout or claimed
+    // progress instead of leaving the receipt behind durable state.
     this.reconcile();
+    if (waited.update?.kind !== "completion") {
+      const finalObservation = await this.jobs.wait(null, {
+        timeoutMs: 0,
+        acknowledgeTokens: [],
+        wakeOnProgress: false,
+        signal: this.abortSignal,
+      });
+      if (finalObservation.update?.kind === "completion") {
+        waited = finalObservation;
+      }
+    }
     const agents = this.store.listAgents();
     const receipt = {
       message: waited.message,

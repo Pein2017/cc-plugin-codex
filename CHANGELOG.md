@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.12.1 - 2026-08-03
+
+- Close the final `wait_agent` observation gap: after its bounded wait and
+  terminal reconciliation, perform one zero-time completion-only mailbox read
+  so an already-visible completion replaces a stale timeout or advisory
+  progress receipt. Preserve acknowledgement, at-least-once redelivery,
+  progress budgets, public schemas, and zero-write settled timeouts.
+- Clarify that a timeout proves only that no unread current-root completion was
+  visible at the call's final observation, and discourage immediate
+  `list_agents` calls made solely to repeat that completion check.
+
 ## 0.12.0 - 2026-08-03
 
 - Harden supervisor residency and Linux signal truth, preserve only the latest

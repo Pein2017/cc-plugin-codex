@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein",
-  "version": "0.12.0+codex.20260803032942",
+  "version": "0.12.1+codex.20260803144155",
   "description": "Experimental checkout-owned Claude Code Agent runtime with bounded leaf/Fable delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",

@@ -31,8 +31,12 @@ ordinary completion-first join; never repeat progress waiting for that job.
 - Opt-in progress returns at most one sanitized update per active Agent job.
   Hook activity stays private, and the update excludes Claude text, thinking,
   inputs, paths, sessions, and raw receipts.
-- Timeout only means this window was quiet. Do not narrate unchanged timeouts,
-  use list as progress, or treat timeout as failure/cancellation.
+- Timeout means no unread current-root completion was visible at this call's
+  final observation, nothing more. Do not call `list_agents` immediately
+  afterward merely to recheck completion; do not narrate unchanged timeouts,
+  use list as progress, or treat timeout as failure, cancellation, health,
+  progress, or proof of future inactivity. Use `wake_on_progress` when
+  intentional progress evidence is actually needed.
 - Never finalize with an unresolved required or parallel-then-join result.
   Synthesize the complete message; quote it verbatim only when requested.
 - A completion carries `blocking`: `null` for `completed`, and `null` for an

@@ -308,6 +308,53 @@ describe("Agent wait persistence", () => {
     assert.deepEqual(observed.counts, zeroPersistenceIo);
   });
 
+  it("performs no persistence mutation on the additional final-observation read for a settled timeout", async () => {
+    const { runtime, workspace, ownerRootId } = setup("settled-final-observation");
+    const created = runtime.store.createAgent({
+      task_name: "settled_final_observation",
+      selectedModel: "claude-haiku-4-5",
+    });
+    runtime.store.updateAgent(created.agentId, (agent) => ({
+      ...agent,
+      status: "completed",
+      latestJobId: "cc-settled-final-observation",
+      lastTerminalJobId: "cc-settled-final-observation",
+      finalizedJobIds: ["cc-settled-final-observation"],
+    }));
+    const job = terminalJob(
+      workspace,
+      ownerRootId,
+      created.agentId,
+      "cc-settled-final-observation",
+      { agentProjectionReconciledAt: "2026-07-26T00:00:01.000Z" }
+    );
+    writeJobFile(workspace, job.id, job);
+    const completion = reconcileTerminalJobCompletion(workspace, ownerRootId, job).event;
+    readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    acknowledgeAgentCompletionEvents(workspace, ownerRootId, [completion.deliveryToken]);
+
+    // Confirm the additional zero-time completion-only read this change adds
+    // actually runs, and that it alone still costs no inbox lock, fsync, or
+    // durable write.
+    const originalWait = runtime.jobs.wait.bind(runtime.jobs);
+    let waitCalls = 0;
+    runtime.jobs.wait = (jobId, options) => {
+      waitCalls += 1;
+      return originalWait(jobId, options);
+    };
+
+    const observed = await observePersistenceIo(
+      () => runtime.waitAgent({ timeout_ms: 0 })
+    );
+
+    assert.equal(waitCalls, 2);
+    assert.deepEqual(observed.result, {
+      message: "Timed out waiting for CC Agent activity.",
+      timedOut: true,
+    });
+    assert.deepEqual(observed.counts, zeroPersistenceIo);
+  });
+
   it("repairs a crash-window projection marker before returning to zero-write waits", async () => {
     const { runtime, workspace, ownerRootId } = setup("marker-repair");
     const created = runtime.store.createAgent({

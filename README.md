@@ -187,8 +187,15 @@ work and joins before its dependency boundary; explicitly detached work is
 allowed only when the user requests background execution and the result is not
 needed in the current answer. Calls to `wait_agent` should be sparse: an
 ordinary join omits progress wakeup, and one explicit progress observation must
-not turn into reflexive polling. Quiet wait timeouts are not failures and should
-not trigger repetitive narration or `list_agents` polling.
+not turn into reflexive polling. After its bounded observation, `wait_agent`
+reconciles current-root terminal facts and, unless that observation already
+returned a completion, takes one further zero-time completion-only look at the
+same mailbox before returning; a completion visible there replaces a stale
+timeout or claimed progress update. A timeout therefore means no unread
+current-root completion was visible at that final observation — nothing more.
+Quiet wait timeouts are not failures and should not trigger repetitive
+narration or an immediate `list_agents` call made solely to recheck
+completion.
 
 Public fork/profile selectors, `agent_type`, Codex service-tier routing, and
 Claude session adoption fail explicitly rather than being ignored or injected
