@@ -104,10 +104,15 @@ describe("runtime environment", () => {
     const { root } = fixture();
     const result = resolveRuntimeEnvironment({
       cwd: root,
-      env: { CODEX_HOME: path.join(root, "missing") },
+      env: {
+        CODEX_HOME: path.join(root, "missing"),
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      },
     });
     assert.equal(result.receipt.sources.length, 1);
     assert.match(result.receipt.sources[0], /config[/\\]runtime\.env$/);
     assert.equal(result.env.CONDA_EXE, "/root/miniconda3/bin/conda");
+    assert.equal(result.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "0");
+    assert.equal(JSON.stringify(result.receipt).includes("AUTO_MEMORY"), false);
   });
 });

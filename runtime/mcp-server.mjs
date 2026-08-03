@@ -42,6 +42,7 @@ const MODEL_IDS = [
   "claude-fable-5",
 ];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const MODEL_FACING_WAIT_TIMEOUT_MS = 3_600_000;
 
 const exactTarget = z.string().trim().min(1).describe(
   "Exact current-root Agent ID, /root/<task_name>, or normalized name."
@@ -85,7 +86,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: use only for a blocked critical-path join. The fixed 10-minute completion-first wait returns early; model callers do not pass a timeout. Opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex. If a completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait.",
+      "Experimental: use only for a blocked critical-path join. The fixed one-hour completion-first wait returns early on completion or eligible progress; model callers do not pass a timeout. Opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly: do not narrate the timeout and do not call list_agents or read_agent_messages as a completion or progress recheck. If a completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait.",
     inputSchema: z.object({
       wake_on_progress: z.boolean().optional().describe(
         "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit."
@@ -102,7 +103,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   list_agents: {
     description:
-      "Experimental: list current-root durable CC Agents, optionally by path prefix.",
+      "Experimental: list current-root durable CC Agents, optionally by path prefix. Reports logical state only, never completion or live progress; do not call this to recheck after a quiet wait_agent timeout.",
     inputSchema: z.object({ path_prefix: z.string().trim().min(1).optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -291,7 +292,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Model-facing wait_agent has a fixed 10-minute completion-first window and accepts no timeout argument; never repeat progress waiting by reflex. If completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Model-facing wait_agent has a fixed one-hour completion-first window and accepts no timeout argument; never repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly, without narrating the timeout and without calling list_agents or read_agent_messages as a completion or progress recheck; list_agents reports logical state only. If completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 
@@ -300,9 +301,12 @@ export function createCcMcpServer(options = {}) {
     /** @type {any} */ (server).registerTool(name, definition, async (input, extra) => {
       try {
         const context = resolveCodexMcpContext(extra._meta, extra.signal);
+        const runtimeInput = name === "wait_agent"
+          ? { ...input, timeout_ms: MODEL_FACING_WAIT_TIMEOUT_MS }
+          : input;
         const receipt = runtimeFactory
-          ? await runtimeFactory(context)[name](input)
-          : await runtimeInvoker({ operation: name, input, context, signal: extra.signal });
+          ? await runtimeFactory(context)[name](runtimeInput)
+          : await runtimeInvoker({ operation: name, input: runtimeInput, context, signal: extra.signal });
         return runtimeReceiptResult(receipt);
       } catch (error) {
         throw sanitizedError(error);

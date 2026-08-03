@@ -14,6 +14,7 @@ const DEFAULT_CLAUDE_CONFIG_DIR = "/data/CoordExp/.claude";
 const SUPPORTED_KEYS = new Set([
   "CLAUDE_NATIVE_CONFIG_DIR",
   "CLAUDE_CONFIG_DIR",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
   "CONDA_EXE",
   "PATH",
   "http_proxy", "https_proxy", "all_proxy",

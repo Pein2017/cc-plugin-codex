@@ -164,6 +164,8 @@ describe("native plugin contract", () => {
     const env = fs.readFileSync(path.join(root, "config", "runtime.env"), "utf8");
     assert.match(env, /^CLAUDE_NATIVE_CONFIG_DIR=\/data\/CoordExp\/\.claude$/m);
     assert.match(env, /^CLAUDE_CONFIG_DIR=\/data\/CoordExp\/\.claude$/m);
+    assert.match(env, /^CLAUDE_CODE_DISABLE_AUTO_MEMORY=0$/m);
+    assert.doesNotMatch(env, /autoMemoryDirectory/);
     assert.match(env, /^CONDA_EXE=\/root\/miniconda3\/bin\/conda$/m);
     for (const key of ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
       assert.match(env, new RegExp(`^${key}=http:\\/\\/127\\.0\\.0\\.1:9090$`, "m"));
@@ -251,23 +253,36 @@ describe("native plugin contract", () => {
       );
       assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
       assert.match(text, /Experimental/i);
-      if (name === "list-agents") assert.match(text, /final output/i);
-      else {
-        assert.match(text, /complete stored[\s\S]*completion_message/i);
-        assert.match(text, /critical path[\s\S]*ordinary join[\s\S]*omit progress/i);
-        assert.match(text, /600000 ms/);
-        assert.doesNotMatch(text, /timeout_ms/);
-        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate update per active\s+Agent job/i);
-        assert.match(text, /hook[\s\S]*private/i);
-        assert.match(text, /never repeat progress waiting/i);
-        assert.match(text, /Do not narrate unchanged timeouts/i);
+      if (name === "list-agents") {
+        assert.match(text, /final output/i);
+        assert.match(text, /[Nn]ever call this\s+solely to recheck completion after a quiet `wait_agent` timeout/i);
+        assert.match(text, /call `wait_agent` again directly/i);
 
         const metadata = fs.readFileSync(
           path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
           "utf8",
         );
-        assert.match(metadata, /critical-path[\s\S]*10-minute completion-first/i);
+        assert.match(metadata, /solely to recheck completion after a quiet wait_agent timeout/i);
+      } else {
+        assert.match(text, /complete stored[\s\S]*completion_message/i);
+        assert.match(text, /critical path[\s\S]*ordinary join[\s\S]*omit progress/i);
+        assert.match(text, /3600000 ms/);
+        assert.doesNotMatch(text, /10-minute/i);
+        assert.doesNotMatch(text, /timeout_ms/);
+        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate update per active\s+Agent job/i);
+        assert.match(text, /hook[\s\S]*private/i);
+        assert.match(text, /never repeat progress waiting/i);
+        assert.match(text, /Do not narrate unchanged timeouts/i);
+        assert.match(text, /`list_agents` or\s+`read_agent_messages` immediately\s+afterward merely to recheck completion/i);
+        assert.match(text, /call `wait_agent` again directly/i);
+
+        const metadata = fs.readFileSync(
+          path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
+          "utf8",
+        );
+        assert.match(metadata, /critical-path[\s\S]*one-hour completion-first/i);
         assert.match(metadata, /wake_on_progress[\s\S]*one intentional intermediate observation per Agent turn[\s\S]*never repeat/i);
+        assert.match(metadata, /quiet timeout[\s\S]*call wait_agent again directly/i);
       }
     }
   });

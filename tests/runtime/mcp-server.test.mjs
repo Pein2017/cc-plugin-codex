@@ -76,10 +76,22 @@ describe("typed CC MCP server", () => {
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "timeout_ms"), false);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
-    assert.match(wait.description, /critical-path[\s\S]*10-minute completion-first[\s\S]*one progress update per Agent turn[\s\S]*never repeat/i);
+    assert.match(wait.description, /critical-path[\s\S]*one-hour completion-first[\s\S]*one progress update per Agent turn[\s\S]*never repeat/i);
+    assert.match(wait.description, /quiet timeout on required work means calling wait_agent again directly[\s\S]*do not narrate[\s\S]*do not call list_agents or read_agent_messages/i);
+    const listAgentsTool = listed.tools.find((tool) => tool.name === "list_agents");
+    assert.match(listAgentsTool.description, /logical state only, never completion or live progress/i);
   });
 
-  it("uses the fixed model wait and preserves optional progress plus acknowledgement", async () => {
+  it("advertises the anti-polling server instructions", async () => {
+    const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
+    closers.push(() => client.close(), () => server.close());
+    const instructions = client.getInstructions();
+    assert.match(instructions, /fixed one-hour completion-first window/i);
+    assert.match(instructions, /quiet timeout on required work means calling wait_agent again directly/i);
+    assert.match(instructions, /without calling list_agents or read_agent_messages as a completion or progress recheck/i);
+  });
+
+  it("injects the hidden one-hour timeout for wait_agent via runtimeFactory, still rejects caller timeout_ms, and forwards other tools unchanged", async () => {
     const calls = [];
     const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
       calls.push({ name, input });
@@ -96,6 +108,7 @@ describe("typed CC MCP server", () => {
       },
       _meta: meta,
     });
+    await client.callTool({ name: "list_agents", arguments: {}, _meta: meta });
     const rejected = await client.callTool({
       name: "wait_agent",
       arguments: { timeout_ms: 1_000 },
@@ -103,16 +116,37 @@ describe("typed CC MCP server", () => {
     });
 
     assert.deepEqual(calls, [
-      { name: "wait_agent", input: {} },
+      { name: "wait_agent", input: { timeout_ms: 3_600_000 } },
       {
         name: "wait_agent",
         input: {
           wake_on_progress: true,
           acknowledge_tokens: ["delivery-prior"],
+          timeout_ms: 3_600_000,
         },
       },
+      { name: "list_agents", input: {} },
     ]);
     assert.equal(rejected.isError, true);
+  });
+
+  it("injects the hidden one-hour timeout for wait_agent via runtimeInvoker", async () => {
+    const calls = [];
+    const runtimeInvoker = async ({ operation, input }) => {
+      calls.push({ operation, input });
+      return { accepted: true };
+    };
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createCcMcpServer({ runtimeInvoker });
+    const client = new Client({ name: "cc-mcp-test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    closers.push(() => client.close(), () => server.close());
+
+    await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
+
+    assert.deepEqual(calls, [
+      { operation: "wait_agent", input: { timeout_ms: 3_600_000 } },
+    ]);
   });
 
   it("redacts private runtime identities and absolute paths while keeping public error categories", () => {

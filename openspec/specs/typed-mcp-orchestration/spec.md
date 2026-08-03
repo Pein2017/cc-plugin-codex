@@ -104,7 +104,7 @@ The MCP server SHALL validate trusted Codex context and delegate every accepted 
 - **THEN** the worker observation receives an abort signal and exits without interrupting or deleting the Agent or its Claude turn
 
 ### Requirement: MCP call boundaries preserve asynchronous Agents and explicit joins
-`spawn_agent` and an activating `followup_task` SHALL return after the existing durable background handoff rather than waiting for Claude completion. Model-facing `wait_agent` SHALL remain a synchronous bounded observation with a fixed 600000 ms upper bound, SHALL NOT expose per-call timeout selection, SHALL return early for completion, and SHALL return early for advisory progress only when the caller explicitly sets `wake_on_progress: true`. The checkout CLI and public runtime operation MAY retain explicit bounded timeout selection for operator diagnostics and tests. Cancelling the MCP request SHALL stop only the in-flight observation and SHALL NOT interrupt, cancel, archive, delete, or otherwise change the Agent.
+`spawn_agent` and an activating `followup_task` SHALL return after the existing durable background handoff rather than waiting for Claude completion. Model-facing `wait_agent` SHALL remain a synchronous bounded observation with a fixed 3600000 ms upper bound injected behind its strict public schema, SHALL NOT expose per-call timeout selection, SHALL return early for completion, and SHALL return early for advisory progress only when the caller explicitly sets `wake_on_progress: true`. The checkout CLI and public runtime operation SHALL retain explicit bounded timeout selection for operator diagnostics and tests. Cancelling the MCP request SHALL stop only the in-flight observation and SHALL NOT interrupt, cancel, archive, delete, or otherwise change the Agent.
 
 #### Scenario: Spawn starts background work
 - **WHEN** `spawn_agent` durably hands its prepared turn to a worker
@@ -173,10 +173,10 @@ The Plugin snapshot SHALL declare an absolute canonical checkout bootstrap and w
 - **THEN** MCP startup fails closed without loading cached or upstream runtime code
 
 ### Requirement: MCP transport timeout exceeds the fixed model wait
-The Plugin MCP declaration SHALL configure an outer tool-call timeout greater than 600 seconds while the runtime SHALL retain its 3600000 ms maximum operator observation bound. Neither timeout SHALL define or shorten Agent execution lifetime.
+The Plugin MCP declaration SHALL configure an outer tool-call timeout greater than 3600 seconds while the runtime SHALL retain its 3600000 ms maximum operator observation bound. Neither timeout SHALL define or shorten Agent execution lifetime.
 
 #### Scenario: Model-facing wait reaches its upper bound
-- **WHEN** no completion or explicitly eligible progress is available during the fixed 600000 ms model-facing wait
+- **WHEN** no completion or explicitly eligible progress is available during the fixed 3600000 ms model-facing wait
 - **THEN** the MCP transport leaves sufficient margin for the runtime to return an honest timeout before Codex ends the tool call
 
 #### Scenario: Caller requests the maximum wait
@@ -191,8 +191,12 @@ Model-facing MCP errors SHALL preserve actionable public categories while exclud
 - **THEN** the MCP response replaces those values with stable public wording and retains the recovery action
 
 ### Requirement: MCP wait guidance matches the fixed public schema
-Model-facing guidance and release smoke SHALL call `wait_agent` without a timeout argument and SHALL describe its fixed completion-first wait plus conditional completion-token acknowledgement.
+Model-facing tool descriptions, server instructions, Skills, and release smoke SHALL call `wait_agent` without a timeout argument and SHALL describe its fixed one-hour completion-first wait plus conditional completion-token acknowledgement. They SHALL distinguish `list_agents` as a logical state view rather than completion/progress delivery and SHALL prohibit list/history probes made solely after a quiet wait timeout.
 
 #### Scenario: Paid smoke joins a test Agent
 - **WHEN** the explicitly enabled Haiku/low release smoke waits for its Agent
 - **THEN** it sends only arguments accepted by the current `wait_agent` schema
+
+#### Scenario: Parent considers list after timeout
+- **WHEN** an ordinary wait returns a quiet timeout and required Agent work remains unresolved
+- **THEN** model-facing guidance directs another completion-first wait rather than `list_agents`, `read_agent_messages`, or unchanged-state narration

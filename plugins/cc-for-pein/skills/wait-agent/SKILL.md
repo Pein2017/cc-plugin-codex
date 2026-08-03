@@ -15,7 +15,7 @@ discovery failure; never use shell.
 
 After asynchronous spawn, first do meaningful non-overlapping work. Call wait
 only when the critical path is blocked. For an ordinary join omit progress: it
-returns immediately on completion with a fixed 600000 ms (10-minute) upper
+returns immediately on completion with a fixed 3600000 ms (one-hour) upper
 bound. Set `wake_on_progress: true` only when one intermediate update per active
 Agent job changes scheduling. Then do useful work, steer, or return to an
 ordinary completion-first join; never repeat progress waiting for that job.
@@ -32,11 +32,12 @@ ordinary completion-first join; never repeat progress waiting for that job.
   Hook activity stays private, and the update excludes Claude text, thinking,
   inputs, paths, sessions, and raw receipts.
 - Timeout means no unread current-root completion was visible at this call's
-  final observation, nothing more. Do not call `list_agents` immediately
-  afterward merely to recheck completion; do not narrate unchanged timeouts,
-  use list as progress, or treat timeout as failure, cancellation, health,
-  progress, or proof of future inactivity. Use `wake_on_progress` when
-  intentional progress evidence is actually needed.
+  final observation, nothing more. Do not call `list_agents` or
+  `read_agent_messages` immediately afterward merely to recheck completion.
+  Do not narrate unchanged timeouts, use list as progress, or treat timeout
+  as failure, cancellation, health, progress, or proof of future inactivity.
+  If required work remains unresolved, call `wait_agent` again directly. Use
+  `wake_on_progress` when intentional progress evidence is actually needed.
 - Never finalize with an unresolved required or parallel-then-join result.
   Synthesize the complete message; quote it verbatim only when requested.
 - A completion carries `blocking`: `null` for `completed`, and `null` for an

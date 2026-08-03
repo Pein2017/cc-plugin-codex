@@ -81,7 +81,8 @@ remains available through operator diagnostics.
 `wait-agent` reports at most one update: by default a completion with the
 complete stored Claude final message for parent synthesis, or one coalesced safe
 progress update when explicitly requested. The model-facing wait has a fixed
-10-minute completion-first window and accepts no timeout argument.
+3,600,000 ms (one-hour) completion-first window and accepts no timeout
+argument.
 `read-agent-messages` retrieves recent outer-assistant text from the exact
 Agent's bound native Claude transcript without activation.
 
@@ -140,11 +141,12 @@ discovery/startup failure instead of silently falling back to a shell command.
 `spawn_agent` and an activating `followup_task` are asynchronous at the Agent
 boundary: they return after the durable detached-worker handoff, so no Codex
 background terminal is needed. `wait_agent` is the explicit synchronous join.
-It uses a fixed completion-first 10-minute upper bound and returns immediately
-when completion arrives; model-facing callers do not pass a timeout. Set
-`wake_on_progress: true` only for one intentional intermediate progress
-observation; the next call defaults back to completion-first. Cancelling the MCP
-call stops only that observation; it never interrupts or cancels the Agent.
+Model-facing callers use a fixed completion-first 3,600,000 ms (one-hour)
+upper bound and return immediately when completion arrives; they do not pass a
+timeout. Set `wake_on_progress: true` only for one intentional intermediate
+progress observation; the next call defaults back to completion-first.
+Cancelling the MCP call stops only that observation; it never interrupts or
+cancels the Agent.
 Codex MCP calls do not expose Unified Exec terminal session IDs, and this
 Plugin deliberately does not add a second background-terminal/session layer.
 
@@ -194,8 +196,9 @@ same mailbox before returning; a completion visible there replaces a stale
 timeout or claimed progress update. A timeout therefore means no unread
 current-root completion was visible at that final observation — nothing more.
 Quiet wait timeouts are not failures and should not trigger repetitive
-narration or an immediate `list_agents` call made solely to recheck
-completion.
+narration or an immediate `list_agents` or `read_agent_messages` call made
+solely to recheck completion. If required work remains unresolved after that
+quiet timeout, the parent calls `wait_agent` again directly.
 
 Public fork/profile selectors, `agent_type`, Codex service-tier routing, and
 Claude session adoption fail explicitly rather than being ignored or injected
@@ -222,9 +225,12 @@ active turn, or starts one exact-session or receipt-proven safe-fresh turn and
 assigns queued entries in order. Its successful public receipt contains only
 `agent_name` and `delivery`.
 
-`wait_agent` first checks the current root's durable completion mailbox. Its
-default observation upper bound is 10 minutes and its accepted maximum is one
-hour; completion returns immediately rather than waiting for that upper bound.
+`wait_agent` first checks the current root's durable completion mailbox.
+Model-facing MCP calls use a fixed 3,600,000 ms (one-hour) observation upper
+bound and accept no timeout argument. The checkout CLI and direct runtime
+operation instead keep their existing 10-minute default and accept an
+explicit 0..3,600,000 ms diagnostic timeout. Either surface returns
+immediately on completion rather than waiting for its upper bound.
 An ordinary wait neither returns nor claims safe public progress. With
 `wake_on_progress: true`, the call may return one advisory update containing
 only a generic activity/phase summary plus, at most, a sanitized tool name;
@@ -275,6 +281,15 @@ leaves effort, settings, tools, MCP configuration, hooks, memories, skills,
 plugins, and prompts to the native Claude configuration unless the caller
 explicitly supplies an override. Model-facing spawn guidance always passes the
 intent explicitly; follow-up omission inherits the Agent's latest activation.
+
+Every CC Agent has Claude Code native Auto Memory enabled through the fixed
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` environment value. This is Claude's
+force-enable spelling despite the inverse variable name; it is not a
+`CLAUDE.md` substitute. The Plugin does not provide `autoMemoryDirectory` or
+copy memory into prompts or receipts. Claude keeps one native memory directory
+per Git repository, shares it across that repository's worktrees and
+subdirectories, and creates content lazily when it finds something worth
+remembering.
 
 `safe` remains an explicit opt-in profile. It supplies the runtime-owned
 sandbox, permission, and read-only tool policy while retaining the Agent's
@@ -383,6 +398,7 @@ than pretending to honor it.
 
 The fixed file is parsed as literal `KEY=VALUE`, never evaluated as shell code.
 It authoritatively pins `CLAUDE_NATIVE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+Claude native Auto Memory enabled with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`,
 `CONDA_EXE`, the Claude binary, lower- and upper-case 9090 proxy variables, and
 localhost bypasses. Those values overlay conflicting inherited values; valid
 unrelated host state such as `PATH`, Codex root identity, and runtime-state

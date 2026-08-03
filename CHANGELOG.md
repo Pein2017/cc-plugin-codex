@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.13.0 - 2026-08-03
+
+- Force-enable Claude Code native Auto Memory for every new and resumed CC
+  Agent through the canonical fixed environment while preserving Claude's
+  repository-derived memory ownership and avoiding prompt, receipt, or
+  Plugin-owned memory emulation.
+- Extend the strict model-facing `wait_agent` completion-first observation to
+  one hour behind the unchanged public schema, preserving early completion,
+  optional one-update progress, cancellation, and the checkout CLI's 10-minute
+  default. Direct required-work joins now avoid timeout narration and
+  list/history polling.
+
 ## 0.12.1 - 2026-08-03
 
 - Close the final `wait_agent` observation gap: after its bounded wait and

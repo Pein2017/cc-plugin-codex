@@ -77,6 +77,7 @@ async function main() {
     args, prompt, sessionId,
     env: {
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY,
       CONDA_EXE: process.env.CONDA_EXE,
       HTTP_PROXY: process.env.HTTP_PROXY,
       HTTPS_PROXY: process.env.HTTPS_PROXY,
@@ -138,6 +139,7 @@ function fixture(ownerRootId = "owner-1") {
   const envFile = path.join(codexHome, ".env");
   fs.writeFileSync(envFile, [
     `CLAUDE_CONFIG_DIR=${path.join(dir, ".claude")}`,
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY=0",
     "CONDA_EXE=/opt/conda/bin/conda",
     "HTTP_PROXY=http://127.0.0.1:9090",
     "HTTPS_PROXY=http://127.0.0.1:9090",
@@ -163,6 +165,7 @@ function fixture(ownerRootId = "owner-1") {
       CODEX_THREAD_ID: ownerRootId,
       CC_RUNTIME_HOME: runtimeHome,
       CC_RUNTIME_ENV_FILE: envFile,
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       CC_FAKE_INVOCATION_FILE: invocation,
     },
   };
@@ -791,6 +794,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args.includes("--system-prompt"), false);
     assert.equal(invocation.args[invocation.args.indexOf("--name") + 1], "parity");
     assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(path.dirname(test.workspace), ".claude"));
+    assert.equal(invocation.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "0");
     assert.equal(invocation.env.CONDA_EXE, "/opt/conda/bin/conda");
     assert.equal(invocation.env.HTTP_PROXY, "http://127.0.0.1:9090");
     assert.equal(invocation.env.HTTPS_PROXY, "http://127.0.0.1:9090");

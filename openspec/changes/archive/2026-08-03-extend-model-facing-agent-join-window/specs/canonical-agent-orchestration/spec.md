@@ -1,0 +1,84 @@
+## MODIFIED Requirements
+
+### Requirement: wait_agent returns bounded root mailbox activity
+Model-facing `wait_agent` SHALL accept optional `wake_on_progress` plus the CC durable-delivery extension `acknowledge_tokens`, SHALL NOT expose `timeout_ms`, SHALL use a fixed 3600000 ms observation upper bound, SHALL first acknowledge only a valid oldest Agent-linked contiguous completion prefix from a prior response, and SHALL then return a Codex-V2-shaped message/timed-out receipt with at most one current-root activity update. Model-facing guidance SHALL make omission of `wake_on_progress` the canonical ordinary join and SHALL reserve `wake_on_progress: true` for one intentional intermediate observation whose result changes scheduling. It SHALL prioritize the oldest unread completion over advisory progress. A completion update SHALL include the complete stored Agent final message, its legacy-compatible truncation flag, and opaque delivery token. A progress update SHALL include only one safe bounded public-progress projection per active Agent job when the caller opted in and that job has not already exposed progress. It SHALL omit hook activity, raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call. The checkout CLI and public runtime operation SHALL retain explicit 0..3600000 ms diagnostic selection independently of the fixed model-facing bound.
+
+#### Scenario: Unread activity predates wait
+- **WHEN** the root inbox already contains an unread Agent completion
+- **THEN** wait returns one status/summary/complete-final-message update with an opaque delivery token and leaves it unread
+
+#### Scenario: Later wait confirms prior delivery
+- **WHEN** a later wait echoes valid tokens for the oldest unread contiguous completion prefix
+- **THEN** the cursor advances across that update and any preceding quarantined legacy sequences before returning or waiting
+
+#### Scenario: Root Agent publishes progress during ordinary join
+- **WHEN** a current-root Agent publishes safe progress before the fixed deadline, no completion is unread, and the caller omitted or disabled `wake_on_progress`
+- **THEN** wait does not return or acknowledge that progress and continues toward completion or timeout
+
+#### Scenario: Caller requests one progress observation
+- **WHEN** a current-root Agent job publishes its first eligible non-hook safe progress before the fixed deadline, no completion is unread, and the caller set `wake_on_progress: true`
+- **THEN** wait reports that job's single bounded progress update without returning Claude text or tool inputs
+
+#### Scenario: Caller repeats progress observation for the same job
+- **WHEN** a current-root Agent job already exposed one progress update and remains active
+- **THEN** later waits do not expose another progress update for that job and remain completion-first
+
+#### Scenario: Root Agent completes
+- **WHEN** any current-root Agent publishes completion activity before the fixed deadline
+- **THEN** wait reports completion activity with the complete stored Agent final message regardless of `wake_on_progress`
+
+#### Scenario: Root mailbox remains quiet
+- **WHEN** the fixed 3600000 ms observation window expires without unread current-root completion or eligible first progress activity
+- **THEN** wait returns an honest timeout without interrupting or changing any Agent
+
+#### Scenario: Ordinary caller omits timeout and progress wakeup
+- **WHEN** the parent performs an ordinary required join without a specific scheduling deadline
+- **THEN** it supplies no timeout field at all, omits `wake_on_progress`, observes for the fixed 3600000 ms upper bound, and may return earlier on completion or user steer
+
+#### Scenario: Caller intentionally overrides timeout
+- **WHEN** the parent attempts an immediate probe, shorter observation window, or longer bounded wait by supplying `timeout_ms`
+- **THEN** the model-facing boundary rejects that field before changing Agent or delivery state, leaving explicit bounds available only to the checkout CLI and runtime
+
+#### Scenario: Caller exceeds the maximum
+- **WHEN** a checkout CLI or direct runtime observation requests a timeout greater than 3600000 ms
+- **THEN** the runtime rejects the invalid bound before changing Agent or delivery state
+
+### Requirement: Parent orchestration uses explicit join policy
+The spawn and wait skill contracts SHALL require the parent to classify delegated work as required, parallel-then-join, or explicitly detached. The parent SHALL NOT give its final answer while a required or parallel-then-join result remains undisposed, SHALL continue meaningful non-overlapping work before waiting when possible, and SHALL use detached mode only when the user clearly requests background execution and the result is not needed in the current answer. The parent SHALL call `wait_agent` only when the critical path is blocked: an ordinary join SHALL use the fixed completion-first observation, while an explicit progress wakeup SHALL be used only for one intentional intermediate observation and SHALL NOT be reflexively repeated. If a required join reaches its quiet upper bound, the parent SHALL re-enter the same completion-first join directly without narrating unchanged state or invoking list/history solely to recheck completion.
+
+#### Scenario: Child result is required evidence
+- **WHEN** the parent's conclusion depends on a spawned Agent's result
+- **THEN** the parent performs one completion-first join and synthesizes that completion before giving its final answer
+
+#### Scenario: Independent parent work remains
+- **WHEN** a spawned Agent can run concurrently with meaningful non-overlapping parent work
+- **THEN** the parent performs that work before joining rather than immediately polling by reflex
+
+#### Scenario: Parent intentionally samples progress
+- **WHEN** intermediate Agent activity materially informs scheduling or intervention
+- **THEN** the parent may request one progress wakeup and then does useful work, steers, or returns to a completion-first join instead of requesting more progress from the same job
+
+#### Scenario: Required join reaches its quiet bound
+- **WHEN** required Agent work remains unresolved after an honest one-hour timeout and no scheduling decision changed
+- **THEN** the parent calls the ordinary completion-first wait again without timeout narration, `list_agents`, or `read_agent_messages`
+
+#### Scenario: User explicitly requests background execution
+- **WHEN** the user asks to detach work whose result is not needed for the current answer
+- **THEN** the parent may end after reporting the durable Agent identity and the lack of automatic host reactivation
+
+### Requirement: Timeout guidance uses the final observation guarantee
+The model-facing wait guidance SHALL state that a timeout means no unread
+current-root completion was visible at the call's final observation. It SHALL
+instruct the lead not to narrate unchanged state or call `list_agents` or
+`read_agent_messages` solely to recheck completion after that timeout. Required
+work SHALL re-enter the ordinary completion-first join directly, while timeout
+continues not to prove failure, cancellation, health, progress, or future
+inactivity.
+
+#### Scenario: Lead receives a genuine timeout
+- **WHEN** `wait_agent` returns timeout after its final completion observation and required work remains unresolved
+- **THEN** the lead directly waits again without narrating unchanged state or probing list/history merely to ask whether completion was missed
+
+#### Scenario: Lead needs intentional progress evidence
+- **WHEN** scheduling depends on one intermediate activity observation rather than completion
+- **THEN** the lead uses the existing bounded `wake_on_progress` behavior instead of treating timeout status as health evidence

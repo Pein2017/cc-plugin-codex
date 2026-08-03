@@ -263,7 +263,7 @@ describe("Agent progress projection", () => {
     });
 
     const startedAt = Date.now();
-    const waited = await runtime.waitAgent({ timeout_ms: 600_000, wake_on_progress: true });
+    const waited = await runtime.waitAgent({ timeout_ms: 3_600_000, wake_on_progress: true });
     assert.equal(waited.update.kind, "completion");
     assert.equal(waited.update.completion_message, "authoritative completion");
     assert.ok(Date.now() - startedAt < 1_000, "completion should return before the fixed upper bound");
