@@ -5,7 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { PACKAGE_VERSION, SOURCE_ROOT, pluginBaseVersion } from "./version.mjs";
+import {
+  CANONICAL_RUNTIME_CHECKOUT,
+  PACKAGE_VERSION,
+  SOURCE_ROOT,
+  pluginBaseVersion,
+} from "./version.mjs";
 
 export const PLUGIN_NAME = "cc-for-pein";
 export const MARKETPLACE_NAME = "pein-local";
@@ -155,15 +160,15 @@ export function inspectCompatibilityShells(options = {}) {
     try {
       const descriptor = JSON.parse(fs.readFileSync(mcpFile, "utf8"))?.mcpServers?.cc_for_pein;
       const absoluteRoute = (
-        descriptor?.cwd === SOURCE_ROOT &&
-        descriptor?.args?.[1] === path.join(SOURCE_ROOT, "plugins", PLUGIN_NAME, "bootstrap", "cc-mcp.mjs")
+        descriptor?.cwd === CANONICAL_RUNTIME_CHECKOUT &&
+        descriptor?.args?.[1] === path.join(CANONICAL_RUNTIME_CHECKOUT, "plugins", PLUGIN_NAME, "bootstrap", "cc-mcp.mjs")
       );
       const legacyBootstrap = path.join(root, "bootstrap", "cc-mcp.mjs");
       const legacyRoute = (
         descriptor?.cwd === "." &&
         descriptor?.args?.[1] === "bootstrap/cc-mcp.mjs" &&
         fs.existsSync(legacyBootstrap) &&
-        fs.readFileSync(legacyBootstrap, "utf8").includes(`FIXED_RUNTIME_CHECKOUT = "${SOURCE_ROOT}"`)
+        fs.readFileSync(legacyBootstrap, "utf8").includes(`FIXED_RUNTIME_CHECKOUT = "${CANONICAL_RUNTIME_CHECKOUT}"`)
       );
       canonicalRoute = absoluteRoute || legacyRoute;
     } catch {}

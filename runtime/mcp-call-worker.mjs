@@ -1,6 +1,8 @@
 /** SPDX-License-Identifier: Apache-2.0 */
 import { parentPort, workerData } from "node:worker_threads";
 
+import { withRuntimeLoadGate } from "./promotion-gate.mjs";
+
 if (!parentPort) throw new Error("CC MCP call worker requires a parent port.");
 
 const abortController = new AbortController();
@@ -19,7 +21,11 @@ function errorPayload(error) {
 }
 
 try {
-  const runtimeModule = await import(workerData.runtimeModuleUrl);
+  const runtimeModule = await withRuntimeLoadGate({
+    gateDirectory: workerData.promotionGateDirectory,
+    markerPath: workerData.loaderMarkerPath,
+    load: () => import(workerData.runtimeModuleUrl),
+  });
   if (runtimeModule.CC_MCP_API_GENERATION !== workerData.expectedGeneration) {
     const error = new Error(
       `CC_MCP_RESTART_REQUIRED: CC MCP API generation changed from ${workerData.expectedGeneration} to ` +

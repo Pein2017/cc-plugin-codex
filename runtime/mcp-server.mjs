@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -16,6 +17,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { CC_MCP_API_GENERATION } from "./mcp-api.mjs";
+import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
@@ -35,6 +37,10 @@ const SOURCE_ROOT = fs.realpathSync.native(
 const FIXED_ENV_FILE = path.join(SOURCE_ROOT, "config", "runtime.env");
 const RUNTIME_MODULE_URL = pathToFileURL(path.join(SOURCE_ROOT, "runtime", "index.mjs"));
 const MCP_CALL_WORKER_URL = new URL("./mcp-call-worker.mjs", import.meta.url);
+const PROMOTION_GATE_DIRECTORY = path.join(
+  resolveGitCommonDirectory(SOURCE_ROOT),
+  "cc-for-pein-promotion-gate",
+);
 const MODEL_IDS = [
   "claude-haiku-4-5",
   "claude-sonnet-5",
@@ -240,6 +246,11 @@ export function invokeIsolatedRuntimeOperation(options) {
     workerUrl = MCP_CALL_WORKER_URL,
   } = options;
   const { abortSignal: _abortSignal, ...serializableContext } = context;
+  const loaderMarkerPath = path.join(
+    PROMOTION_GATE_DIRECTORY,
+    "loaders",
+    `${process.pid}-${randomUUID()}.json`,
+  );
   const worker = new Worker(workerUrl, {
     workerData: {
       operation,
@@ -247,6 +258,8 @@ export function invokeIsolatedRuntimeOperation(options) {
       context: serializableContext,
       expectedGeneration,
       runtimeModuleUrl: runtimeModuleUrl instanceof URL ? runtimeModuleUrl.href : String(runtimeModuleUrl),
+      promotionGateDirectory: PROMOTION_GATE_DIRECTORY,
+      loaderMarkerPath,
     },
   });
   return new Promise((resolve, reject) => {
@@ -257,6 +270,7 @@ export function invokeIsolatedRuntimeOperation(options) {
       settled = true;
       if (abortTimer) clearTimeout(abortTimer);
       signal?.removeEventListener("abort", onAbort);
+      removeRuntimeLoaderMarker(loaderMarkerPath);
       void worker.terminate();
       callback(value);
     };

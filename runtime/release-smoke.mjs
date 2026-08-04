@@ -10,7 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
 import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
-import { SOURCE_ROOT } from "./version.mjs";
+import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "./version.mjs";
 
 const REAL_SMOKE_MODEL = "claude-haiku-4-5";
 const REAL_SMOKE_EFFORT = "low";
@@ -116,8 +116,8 @@ export async function probeInstalledMcp(options = {}) {
   };
   const descriptor = JSON.parse(fs.readFileSync(path.join(snapshotRoot, ".mcp.json"), "utf8"))?.mcpServers?.cc_for_pein;
   if (
-    descriptor?.cwd !== SOURCE_ROOT ||
-    descriptor?.args?.[1] !== path.join(SOURCE_ROOT, "plugins", "cc-for-pein", "bootstrap", "cc-mcp.mjs")
+    descriptor?.cwd !== CANONICAL_RUNTIME_CHECKOUT ||
+    descriptor?.args?.[1] !== path.join(CANONICAL_RUNTIME_CHECKOUT, "plugins", "cc-for-pein", "bootstrap", "cc-mcp.mjs")
   ) {
     throw new Error("Installed MCP descriptor does not launch the canonical checkout bootstrap directly.");
   }

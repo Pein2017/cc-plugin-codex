@@ -46,6 +46,8 @@ const driver = createClaudeCodeDriver();
 const scratchRoots = [];
 const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-harness-driver-shared-"));
 const sharedRuntimeHome = path.join(sharedRuntimeRoot, "runtime-home");
+const testEnvFile = path.join(sharedRuntimeRoot, "runtime.env");
+fs.writeFileSync(testEnvFile, "");
 
 after(() => {
   while (scratchRoots.length) fs.rmSync(scratchRoots.pop(), { recursive: true, force: true });
@@ -327,9 +329,11 @@ describe("Harness Driver contract", () => {
     fs.mkdirSync(claudeConfigDir);
     const runtime = createInternalClaudeRuntime({
       cwd: workspace,
+      envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-generic-turn",
         CC_RUNTIME_HOME: sharedRuntimeHome,
+        CC_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });
@@ -461,6 +465,7 @@ describe("Harness Driver contract", () => {
     fs.mkdirSync(claudeConfigDir);
     const runtime = createInternalClaudeRuntime({
       cwd: workspace,
+      envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-job-driver",
         CC_RUNTIME_HOME: sharedRuntimeHome,
@@ -536,9 +541,11 @@ describe("Harness Driver contract", () => {
     fs.mkdirSync(claudeConfigDir);
     const runtime = createAgentRuntime({
       cwd: workspace,
+      envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-agent-driver",
         CC_RUNTIME_HOME: sharedRuntimeHome,
+        CC_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });
@@ -587,9 +594,11 @@ describe("Harness Driver contract", () => {
     fs.mkdirSync(claudeConfigDir);
     const runtime = createInternalClaudeRuntime({
       cwd: workspace,
+      envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-v1-worker-fence",
         CC_RUNTIME_HOME: sharedRuntimeHome,
+        CC_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });

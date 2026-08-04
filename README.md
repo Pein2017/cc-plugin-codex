@@ -440,6 +440,28 @@ reconciliation restores exact-session continuation automatically.
 
 ## Local development and installation
 
+Development uses two fixed tracks:
+
+| Role | Path | Branch |
+| --- | --- | --- |
+| Live runtime | `/data/CoordExp/cc-plugin-codex` | `main` |
+| Implementation and verification | `/data/CoordExp/cc-plugin-codex-dev` | `developer` |
+
+Make and verify changes only in the development checkout. Once its changes are
+committed and both worktrees are clean, run `npm run promote:local` from
+`/data/CoordExp/cc-plugin-codex-dev`. Promotion runs the full repository check
+and fast-forwards `main` to the exact tested `developer` commit. It never
+commits, pushes, installs the Plugin, or restarts Codex, and it fails rather
+than merging divergent histories.
+
+The promotion receipt classifies the exact diff. `hot_compatible` means current
+Codex tasks observe the implementation on their next MCP call. A
+`restart_required` receipt identifies static discovery/server/configuration
+paths and directs the operator to `refresh:local` or `release:local` followed by
+a new Codex task. During the brief Git update, new Worker module imports wait at
+the promotion gate; already-loaded MCP operations and detached Claude turns
+continue normally.
+
 Run from this checkout:
 
 ```bash

@@ -29,6 +29,7 @@
     "install:local": "node scripts/local-plugin-install.mjs --initial",
     "refresh:local": "node scripts/local-plugin-install.mjs --refresh-only",
     "release:local": "node scripts/update-plugin-cachebuster.mjs && node scripts/local-plugin-install.mjs --refresh-only",
+    "promote:local": "node scripts/promote-local.mjs",
     "smoke:release": "node scripts/release-smoke.mjs",
     "lint": "eslint runtime scripts tests/runtime",
     "typecheck": "tsc -p tsconfig.json",

@@ -177,6 +177,7 @@ describe("operator doctor", () => {
 
     const report = await runDoctor({
       cwd: SOURCE_ROOT,
+      expectedCheckout: SOURCE_ROOT,
       env: { ...process.env, CODEX_HOME: codexHome },
       spawnSyncImpl: fakeSpawn,
       probeMcp: async () => ({

@@ -20,9 +20,9 @@ import {
   inspectCompatibilityShells,
   inspectInstalledPluginParity,
 } from "./plugin-installation.mjs";
-import { PACKAGE_VERSION, SOURCE_ROOT } from "./version.mjs";
+import { CANONICAL_RUNTIME_CHECKOUT, PACKAGE_VERSION, SOURCE_ROOT } from "./version.mjs";
 
-export const CANONICAL_CHECKOUT = "/data/CoordExp/cc-plugin-codex";
+export const CANONICAL_CHECKOUT = CANONICAL_RUNTIME_CHECKOUT;
 export const EXPECTED_CLAUDE_CONFIG_DIR = "/data/CoordExp/.claude";
 export const EXPECTED_PROXY = "http://127.0.0.1:9090";
 export const CLAUDE_HISTORY_OBSERVATION_DAYS = 30;
@@ -367,6 +367,7 @@ function fixedEnvironment(cwd, options = {}) {
 
 export async function runDoctor(options = {}) {
   const cwd = path.resolve(options.cwd ?? SOURCE_ROOT);
+  const expectedCheckout = path.resolve(options.expectedCheckout ?? CANONICAL_CHECKOUT);
   const checks = [];
   let environment = null;
   let installation = null;
@@ -374,13 +375,13 @@ export async function runDoctor(options = {}) {
 
   try {
     const canonical = fs.realpathSync.native(SOURCE_ROOT);
-    const healthy = canonical === CANONICAL_CHECKOUT && cwd === CANONICAL_CHECKOUT;
+    const healthy = canonical === expectedCheckout && cwd === expectedCheckout;
     checks.push(makeCheck(
       "checkout",
       healthy ? "pass" : "fail",
-      healthy ? `Canonical checkout ${canonical} is active.` : `Expected ${CANONICAL_CHECKOUT}, found ${canonical} with cwd ${cwd}.`,
+      healthy ? `Canonical checkout ${canonical} is active.` : `Expected ${expectedCheckout}, found ${canonical} with cwd ${cwd}.`,
       { packageVersion: PACKAGE_VERSION },
-      healthy ? null : `Run doctor from ${CANONICAL_CHECKOUT}.`,
+      healthy ? null : `Run doctor from ${expectedCheckout}.`,
     ));
   } catch (error) {
     checks.push(failedCheck("checkout", error, `Restore the canonical checkout at ${CANONICAL_CHECKOUT}.`));

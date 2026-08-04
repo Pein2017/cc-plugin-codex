@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+export const CANONICAL_RUNTIME_CHECKOUT = "/data/CoordExp/cc-plugin-codex";
 export const PACKAGE_FILE = path.join(SOURCE_ROOT, "package.json");
 
 export function readPackageMetadata(options = {}) {
