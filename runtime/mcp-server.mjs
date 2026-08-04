@@ -92,13 +92,31 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: use only for a blocked critical-path join. The fixed one-hour completion-first wait returns early on completion or eligible progress; model callers do not pass a timeout. Opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly: do not narrate the timeout and do not call list_agents or read_agent_messages as a completion or progress recheck. If a completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait.",
+      "Experimental: use only for a blocked critical-path join. The fixed one-hour completion-first wait returns early on completion or eligible progress; model callers do not pass a timeout. When the dependency set is known, pass one to eight exact current-root Agent targets for a fixed one-turn join or all-settled barrier; targets cannot be combined with progress wakeup. Opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly: do not narrate the timeout and do not call list_agents or read_agent_messages as a completion or progress recheck. If a completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait.",
     inputSchema: z.object({
+      targets: z.array(exactTarget).min(1).max(8).optional().describe(
+        "Fixed exact current-root Agent turns to join; one target joins one turn and multiple targets form an all-settled barrier."
+      ),
       wake_on_progress: z.boolean().optional().describe(
         "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit."
       ),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
-    }).strict(),
+    }).strict().superRefine((value, context) => {
+      if (value.targets && value.wake_on_progress === true) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["targets"],
+          message: "targets cannot be combined with wake_on_progress",
+        });
+      }
+      if (value.targets && new Set(value.targets).size !== value.targets.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["targets"],
+          message: "targets must contain unique Agent identifiers",
+        });
+      }
+    }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   interrupt_agent: {
@@ -306,7 +324,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Model-facing wait_agent has a fixed one-hour completion-first window and accepts no timeout argument; never repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly, without narrating the timeout and without calling list_agents or read_agent_messages as a completion or progress recheck; list_agents reports logical state only. If completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Model-facing wait_agent has a fixed one-hour completion-first window and accepts no timeout argument; when the dependency set is known, prefer one fixed targeted join or all-settled barrier over repeated root-wide waits. Never combine targets with progress wakeup or repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly, without narrating the timeout and without calling list_agents or read_agent_messages as a completion or progress recheck; list_agents reports logical state only. If completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

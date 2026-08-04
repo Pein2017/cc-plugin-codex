@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.14.0 - 2026-08-04
+
+- **Breaking:** extend typed `wait_agent` with one-to-eight exact current-root
+  `targets` for fixed-turn joins and ordered all-settled barriers. Preserve the
+  untargeted receipt, reject progress-target combinations, return no partial
+  completion payload at a barrier timeout, and increment the MCP API generation
+  so existing Codex tasks fail closed until restarted.
+- Migrate the completion inbox to per-Agent-event acknowledgement with a derived
+  contiguous compaction watermark. Targeted barriers can acknowledge selected
+  completions independently of unrelated older events while retaining frozen
+  at-least-once redelivery across races and runtime restarts.
+- Replace the 500 ms durable wait scan with directory event hints plus
+  observe-register-observe race closure. Durable inbox and job files remain the
+  sole facts, with bounded 10-second recovery and 5-second watcher-failure
+  fallback scans, immediate abort, and isolated Worker cleanup.
+- Retain bounded, sanitized unknown Claude stream event type/subtype counts for
+  protocol-drift diagnosis without persisting arbitrary payloads or changing
+  completion classification. Native background-task completion remains gated
+  on a pinned real Headless receipt rather than inferred from assistant prose.
+- Add fixed `developer` and `main` worktrees with a checked fast-forward
+  promotion gate, restart/hot-compatibility classification, and checkout-owned
+  local release guidance.
+
 ## 0.13.0 - 2026-08-03
 
 - Force-enable Claude Code native Auto Memory for every new and resumed CC

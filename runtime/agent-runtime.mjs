@@ -11,6 +11,10 @@ import path from "node:path";
 import { createAgentStore } from "./agent-store.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
+  acknowledgeAgentCompletionEvents,
+  readTargetedAgentCompletionSummaries,
+} from "./completion-inbox.mjs";
+import {
   HARNESS_CAPABILITY_NAMES,
   assertHarnessCapability,
   validateHarnessCapabilities,
@@ -36,6 +40,7 @@ const DEFAULT_AGENT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_AGENT_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_NAME_PATTERN = /^[a-z0-9_]+$/;
 const CLAUDE_SESSION_MODEL_SCAN_BYTES = 4 * 1024 * 1024;
+const MAX_TARGETED_WAIT_TARGETS = 8;
 
 function assertObject(value, label) {
   if (value == null) return {};
@@ -360,6 +365,13 @@ function publicProgressUpdate(update, agents) {
       updated_at: update.progress.updatedAt,
     },
   };
+}
+
+function publicTargetTerminalStatus(jobStatus, agentStatus) {
+  if (jobStatus === "completed" || agentStatus === "completed") return "completed";
+  if (jobStatus === "interrupted" || agentStatus === "interrupted") return "interrupted";
+  if (TERMINAL_JOB_STATUSES.has(jobStatus) || agentStatus === "errored") return "failed";
+  return canonicalAgentStatus({ status: agentStatus });
 }
 
 function sleep(ms) {
@@ -1242,6 +1254,13 @@ class AgentRuntime {
       error.name = "AbortError";
       throw error;
     }
+    const unsupported = Object.keys(input).find((key) => !new Set([
+      "timeout_ms",
+      "wake_on_progress",
+      "acknowledge_tokens",
+      "targets",
+    ]).has(key));
+    if (unsupported) throw new Error(`wait_agent does not support ${unsupported}.`);
     const timeout = input.timeout_ms == null
       ? DEFAULT_AGENT_WAIT_TIMEOUT_MS
       : Number(input.timeout_ms);
@@ -1251,13 +1270,155 @@ class AgentRuntime {
     if (input.wake_on_progress != null && typeof input.wake_on_progress !== "boolean") {
       throw new Error("wait_agent wake_on_progress must be a boolean when provided.");
     }
+    const hasTargets = input.targets != null;
+    if (hasTargets && !Array.isArray(input.targets)) {
+      throw new Error("wait_agent targets must be a non-empty array.");
+    }
+    if (hasTargets && (input.targets.length < 1 || input.targets.length > MAX_TARGETED_WAIT_TARGETS)) {
+      throw new Error(`wait_agent targets must contain between 1 and ${MAX_TARGETED_WAIT_TARGETS} Agents.`);
+    }
+    if (hasTargets && input.wake_on_progress === true) {
+      throw new Error("wait_agent targets cannot be combined with wake_on_progress.");
+    }
     const wakeOnProgress = input.wake_on_progress === true;
     const acknowledgeTokens = Array.isArray(input.acknowledge_tokens)
       ? input.acknowledge_tokens
       : [];
+    if (input.acknowledge_tokens != null && !Array.isArray(input.acknowledge_tokens)) {
+      throw new Error("wait_agent acknowledge_tokens must be an array when provided.");
+    }
     // Correct any recoverable terminal fact before the completion payload is
     // first exposed and frozen under its delivery token.
     this.reconcile();
+    if (hasTargets) {
+      const requestedTargets = input.targets.map((target) => {
+        if (typeof target !== "string" || !target.trim()) {
+          throw new Error("wait_agent targets must contain non-empty Agent identifiers.");
+        }
+        return target.trim();
+      });
+      const snapshots = [];
+      const seenAgents = new Set();
+      for (const target of requestedTargets) {
+        const agent = this.store.resolveTarget(target);
+        if (seenAgents.has(agent.agentId)) {
+          throw new Error("wait_agent targets must contain unique Agents.");
+        }
+        seenAgents.add(agent.agentId);
+        const jobId = agent.activeJobId ?? agent.latestJobId ?? null;
+        const job = jobId ? readJobFile(this.cwd, jobId) : null;
+        snapshots.push({
+          agent,
+          agentId: agent.agentId,
+          agentName: agent.path,
+          jobId: job?.id ?? null,
+          job,
+        });
+      }
+      const notJoinable = snapshots.filter((snapshot) => !snapshot.jobId);
+      const unresolvedNotJoinable = snapshots
+        .filter((snapshot) => !snapshot.jobId || !TERMINAL_JOB_STATUSES.has(snapshot.job?.status))
+        .map((snapshot) => snapshot.agentName);
+      if (notJoinable.length > 0) {
+        if (acknowledgeTokens.length > 0) {
+          acknowledgeAgentCompletionEvents(this.cwd, this.ownerRootId, acknowledgeTokens);
+        }
+        return {
+          message: "CC Agent target is not joinable.",
+          timedOut: false,
+          targets: snapshots.map((snapshot) => ({
+            agent_name: snapshot.agentName,
+            agent_status: canonicalAgentStatus(snapshot.agent),
+            state: snapshot.jobId ? "pending" : "not_joinable",
+            ...(snapshot.job?.status && TERMINAL_JOB_STATUSES.has(snapshot.job.status)
+              ? { agent_status: publicTargetTerminalStatus(snapshot.job.status, snapshot.agent.status) }
+              : {}),
+          })),
+          unresolved_targets: unresolvedNotJoinable,
+        };
+      }
+      const targetJobIds = snapshots.map((snapshot) => snapshot.jobId);
+      let waited = await this.jobs.wait(null, {
+        timeoutMs: timeout,
+        targetJobIds,
+        acknowledgeTokens,
+        wakeOnProgress: false,
+        signal: this.abortSignal,
+      });
+      // Reconcile once more before the final fixed-snapshot observation. The
+      // durable job publication may race the wakeup notification itself.
+      this.reconcile();
+      if (!waited.targetReady) {
+        const finalObservation = await this.jobs.wait(null, {
+          timeoutMs: 0,
+          targetJobIds,
+          acknowledgeTokens: [],
+          wakeOnProgress: false,
+          signal: this.abortSignal,
+        });
+        if (finalObservation.targetReady) waited = finalObservation;
+      }
+      this.reconcile();
+      const inspected = waited.targetReady
+        ? readTargetedAgentCompletionSummaries(this.cwd, this.ownerRootId, targetJobIds, { freeze: false })
+        : { events: [], consumed: [] };
+      const observedJobs = new Set([
+        ...inspected.events.map((event) => event.jobId),
+        ...inspected.consumed.map((event) => event.jobId),
+      ]);
+      const missingEvidence = waited.targetReady
+        ? snapshots.filter((snapshot) => !observedJobs.has(snapshot.jobId))
+        : [];
+      const selected = waited.targetReady && missingEvidence.length === 0
+        ? readTargetedAgentCompletionSummaries(this.cwd, this.ownerRootId, targetJobIds)
+        : inspected;
+      const selectedByJob = new Map(selected.events.map((event) => [event.jobId, event]));
+      const consumedByJob = new Map(selected.consumed.map((event) => [event.jobId, event]));
+      const barrierSettled = waited.targetReady && missingEvidence.length === 0;
+      const unresolved = [];
+      const targets = snapshots.map((snapshot) => {
+        const currentJob = readJobFile(this.cwd, snapshot.jobId) ?? snapshot.job;
+        const terminal = Boolean(currentJob && TERMINAL_JOB_STATUSES.has(currentJob.status));
+        const event = selectedByJob.get(snapshot.jobId);
+        const consumed = consumedByJob.get(snapshot.jobId);
+        const state = missingEvidence.some((missing) => missing.jobId === snapshot.jobId)
+          ? "not_joinable"
+          : !barrierSettled
+          ? (terminal ? "settled" : "pending")
+          : event
+            ? "settled"
+            : consumed
+              ? "already_consumed"
+              : "settled";
+        if ((!barrierSettled && !terminal) || missingEvidence.some((missing) => missing.jobId === snapshot.jobId)) {
+          unresolved.push(snapshot.agentName);
+        }
+        const entry = {
+          agent_name: snapshot.agentName,
+          agent_status: publicTargetTerminalStatus(currentJob?.status, snapshot.agent.status),
+          state,
+        };
+        const frozen = event ?? consumed;
+        if (frozen?.blocking != null) entry.blocking = frozen.blocking;
+        if (event && barrierSettled) {
+          entry.summary = event.summary;
+          entry.completion_message = event.completionMessage;
+          entry.completion_message_truncated = event.completionMessageTruncated;
+          entry.delivery_token = event.deliveryToken;
+        }
+        return entry;
+      });
+      return {
+        message: missingEvidence.length > 0
+          ? "CC Agent target is not joinable."
+          : barrierSettled
+          ? "CC Agent barrier is complete."
+          : "Timed out waiting for CC Agent activity.",
+        timedOut: !barrierSettled && missingEvidence.length === 0,
+        targets,
+        unresolved_targets: unresolved,
+      };
+    }
     // Refresh the light Agent registry on every poll so a root-wide wait can
     // observe progress from a turn started after the wait began.
     const progressJobIds = () => this.store.listAgents()

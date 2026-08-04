@@ -40,7 +40,7 @@ tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, delegation_mode? })
 send_message({ target, message })
 followup_task({ target, message, write?, reasoning_effort? })
-wait_agent({ wake_on_progress?, acknowledge_tokens? })
+wait_agent({ targets?, wake_on_progress?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
@@ -78,11 +78,16 @@ return only `agent_name` plus their delivery disposition. `interrupt-agent`
 returns only `agent_name` and operation status. `list-agents` reports only
 canonical name/status/model/delegation-mode records. Internal execution evidence
 remains available through operator diagnostics.
-`wait-agent` reports at most one update: by default a completion with the
-complete stored Claude final message for parent synthesis, or one coalesced safe
+`wait-agent` reports at most one update for an untargeted call: by default a
+completion with the complete stored Claude final message for parent synthesis,
+or one coalesced safe
 progress update when explicitly requested. The model-facing wait has a fixed
 3,600,000 ms (one-hour) completion-first window and accepts no timeout
-argument.
+argument. When the dependency set is known, `targets` accepts one to eight
+unique exact current-root Agent identifiers. One target joins its fixed turn;
+multiple targets return one all-settled barrier in caller order. Targeted waits
+cannot combine with `wake_on_progress`, and a barrier timeout is status-only
+with no partial completion delivery.
 `read-agent-messages` retrieves recent outer-assistant text from the exact
 Agent's bound native Claude transcript without activation.
 
@@ -245,7 +250,8 @@ legacy-compatible truncation flag. New completions are not truncated by this
 Plugin; an older event that already lost bytes retains its honest provenance.
 It remains unread until a later call echoes its token, so a lost host response
 safely redelivers the same message. If the parent performs another `wait_agent`
-call, that next call must pass the completion token exactly once; if it ends
+call, that next call may pass prior delivered completion tokens independently;
+each consumed token is passed exactly once. If it ends
 after consuming the handoff, no acknowledgement-only call is required. The
 parent should synthesize it directly;
 it must not start a follow-up, read history, or ask Claude to write a

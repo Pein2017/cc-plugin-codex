@@ -103,6 +103,8 @@ export function resolveClaudeExecutable(options = {}) {
 }
 
 export const MAX_STREAM_PARSER_UNKNOWN_EVENTS = 50;
+export const MAX_STREAM_PARSER_UNKNOWN_EVENT_LABEL_BYTES = 64;
+export const MAX_STREAM_PARSER_UNKNOWN_EVENT_SUMMARY_BYTES = 4 * 1024;
 export const MAX_STREAM_PARSER_PARSE_ERRORS = 50;
 export const MAX_STREAM_PARSER_TOOL_USES = 256;
 export const MAX_STREAM_PARSER_TOUCHED_FILES = 256;
@@ -157,6 +159,119 @@ function sliceTextTailByBytes(text, maxBytes) {
 function appendTextTail(existing, chunk, maxBytes) {
   const next = `${existing ?? ""}${chunk ?? ""}`;
   return sliceTextTailByBytes(next, maxBytes);
+}
+
+const SAFE_PROTOCOL_LABEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
+
+/**
+ * Keep protocol drift labels useful for diagnosis without allowing an event
+ * field to become a payload-bearing receipt. Only closed token characters are
+ * retained; everything else is reduced to a fixed marker.
+ */
+function safeProtocolLabel(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  const label = value.trim();
+  if (!label) return fallback;
+  if (
+    Buffer.byteLength(label, "utf8") > MAX_STREAM_PARSER_UNKNOWN_EVENT_LABEL_BYTES ||
+    !SAFE_PROTOCOL_LABEL.test(label)
+  ) {
+    return "unsafe";
+  }
+  return label;
+}
+
+function unknownEventKey(entry) {
+  return `${entry.type}\0${entry.subtype ?? ""}`;
+}
+
+function unknownEventSummaryBytes(entries) {
+  return Buffer.byteLength(JSON.stringify(entries), "utf8");
+}
+
+function recordUnknownEvent(state, type, subtype) {
+  const entry = {
+    type: safeProtocolLabel(type, "missing"),
+    subtype: safeProtocolLabel(subtype, null),
+  };
+  const key = unknownEventKey(entry);
+  state.unknownEventCount = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    (state.unknownEventCount ?? 0) + 1,
+  );
+  const existing = state.unknownEvents.find((candidate) => unknownEventKey(candidate) === key);
+  if (existing) {
+    existing.count = Math.min(Number.MAX_SAFE_INTEGER, existing.count + 1);
+    return;
+  }
+
+  if (state.unknownEvents.length >= MAX_STREAM_PARSER_UNKNOWN_EVENTS) {
+    state.unknownEventOverflowCount = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      (state.unknownEventOverflowCount ?? 0) + 1,
+    );
+    return;
+  }
+  state.unknownEvents.push({ ...entry, count: 1 });
+  while (
+    state.unknownEvents.length > 1 &&
+    unknownEventSummaryBytes(state.unknownEvents) > MAX_STREAM_PARSER_UNKNOWN_EVENT_SUMMARY_BYTES
+  ) {
+    state.unknownEvents.shift();
+    state.unknownEventOverflowCount = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      (state.unknownEventOverflowCount ?? 0) + 1,
+    );
+  }
+}
+
+/** Return only the bounded protocol-drift fields admitted to a Driver receipt. */
+export function sanitizeUnknownEventSummary(
+  events,
+  totalCount = 0,
+  overflowCount = 0,
+) {
+  const sanitized = [];
+  const byKey = new Map();
+  for (const candidate of Array.isArray(events) ? events : []) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const entry = {
+      type: safeProtocolLabel(candidate.type, "missing"),
+      subtype: safeProtocolLabel(candidate.subtype, null),
+    };
+    const key = unknownEventKey(entry);
+    const count = Number.isSafeInteger(candidate.count) && candidate.count > 0
+      ? candidate.count
+      : 1;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.count = Math.min(Number.MAX_SAFE_INTEGER, existing.count + count);
+      continue;
+    }
+    if (sanitized.length >= MAX_STREAM_PARSER_UNKNOWN_EVENTS) continue;
+    const normalized = { ...entry, count };
+    sanitized.push(normalized);
+    byKey.set(key, normalized);
+    while (
+      sanitized.length > 1 &&
+      unknownEventSummaryBytes(sanitized) > MAX_STREAM_PARSER_UNKNOWN_EVENT_SUMMARY_BYTES
+    ) {
+      const removed = sanitized.shift();
+      byKey.delete(unknownEventKey(removed));
+    }
+  }
+  const observedCount = sanitized.reduce((sum, entry) => sum + entry.count, 0);
+  return {
+    unknownEvents: sanitized,
+    unknownEventCount: Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Math.max(observedCount, Number.isSafeInteger(totalCount) && totalCount > 0 ? totalCount : 0),
+    ),
+    unknownEventOverflowCount: Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Number.isSafeInteger(overflowCount) && overflowCount > 0 ? overflowCount : 0,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +356,8 @@ export class StreamParser {
       structuredOutput: null,
       receivedTerminalEvent: false,
       unknownEvents: [],
+      unknownEventCount: 0,
+      unknownEventOverflowCount: 0,
       parseErrors: [],
       unresolvedParseErrors: 0,
       toolUses: [],
@@ -319,10 +436,7 @@ export class StreamParser {
           };
         }
         default:
-          pushBoundedTail(this.state.unknownEvents, {
-            type: event.type,
-            ts: Date.now(),
-          }, MAX_STREAM_PARSER_UNKNOWN_EVENTS);
+          recordUnknownEvent(this.state, event.type, event.subtype);
           return null;
       }
     } catch (err) {
@@ -479,6 +593,7 @@ export class StreamParser {
         threadId: this.state.sessionId,
       };
     }
+    recordUnknownEvent(this.state, event.type, event.subtype);
     return null;
   }
 }
@@ -1202,10 +1317,16 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
         toolUses: parser.state.toolUses,
         touchedFiles: parser.state.touchedFiles,
         terminalEvents: parser.state.terminalEvents,
+        unknownEvents: parser.state.unknownEvents,
+        unknownEventCount: parser.state.unknownEventCount,
+        unknownEventOverflowCount: parser.state.unknownEventOverflowCount,
         runtimeReceipt: {
           ...buildHostRuntimeReceipt(options, childEnv, claudeBin),
           ...(parser.state.runtimeReceipt ?? {}),
           hookReceipts: parser.state.hookReceipts,
+          unknownEvents: parser.state.unknownEvents,
+          unknownEventCount: parser.state.unknownEventCount,
+          unknownEventOverflowCount: parser.state.unknownEventOverflowCount,
         },
         lastByteAt: parser.state.lastByteAt,
         stderr,

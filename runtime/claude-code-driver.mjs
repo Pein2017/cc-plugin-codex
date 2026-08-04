@@ -19,6 +19,7 @@ import {
   getClaudeAuthStatus,
   getClaudeAvailability,
   interruptClaudeProcess,
+  sanitizeUnknownEventSummary,
 } from "./claude-headless-adapter.mjs";
 import { readBoundClaudeAgentMessages } from "./claude-session-history.mjs";
 import {
@@ -92,6 +93,14 @@ function nativeSessionRef(env, nativeSessionId) {
   }
 }
 
+function unknownEventSummary(result) {
+  return sanitizeUnknownEventSummary(
+    result.unknownEvents ?? result.runtimeReceipt?.unknownEvents,
+    result.unknownEventCount ?? result.runtimeReceipt?.unknownEventCount,
+    result.unknownEventOverflowCount ?? result.runtimeReceipt?.unknownEventOverflowCount,
+  );
+}
+
 /**
  * Normalize one native Claude turn into the shared terminal result. The
  * supervisor consumes only the normalized fields; `nativeReceipt` remains
@@ -100,6 +109,7 @@ function nativeSessionRef(env, nativeSessionId) {
 function normalizeTurnResult({ env, result, profileReceipt, processEvidence, compatibility }) {
   const rawOutput = String(result.finalMessage ?? "");
   const session = nativeSessionRef(env, result.sessionId ?? null);
+  const unknownEvents = unknownEventSummary(result);
   const drifted = result.failureClass === "protocol_session_drift";
   const finalMessagePresent = rawOutput.length > 0;
   return {
@@ -138,6 +148,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
     manualContinuationCommand: result.manualResumeCommand ?? null,
     runtime: {
       ...(result.runtimeReceipt ?? {}),
+      ...unknownEvents,
       executionProfile: profileReceipt,
       hostClaudeVersion: compatibility.compatibility?.version ?? null,
       preparedClaudeFingerprint: compatibility.compatibility?.fingerprint ?? null,
@@ -162,6 +173,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       steering: result.steering ?? null,
       runtimeReceipt: {
         ...(result.runtimeReceipt ?? {}),
+        ...unknownEvents,
         executionProfile: profileReceipt,
         claudeCompatibility: compatibility.compatibility,
         compatibilityObservationRecorded: compatibility.recorded,
@@ -172,12 +184,16 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       requiresAttention: Boolean(result.requiresAttention),
       toolUses: result.toolUses ?? [],
       touchedFiles: result.touchedFiles ?? [],
+      ...unknownEvents,
     },
     driverReceipt: boundedDriverReceipt(CLAUDE_CODE_HARNESS_ID, CLAUDE_CODE_DRIVER_VERSION, {
       executionProfile: profileReceipt?.name ?? null,
       failureClass: result.failureClass ?? null,
       recoveryAttempts: result.recoveryAttempts ?? 0,
       attempts: Array.isArray(result.attempts) ? result.attempts.length : 0,
+      unknownEvents: unknownEvents.unknownEvents,
+      unknownEventCount: unknownEvents.unknownEventCount,
+      unknownEventOverflowCount: unknownEvents.unknownEventOverflowCount,
     }),
   };
 }

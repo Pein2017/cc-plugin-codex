@@ -16,7 +16,8 @@ import { resolvePluginStateRoot } from "./paths.mjs";
 import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
-export const COMPLETION_INBOX_VERSION = 1;
+export const COMPLETION_INBOX_VERSION = 2;
+export const LEGACY_COMPLETION_INBOX_VERSION = 1;
 export const DEFAULT_ACKNOWLEDGED_TAIL = 100;
 export const DEFAULT_UNREAD_BATCH_SIZE = 20;
 export const DEFAULT_AGENT_SUMMARY_BATCH_SIZE = 1;
@@ -159,6 +160,24 @@ function defaultInbox(ownerRootId, directory) {
   };
 }
 
+function eventAcknowledged(event, acknowledgedThrough = 0) {
+  // Version-one records only have a contiguous cursor.  An unowned legacy
+  // event is permanently quarantined so it cannot pin current Agent delivery.
+  return event.acknowledgedAt != null ||
+    event.sequence <= acknowledgedThrough ||
+    !event.agentId;
+}
+
+function derivedAcknowledgedThrough(events, prior = 0) {
+  let watermark = Math.max(0, Number(prior) || 0);
+  for (const event of events) {
+    if (event.sequence <= watermark) continue;
+    if (!eventAcknowledged(event, watermark)) break;
+    watermark = event.sequence;
+  }
+  return watermark;
+}
+
 function validateResumability(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Completion resumability must be an explicit object.");
@@ -183,7 +202,7 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   if (!event || typeof event !== "object" || Array.isArray(event)) {
     throw new Error("Completion inbox contains an invalid event.");
   }
-  if (event.version !== COMPLETION_INBOX_VERSION) {
+  if (event.version !== COMPLETION_INBOX_VERSION && event.version !== LEGACY_COMPLETION_INBOX_VERSION) {
     throw new Error(`Unsupported completion event version: ${event.version}.`);
   }
   const sequence = assertPositiveInteger(event.sequence, "completion sequence");
@@ -229,6 +248,12 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   if (event.firstDeliveredAt != null) {
     assertText(event.firstDeliveredAt, "completion first-delivery timestamp");
   }
+  if (event.acknowledgedAt != null) {
+    assertText(event.acknowledgedAt, "completion acknowledgement timestamp");
+  }
+  if (event.version === COMPLETION_INBOX_VERSION && !Object.hasOwn(event, "acknowledgedAt")) {
+    throw new Error("Completion event acknowledgement state is invalid.");
+  }
   return sequence;
 }
 
@@ -236,7 +261,7 @@ function validateInbox(inbox, ownerRootId, directory) {
   if (!inbox || typeof inbox !== "object" || Array.isArray(inbox)) {
     throw new Error("Completion inbox must be an object.");
   }
-  if (inbox.version !== COMPLETION_INBOX_VERSION) {
+  if (inbox.version !== COMPLETION_INBOX_VERSION && inbox.version !== LEGACY_COMPLETION_INBOX_VERSION) {
     throw new Error(`Unsupported completion inbox version: ${inbox.version}.`);
   }
   const owner = assertText(ownerRootId, "owner root ID");
@@ -262,18 +287,40 @@ function validateInbox(inbox, ownerRootId, directory) {
   for (const event of inbox.events) {
     previousSequence = validateStoredEvent(event, owner, previousSequence);
   }
-  const firstUnread = inbox.events.find((event) => event.sequence > acknowledgedThrough);
-  if (firstUnread && firstUnread.sequence !== acknowledgedThrough + 1) {
-    throw new Error("Completion inbox unread events must begin after the acknowledgement cursor.");
+  if (inbox.version === LEGACY_COMPLETION_INBOX_VERSION) {
+    const firstUnread = inbox.events.find((event) => event.sequence > acknowledgedThrough);
+    if (firstUnread && firstUnread.sequence !== acknowledgedThrough + 1) {
+      throw new Error("Completion inbox unread events must begin after the acknowledgement cursor.");
+    }
   }
   if (nextSequence <= previousSequence || acknowledgedThrough >= nextSequence) {
     throw new Error("Completion inbox cursor state is inconsistent.");
   }
   const expectedProtection = platformProtectionReceipt(directory);
+  const migrationTimestamp = inbox.updatedAt ?? nowIso();
+  const migratedEvents = inbox.events.map((event) => inbox.version === LEGACY_COMPLETION_INBOX_VERSION
+    ? {
+        ...event,
+        // Keep the legacy event version and all frozen payload/token fields;
+        // only the acknowledgement fact is added for v2 selection.
+        ...(eventAcknowledged(event, acknowledgedThrough) && !event.acknowledgedAt
+          ? { acknowledgedAt: migrationTimestamp }
+          : {}),
+      }
+    : event);
+  const baseWatermark = migratedEvents.length > 0
+    ? migratedEvents[0].sequence - 1
+    : nextSequence - 1;
+  const watermark = derivedAcknowledgedThrough(migratedEvents, baseWatermark);
+  if (inbox.version === COMPLETION_INBOX_VERSION && acknowledgedThrough > watermark) {
+    throw new Error("Completion inbox acknowledgement cursor skips an unread event.");
+  }
   return {
     ...inbox,
-    acknowledgedThrough,
+    version: COMPLETION_INBOX_VERSION,
+    acknowledgedThrough: watermark,
     nextSequence,
+    events: migratedEvents,
     protection: inbox.protection ?? expectedProtection,
   };
 }
@@ -515,7 +562,6 @@ function publicAgentCompletionSummary(event) {
 
 function sameCompletionFact(existing, normalized) {
   return [
-    "version",
     "eventId",
     "ownerRootId",
     "jobId",
@@ -613,10 +659,12 @@ export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}
             sequence: existing.sequence,
           };
         }
-        const corrected = {
+      const corrected = {
           ...normalized,
+          version: existing.version,
           sequence: existing.sequence,
           deliveryToken: existing.deliveryToken,
+          acknowledgedAt: existing.acknowledgedAt ?? null,
         };
         const events = [...inbox.events];
         events[inbox.events.indexOf(existing)] = corrected;
@@ -631,11 +679,12 @@ export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}
       }
       return { appended: false, corrected: false, event: publicEvent(existing), sequence: existing.sequence };
     }
-    const event = {
-      ...normalized,
-      sequence: inbox.nextSequence,
-      deliveryToken: `delivery-${randomBytes(32).toString("base64url")}`,
-    };
+  const event = {
+    ...normalized,
+    sequence: inbox.nextSequence,
+    acknowledgedAt: null,
+    deliveryToken: `delivery-${randomBytes(32).toString("base64url")}`,
+  };
     const updated = {
       ...inbox,
       nextSequence: inbox.nextSequence + 1,
@@ -649,12 +698,10 @@ export function appendCompletionEvent(cwd, ownerRootId, completion, options = {}
 
 function unreadContiguousEvents(inbox, limit) {
   const result = [];
-  let expectedSequence = inbox.acknowledgedThrough + 1;
   for (const event of inbox.events) {
-    if (event.sequence <= inbox.acknowledgedThrough) continue;
-    if (event.sequence !== expectedSequence || result.length >= limit) break;
+    if (event.acknowledgedAt != null) continue;
     result.push(event);
-    expectedSequence += 1;
+    if (result.length >= limit) break;
   }
   return result;
 }
@@ -667,16 +714,21 @@ function unreadContiguousEvents(inbox, limit) {
  */
 function unreadAgentLinkedEvents(inbox, limit) {
   const result = [];
-  let expectedSequence = inbox.acknowledgedThrough + 1;
   for (const event of inbox.events) {
-    if (event.sequence <= inbox.acknowledgedThrough) continue;
-    if (event.sequence !== expectedSequence) break;
-    expectedSequence += 1;
+    if (event.sequence <= inbox.acknowledgedThrough || eventAcknowledged(event, inbox.acknowledgedThrough)) continue;
     if (!event.agentId) continue;
     result.push(event);
     if (result.length >= limit) break;
   }
   return result;
+}
+
+function targetedAgentEvents(inbox, jobIds) {
+  const wanted = new Set(jobIds);
+  return inbox.events.filter((event) =>
+    wanted.has(event.jobId) && event.agentId &&
+    event.sequence > inbox.acknowledgedThrough && !eventAcknowledged(event, inbox.acknowledgedThrough)
+  );
 }
 
 export function readUnreadCompletionEvents(cwd, ownerRootId, options = {}) {
@@ -747,6 +799,63 @@ export function readUnreadAgentCompletionSummaries(cwd, ownerRootId, options = {
   });
 }
 
+/**
+ * Select a fixed set of terminal Agent jobs without allowing an older
+ * unrelated inbox event to participate.  The `jobId` field is intentionally
+ * an internal identity used by AgentRuntime; it must never be copied into a
+ * model-facing receipt.
+ */
+export function readTargetedAgentCompletionSummaries(cwd, ownerRootId, jobIds, options = {}) {
+  const owner = assertText(ownerRootId, "owner root ID");
+  if (!Array.isArray(jobIds) || jobIds.length === 0) {
+    throw new Error("Targeted completion selection requires at least one job ID.");
+  }
+  const ids = jobIds.map((jobId) => assertText(jobId, "job ID"));
+  if (new Set(ids).size !== ids.length) throw new Error("Targeted completion job IDs must be unique.");
+  const snapshot = readInbox(cwd, owner, false);
+  if (!snapshot) return { events: [], consumed: [] };
+  const selected = targetedAgentEvents(snapshot, ids);
+  const consumed = snapshot.events
+    .filter((event) => ids.includes(event.jobId) && event.agentId && eventAcknowledged(event, snapshot.acknowledgedThrough))
+    .map((event) => ({
+      jobId: event.jobId,
+      agentId: event.agentId,
+      agentStatus: event.agentStatus,
+      terminalStatus: event.terminalStatus,
+      blocking: event.blocking ?? null,
+    }));
+  const project = (events) => events.map((event) => ({
+    ...publicAgentCompletionSummary(event),
+    jobId: event.jobId,
+  })).filter(Boolean);
+  if (options.freeze === false || selected.length === 0 || selected.every((event) => event.firstDeliveredAt)) {
+    return { events: project(selected), consumed };
+  }
+  return withInboxLock(cwd, owner, (inbox, filePath) => {
+    const reread = targetedAgentEvents(inbox, ids);
+    const selectedIds = new Set(reread.map((event) => event.eventId));
+    let changed = false;
+    const deliveredAt = nowIso();
+    const events = inbox.events.map((event) => {
+      if (!selectedIds.has(event.eventId) || event.firstDeliveredAt) return event;
+      changed = true;
+      return { ...event, firstDeliveredAt: deliveredAt };
+    });
+    const updated = changed ? { ...inbox, events, updatedAt: deliveredAt } : inbox;
+    if (changed) writeInboxAtomic(filePath, updated);
+    const consumedAfter = updated.events
+      .filter((event) => ids.includes(event.jobId) && event.agentId && eventAcknowledged(event, updated.acknowledgedThrough))
+      .map((event) => ({
+        jobId: event.jobId,
+        agentId: event.agentId,
+        agentStatus: event.agentStatus,
+        terminalStatus: event.terminalStatus,
+        blocking: event.blocking ?? null,
+      }));
+    return { events: project(targetedAgentEvents(updated, ids)), consumed: consumedAfter };
+  });
+}
+
 function compactInbox(inbox, acknowledgedTail) {
   const tail = Math.max(0, Number(acknowledgedTail));
   if (!Number.isSafeInteger(tail)) {
@@ -790,9 +899,7 @@ export function acknowledgeCompletionEvents(cwd, ownerRootId, deliveryTokens, op
   }
   const acknowledgedTail = options.acknowledgedTail ?? DEFAULT_ACKNOWLEDGED_TAIL;
   return withInboxLock(cwd, owner, (inbox, filePath) => {
-    const alreadyAcknowledged = inbox.events.filter(
-      (event) => event.sequence <= inbox.acknowledgedThrough
-    );
+    const alreadyAcknowledged = inbox.events.filter((event) => event.acknowledgedAt != null);
     if (tokens.every((token) => alreadyAcknowledged.some((event) => event.deliveryToken === token))) {
       return {
         acknowledgedThrough: inbox.acknowledgedThrough,
@@ -804,9 +911,15 @@ export function acknowledgeCompletionEvents(cwd, ownerRootId, deliveryTokens, op
     if (expected.length !== tokens.length || expected.some((event, index) => event.deliveryToken !== tokens[index])) {
       throw new Error("Completion acknowledgement must cover the oldest unread contiguous token prefix.");
     }
+    const acknowledgedAt = nowIso();
+    const selectedIds = new Set(expected.map((event) => event.eventId));
+    const events = inbox.events.map((event) => selectedIds.has(event.eventId)
+      ? { ...event, acknowledgedAt }
+      : event);
     const advanced = {
       ...inbox,
-      acknowledgedThrough: expected.at(-1).sequence,
+      events,
+      acknowledgedThrough: derivedAcknowledgedThrough(events, inbox.acknowledgedThrough),
     };
     const compacted = compactInbox(advanced, acknowledgedTail);
     const updated = { ...compacted, updatedAt: nowIso() };
@@ -841,36 +954,30 @@ export function acknowledgeAgentCompletionEvents(cwd, ownerRootId, deliveryToken
   const acknowledgedTail = options.acknowledgedTail ?? DEFAULT_ACKNOWLEDGED_TAIL;
   return withInboxLock(cwd, owner, (inbox, filePath) => {
     const byToken = new Map(inbox.events.map((event) => [event.deliveryToken, event]));
-    const unreadSuffix = [];
-    let reachedUnread = false;
+    const selected = [];
     for (const token of tokens) {
       const event = byToken.get(token);
-      if (!event?.agentId) {
-        throw new Error("Completion acknowledgement contains an unknown or non-Agent token.");
+      if (!event?.agentId || !event.firstDeliveredAt) {
+        throw new Error("Completion acknowledgement contains an unknown, non-Agent, or never-delivered token.");
       }
-      if (event.sequence <= inbox.acknowledgedThrough) {
-        if (reachedUnread) {
-          throw new Error("Completion acknowledgement tokens are out of durable order.");
-        }
-      } else {
-        reachedUnread = true;
-        unreadSuffix.push(token);
-      }
+      if (!eventAcknowledged(event, inbox.acknowledgedThrough)) selected.push(event);
     }
-    if (unreadSuffix.length === 0) {
+    if (selected.length === 0) {
       return {
-        acknowledgedThrough: inbox.acknowledgedThrough,
+        acknowledgedThrough: derivedAcknowledgedThrough(inbox.events, inbox.acknowledgedThrough),
         acknowledgedCount: 0,
         compactedCount: 0,
       };
     }
-    const expected = unreadAgentLinkedEvents(inbox, unreadSuffix.length);
-    if (expected.length !== unreadSuffix.length || expected.some((event, index) => event.deliveryToken !== unreadSuffix[index])) {
-      throw new Error("Completion acknowledgement must cover the oldest unread Agent-linked token prefix.");
-    }
+    const acknowledgedAt = nowIso();
+    const selectedTokens = new Set(selected.map((event) => event.deliveryToken));
+    const events = inbox.events.map((event) => selectedTokens.has(event.deliveryToken)
+      ? { ...event, acknowledgedAt }
+      : event);
     const advanced = {
       ...inbox,
-      acknowledgedThrough: expected.at(-1).sequence,
+      events,
+      acknowledgedThrough: derivedAcknowledgedThrough(events, inbox.acknowledgedThrough),
     };
     const compacted = compactInbox(advanced, acknowledgedTail);
     const updated = { ...compacted, updatedAt: nowIso() };
@@ -878,7 +985,7 @@ export function acknowledgeAgentCompletionEvents(cwd, ownerRootId, deliveryToken
     writeInboxAtomic(filePath, updated);
     return {
       acknowledgedThrough: advanced.acknowledgedThrough,
-      acknowledgedCount: unreadSuffix.length,
+      acknowledgedCount: selected.length,
       compactedCount: compacted.compactedCount,
     };
   });

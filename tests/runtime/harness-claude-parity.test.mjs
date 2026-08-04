@@ -197,7 +197,15 @@ describe("claude-code Driver preserves established Claude execution semantics", 
             recoveryAttempts: 1,
             attempts: [{ attempt: 1 }],
             steering: { messages: [], latestAcknowledgedSequence: 0 },
-            runtimeReceipt: { claudeCodeVersion: "2.1.220" },
+            runtimeReceipt: {
+              claudeCodeVersion: "2.1.220",
+              unknownEvents: [{
+                type: "future_task",
+                subtype: "candidate",
+                count: 2,
+              }],
+              unknownEventCount: 2,
+            },
             toolUses: [{ name: "Read" }],
             touchedFiles: ["a.txt"],
           },
@@ -218,6 +226,13 @@ describe("claude-code Driver preserves established Claude execution semantics", 
       assert.equal(result.nativeReceipt.rawOutput, "final answer");
       assert.equal(result.nativeReceipt.runtimeReceipt.executionProfile.name, "terminal-parity");
       assert.equal(result.nativeReceipt.runtimeReceipt.executionProfile.inheritedClaudeConfiguration, true);
+      assert.deepEqual(result.nativeReceipt.unknownEvents, [{
+        type: "future_task",
+        subtype: "candidate",
+        count: 2,
+      }]);
+      assert.equal(result.nativeReceipt.unknownEventCount, 2);
+      assert.equal(result.status, "completed");
       assert.equal(result.driverReceipt.harnessId, "claude-code");
       assert.equal(result.driverReceipt.driverVersion, CLAUDE_CODE_DRIVER_VERSION);
     } finally {

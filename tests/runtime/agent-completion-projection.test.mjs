@@ -9,6 +9,7 @@ import {
   appendCompletionEvent,
   resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
+import { writeJobFile } from "../../runtime/job-store.mjs";
 
 const roots = [];
 const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-completion-runtime-"));
@@ -22,7 +23,7 @@ afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
-function setup() {
+function setup(ownerRootId = "root-agent-completion-projection") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-completion-projection-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, ".claude");
@@ -32,7 +33,6 @@ function setup() {
   fs.mkdirSync(claudeConfigDir);
   fs.writeFileSync(envFile, `CLAUDE_CONFIG_DIR=${claudeConfigDir}\n`);
   roots.push(root);
-  const ownerRootId = "root-agent-completion-projection";
   const runtime = createAgentRuntime({
     cwd: workspace,
     envFile,
@@ -45,7 +45,7 @@ function setup() {
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });
-  return { runtime, workspace, ownerRootId };
+  return { runtime, workspace, ownerRootId, envFile, claudeConfigDir, codexHome };
 }
 
 function completion(jobId, agentId = null) {
@@ -62,7 +62,275 @@ function completion(jobId, agentId = null) {
   };
 }
 
+function attachJob(context, agent, jobId, status = "completed") {
+  context.runtime.store.updateAgent(agent.agentId, (current) => ({
+    ...current,
+    status: status === "running" ? "running" : "completed",
+    activeJobId: jobId,
+    latestJobId: jobId,
+  }));
+  writeJobFile(context.workspace, jobId, {
+    id: jobId,
+    ownerRootId: context.ownerRootId,
+    agentId: agent.agentId,
+    workspaceRoot: context.workspace,
+    status,
+    agentProjectionReconciledAt: "2026-07-26T00:00:00.000Z",
+    ...(status === "completed" ? {
+      completedAt: "2026-07-26T00:00:00.000Z",
+      result: { rawOutput: `result-${jobId}` },
+      recoverability: { resumable: false, reason: "test_terminal" },
+    } : {}),
+  });
+}
+
 describe("Agent completion projection", () => {
+  it("joins a fixed target barrier in caller order without consuming unrelated older completion", async () => {
+    const context = setup();
+    const first = context.runtime.store.createAgent({ task_name: "target_first" });
+    const second = context.runtime.store.createAgent({ task_name: "target_second" });
+    attachJob(context, first, "target-job-first");
+    attachJob(context, second, "target-job-second");
+    const unrelated = appendCompletionEvent(context.workspace, context.ownerRootId, completion("unrelated", "unrelated-agent")).event;
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("target-job-first", first.agentId));
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("target-job-second", second.agentId));
+    const receipt = await context.runtime.waitAgent({
+      targets: [second.path, first.path],
+      timeout_ms: 0,
+    });
+    assert.equal(receipt.timedOut, false);
+    assert.deepEqual(receipt.targets.map((target) => target.agent_name), [second.path, first.path]);
+    assert.deepEqual(receipt.targets.map((target) => target.state), ["settled", "settled"]);
+    assert.deepEqual(receipt.targets.map((target) => target.completion_message), [
+      "result-target-job-second",
+      "result-target-job-first",
+    ]);
+    assert.equal(JSON.stringify(receipt).includes("unrelated"), false);
+    const unrelatedUnread = await context.runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(unrelatedUnread.update.delivery_token, unrelated.deliveryToken);
+  });
+
+  it("returns status-only timeout and delivers no partial barrier payload", async () => {
+    const context = setup();
+    const done = context.runtime.store.createAgent({ task_name: "barrier_done" });
+    const pending = context.runtime.store.createAgent({ task_name: "barrier_pending" });
+    attachJob(context, done, "barrier-job-done");
+    attachJob(context, pending, "barrier-job-pending", "running");
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("barrier-job-done", done.agentId));
+    const timedOut = await context.runtime.waitAgent({
+      targets: [done.path, pending.path],
+      timeout_ms: 0,
+    });
+    assert.equal(timedOut.timedOut, true);
+    assert.deepEqual(timedOut.unresolved_targets, [pending.path]);
+    assert.equal("delivery_token" in timedOut.targets[0], false);
+    assert.equal("completion_message" in timedOut.targets[0], false);
+  });
+
+  it("reports already-consumed target turns without reconstructing payload", async () => {
+    const context = setup();
+    const agent = context.runtime.store.createAgent({ task_name: "already_consumed" });
+    attachJob(context, agent, "consumed-job");
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("consumed-job", agent.agentId));
+    const first = await context.runtime.waitAgent({ targets: [agent.path], timeout_ms: 0 });
+    const second = await context.runtime.waitAgent({
+      targets: [agent.path],
+      timeout_ms: 0,
+      acknowledge_tokens: [first.targets[0].delivery_token],
+    });
+    assert.equal(second.timedOut, false);
+    assert.equal(second.targets[0].state, "already_consumed");
+    assert.equal("completion_message" in second.targets[0], false);
+    assert.equal("delivery_token" in second.targets[0], false);
+  });
+
+  it("returns a known Agent with no concrete turn as not_joinable", async () => {
+    const context = setup();
+    const agent = context.runtime.store.createAgent({ task_name: "not_joinable" });
+    const receipt = await context.runtime.waitAgent({ targets: [agent.path], timeout_ms: 0 });
+    assert.equal(receipt.timedOut, false);
+    assert.equal(receipt.targets[0].state, "not_joinable");
+    assert.deepEqual(receipt.unresolved_targets, [agent.path]);
+  });
+
+  it("acknowledges prior delivered tokens before returning not_joinable", async () => {
+    const context = setup();
+    const completed = context.runtime.store.createAgent({ task_name: "ack_before_not_joinable" });
+    attachJob(context, completed, "ack-before-not-joinable");
+    appendCompletionEvent(
+      context.workspace,
+      context.ownerRootId,
+      completion("ack-before-not-joinable", completed.agentId),
+    );
+    const delivered = await context.runtime.waitAgent({
+      targets: [completed.path],
+      timeout_ms: 0,
+    });
+    const idle = context.runtime.store.createAgent({ task_name: "idle_not_joinable" });
+
+    const receipt = await context.runtime.waitAgent({
+      targets: [idle.path],
+      timeout_ms: 0,
+      acknowledge_tokens: [delivered.targets[0].delivery_token],
+    });
+    assert.equal(receipt.targets[0].state, "not_joinable");
+
+    const consumed = await context.runtime.waitAgent({
+      targets: [completed.path],
+      timeout_ms: 0,
+    });
+    assert.equal(consumed.targets[0].state, "already_consumed");
+  });
+
+  it("keeps a snapshotted turn fixed when the same Agent starts a follow-up", async () => {
+    const context = setup();
+    const agent = context.runtime.store.createAgent({ task_name: "fixed_turn" });
+    attachJob(context, agent, "fixed-old");
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("fixed-old", agent.agentId));
+    const originalWait = context.runtime.jobs.wait.bind(context.runtime.jobs);
+    context.runtime.jobs.wait = async (jobId, options) => {
+      context.runtime.store.updateAgent(agent.agentId, (current) => ({
+        ...current,
+        status: "running",
+        activeJobId: "fixed-followup",
+        latestJobId: "fixed-followup",
+      }));
+      writeJobFile(context.workspace, "fixed-followup", {
+        id: "fixed-followup",
+        ownerRootId: context.ownerRootId,
+        agentId: agent.agentId,
+        workspaceRoot: context.workspace,
+        status: "running",
+      });
+      return originalWait(jobId, options);
+    };
+    const receipt = await context.runtime.waitAgent({ targets: [agent.path], timeout_ms: 0 });
+    assert.equal(receipt.targets[0].state, "settled");
+    assert.equal(receipt.targets[0].completion_message, "result-fixed-old");
+  });
+
+  it("aborts a live barrier without freezing or acknowledging its completed subset", async () => {
+    const context = setup();
+    const done = context.runtime.store.createAgent({ task_name: "abort_done" });
+    const pending = context.runtime.store.createAgent({ task_name: "abort_pending" });
+    attachJob(context, done, "abort-done");
+    attachJob(context, pending, "abort-pending", "running");
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("abort-done", done.agentId));
+    const controller = new AbortController();
+    context.runtime.abortSignal = controller.signal;
+    const waiting = context.runtime.waitAgent({
+      targets: [done.path, pending.path],
+      timeout_ms: 2_000,
+    });
+    setTimeout(() => controller.abort(), 20);
+    await assert.rejects(
+      waiting,
+      (error) => error?.name === "AbortError"
+    );
+    const inbox = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(context.workspace, context.ownerRootId), "utf8"));
+    const stored = inbox.events.find((event) => event.jobId === "abort-done");
+    assert.equal(stored.firstDeliveredAt ?? null, null);
+    assert.equal(stored.acknowledgedAt ?? null, null);
+  });
+
+  it("uses the final observation when completion lands after the bounded result", async () => {
+    const context = setup();
+    const agent = context.runtime.store.createAgent({ task_name: "final_observation_target" });
+    attachJob(context, agent, "final-observation-target", "running");
+    const originalWait = context.runtime.jobs.wait.bind(context.runtime.jobs);
+    let calls = 0;
+    context.runtime.jobs.wait = async (jobId, options) => {
+      calls += 1;
+      if (calls === 1) {
+        attachJob(context, agent, "final-observation-target");
+        appendCompletionEvent(
+          context.workspace,
+          context.ownerRootId,
+          completion("final-observation-target", agent.agentId),
+        );
+        return {
+          update: null,
+          targetReady: false,
+          acknowledgement: { acknowledgedCount: 0, acknowledgedThrough: null, compactedCount: 0 },
+          waitTimedOut: true,
+          message: "Timed out waiting for CC Agent activity.",
+        };
+      }
+      return originalWait(jobId, options);
+    };
+
+    const receipt = await context.runtime.waitAgent({
+      targets: [agent.path],
+      timeout_ms: 0,
+    });
+    assert.equal(calls, 2);
+    assert.equal(receipt.timedOut, false);
+    assert.equal(receipt.targets[0].completion_message, "result-final-observation-target");
+  });
+
+  it("redelivers a fixed target turn after an AgentRuntime restart", async () => {
+    const context = setup();
+    const agent = context.runtime.store.createAgent({ task_name: "target_restart" });
+    attachJob(context, agent, "target-restart");
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("target-restart", agent.agentId));
+    const first = await context.runtime.waitAgent({ targets: [agent.path], timeout_ms: 0 });
+
+    const restarted = createAgentRuntime({
+      cwd: context.workspace,
+      envFile: context.envFile,
+      env: {
+        CODEX_HOME: context.codexHome,
+        CODEX_THREAD_ID: context.ownerRootId,
+        CC_RUNTIME_HOME: sharedRuntimeHome,
+        CC_RUNTIME_CHECKOUT: "",
+        CC_RUNTIME_SOURCE_ROOT: "",
+        CLAUDE_CONFIG_DIR: context.claudeConfigDir,
+      },
+    });
+    const redelivered = await restarted.waitAgent({ targets: [agent.path], timeout_ms: 0 });
+    assert.equal(redelivered.targets[0].delivery_token, first.targets[0].delivery_token);
+    assert.equal(redelivered.targets[0].completion_message, first.targets[0].completion_message);
+  });
+
+  it("rejects a target owned by another Codex root", async () => {
+    const local = setup("root-target-local");
+    const foreign = setup("root-target-foreign");
+    const foreignAgent = foreign.runtime.store.createAgent({ task_name: "foreign_target" });
+    await assert.rejects(
+      local.runtime.waitAgent({ targets: [foreignAgent.agentId], timeout_ms: 0 }),
+      /not found|current Codex root|in this root/i,
+    );
+  });
+
+  it("does not freeze a partial subset when a terminal target has no completion evidence", async () => {
+    const context = setup();
+    const present = context.runtime.store.createAgent({ task_name: "evidence_present" });
+    const missing = context.runtime.store.createAgent({ task_name: "evidence_missing" });
+    attachJob(context, present, "evidence-present");
+    attachJob(context, missing, "evidence-missing");
+    appendCompletionEvent(context.workspace, context.ownerRootId, completion("evidence-present", present.agentId));
+    const reconcile = context.runtime.reconcile.bind(context.runtime);
+    context.runtime.reconcile = () => {
+      const result = reconcile();
+      const inboxFile = resolveCompletionInboxFile(context.workspace, context.ownerRootId);
+      const inbox = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+      inbox.events = inbox.events.filter((event) => event.jobId !== "evidence-missing");
+      fs.writeFileSync(inboxFile, `${JSON.stringify(inbox, null, 2)}\n`);
+      return result;
+    };
+    const receipt = await context.runtime.waitAgent({
+      targets: [present.path, missing.path],
+      timeout_ms: 0,
+    });
+    assert.equal(receipt.timedOut, false);
+    assert.deepEqual(receipt.unresolved_targets, [missing.path]);
+    assert.equal(receipt.targets[0].state, "settled");
+    assert.equal("delivery_token" in receipt.targets[0], false);
+    assert.equal(receipt.targets[1].state, "not_joinable");
+    const inbox = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(context.workspace, context.ownerRootId), "utf8"));
+    assert.equal(inbox.events[0].firstDeliveredAt ?? null, null);
+  });
+
   it("returns one redeliverable Agent update with the complete final message", async () => {
     const { runtime, workspace, ownerRootId } = setup();
     const agent = runtime.store.createAgent({ task_name: "projection" });

@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein",
-  "version": "0.13.0+codex.20260803162314",
+  "version": "0.14.0+codex.20260804153426",
   "description": "Experimental checkout-owned Claude Code Agent runtime with bounded leaf/Fable delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "CC for Pein",
     "shortDescription": "Experimental durable local Claude Agents for Codex",
-    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with bounded leaf/Fable delegation, durable messages, bounded progress, complete completion delivery, recent native message history, interruption, exact-session continuation, and terminal-parity execution.",
+    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with bounded leaf/Fable delegation, durable messages, bounded progress, complete completion delivery, fixed Agent-turn joins and all-settled barriers, recent native message history, interruption, exact-session continuation, and terminal-parity execution.",
     "developerName": "Pein",
     "category": "Coding",
     "capabilities": [
@@ -31,6 +31,7 @@
       "Use $cc-for-pein:spawn-agent with mcp__cc_for_pein__spawn_agent to create an Experimental named Claude Agent and retain required join obligations",
       "Use $cc-for-pein:followup-task with mcp__cc_for_pein__followup_task to continue a Claude Agent",
       "Use $cc-for-pein:list-agents with mcp__cc_for_pein__list_agents to inspect local Claude Agent work",
+      "Use $cc-for-pein:wait-agent with mcp__cc_for_pein__wait_agent for one exact Agent turn or a fixed all-settled barrier when the dependency set is known",
       "Use $cc-for-pein:read-agent-messages with mcp__cc_for_pein__read_agent_messages to retrieve an earlier native Claude message without activating the Agent"
     ]
   }

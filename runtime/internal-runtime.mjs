@@ -34,6 +34,7 @@ import {
   readJobFile,
   releaseSessionLease,
   reserveSessionLease,
+  resolveJobsDirForObservation,
   resolveJobFile,
   resolveJobLogFile,
   transitionJob,
@@ -52,14 +53,21 @@ import {
 } from "./job-runner.mjs";
 import { enrichJob, sortJobsNewestFirst } from "./job-query.mjs";
 import { getProcessIdentity } from "./process-control.mjs";
-import { configureRuntimePaths, samePath } from "./paths.mjs";
+import { configureRuntimePaths, resolvePluginStateRoot, samePath } from "./paths.mjs";
 import { renderTaskResult } from "./render.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 import {
   acknowledgeAgentCompletionEvents,
   readUnreadAgentCompletionSummaries,
+  readTargetedAgentCompletionSummaries,
+  resolveCompletionInboxDir,
   readUnreadCompletionEvents,
 } from "./completion-inbox.mjs";
+import {
+  DEFAULT_FALLBACK_INTERVAL_MS,
+  DEFAULT_RECOVERY_INTERVAL_MS,
+  waitForDurableActivity,
+} from "./durable-activity-wakeup.mjs";
 
 const CLI_PATH = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const SOURCE_ROOT = fs.realpathSync.native(path.resolve(path.dirname(CLI_PATH), ".."));
@@ -363,23 +371,6 @@ function throwIfWaitAborted(signal) {
   if (signal?.aborted) throw waitAbortError();
 }
 
-function sleepForWait(ms, signal) {
-  if (!signal) return sleep(ms);
-  throwIfWaitAborted(signal);
-  return new Promise((resolve, reject) => {
-    const finish = () => {
-      signal.removeEventListener("abort", onAbort);
-      resolve(undefined);
-    };
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(waitAbortError());
-    };
-    const timer = setTimeout(finish, ms);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 function summaryOf(prompt) {
   const normalized = String(prompt ?? "").trim().replace(/\s+/g, " ");
   if (!normalized) return "Continue Claude session";
@@ -551,6 +542,17 @@ class ClaudeRuntime {
         }),
       recordWorkerHandoffUncertainty:
         options.launchDependencies?.recordWorkerHandoffUncertainty ?? recordWorkerHandoffUncertainty,
+    };
+    this.waitDependencies = {
+      watch: options.waitDependencies?.watch ?? fs.watch,
+      statSync: options.waitDependencies?.statSync ?? fs.statSync,
+      setTimeout: options.waitDependencies?.setTimeout ?? setTimeout,
+      clearTimeout: options.waitDependencies?.clearTimeout ?? clearTimeout,
+      now: options.waitDependencies?.now ?? (() => Date.now()),
+      recoveryIntervalMs: options.waitDependencies?.recoveryIntervalMs ?? DEFAULT_RECOVERY_INTERVAL_MS,
+      fallbackIntervalMs: options.waitDependencies?.fallbackIntervalMs ?? DEFAULT_FALLBACK_INTERVAL_MS,
+      onWake: options.waitDependencies?.onWake ?? null,
+      onRead: options.waitDependencies?.onRead ?? null,
     };
     // Preserve the historical default projection for internal callers while
     // resolving every durable Agent/job from its own admitted Harness route.
@@ -1436,13 +1438,16 @@ class ClaudeRuntime {
       throw new Error("wait timeoutMs must be a non-negative finite number.");
     }
     const timeoutMs = requestedTimeout;
-    const pollIntervalMs = Math.max(50, Number(options.pollIntervalMs) || 500);
     const signal = options.signal ?? null;
     throwIfWaitAborted(signal);
     const acknowledgeTokens = Array.isArray(options.acknowledgeTokens)
       ? options.acknowledgeTokens
       : [];
     const wakeOnProgress = options.wakeOnProgress === true;
+    const targetJobIds = Array.isArray(options.targetJobIds)
+      ? [...new Set(options.targetJobIds.map((value) => assertJobId(value)))]
+      : null;
+    if (targetJobIds?.length === 0) throw new Error("Targeted wait requires at least one job ID.");
     const resolveProgressJobIds = () => {
       const values = typeof options.progressJobIds === "function"
         ? options.progressJobIds()
@@ -1454,14 +1459,35 @@ class ClaudeRuntime {
     const acknowledgement = acknowledgeTokens.length > 0
       ? acknowledgeAgentCompletionEvents(this.cwd, ownerRootId, acknowledgeTokens)
       : { acknowledgedCount: 0, acknowledgedThrough: null, compactedCount: 0 };
-    const deadline = Date.now() + timeoutMs;
+    const now = this.waitDependencies.now;
+    const deadline = now() + timeoutMs;
     let job = jobId ? this.status(jobId) : null;
     let inbox = { events: [] };
     let selectedProgress = null;
-    while (true) {
-      throwIfWaitAborted(signal);
-      inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
-      if (inbox.events.length > 0) break;
+    let waitDiagnostics = null;
+    let durableReadCount = 0;
+    const noteRead = (kind) => {
+      durableReadCount += 1;
+      this.waitDependencies.onRead?.(kind);
+    };
+    const targetBarrierReady = () => targetJobIds == null || targetJobIds.every((id) => {
+      const status = readJobFile(this.cwd, id)?.status;
+      return TERMINAL_STATUSES.has(status);
+    });
+    const desiredWatchPaths = () => [
+      resolveCompletionInboxDir(this.cwd, ownerRootId),
+      ...(wakeOnProgress || targetJobIds ? [resolveJobsDirForObservation(this.cwd)] : []),
+    ];
+    const observe = () => {
+      noteRead("completion");
+      inbox = targetJobIds == null
+        ? readUnreadAgentCompletionSummaries(this.cwd, ownerRootId)
+        : (targetBarrierReady()
+          ? readTargetedAgentCompletionSummaries(this.cwd, ownerRootId, targetJobIds, { freeze: false })
+          : { events: [], consumed: [] });
+      selectedProgress = null;
+      if (inbox.events.length > 0) return;
+      if (targetJobIds != null && targetBarrierReady()) return;
       const progress = wakeOnProgress
         ? pendingPublicProgress(
             this.cwd,
@@ -1470,35 +1496,56 @@ class ClaudeRuntime {
             resolveProgressJobIds()
           )
         : null;
-      if (!progress) {
-        job = jobId ? this.status(jobId) : null;
-        if ((job && !ACTIVE_JOB_STATUSES.has(job.status)) || Date.now() >= deadline) break;
-        await sleepForWait(
-          Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
-          signal
-        );
-        continue;
-      }
+      if (!progress) return;
       // Completion is authoritative and always wins a race with advisory
       // progress. Recheck immediately before advancing the progress revision.
+      noteRead("completion");
       inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
-      if (inbox.events.length > 0) break;
+      if (inbox.events.length > 0) return;
       const claimed = claimJobPublicProgress(this.cwd, progress.jobId);
       if (claimed.claimed && claimed.job) {
         selectedProgress = projectPublicProgress(claimed.job, ownerRootId, jobId, {
           requirePending: false,
         });
-        if (selectedProgress) break;
       }
-      // Another waiter may have claimed the same oldest revision. Re-select
-      // immediately so a different pending Agent is not reported as timeout.
+    };
+    observe();
+    while (true) {
+      throwIfWaitAborted(signal);
+      if (inbox.events.length > 0 || selectedProgress || (targetJobIds != null && targetBarrierReady())) break;
+      job = jobId ? this.status(jobId) : null;
+      if ((job && !ACTIVE_JOB_STATUSES.has(job.status)) || now() >= deadline) break;
+      let postRegistration = false;
+      waitDiagnostics = await waitForDurableActivity({
+        desiredPaths: desiredWatchPaths(),
+        stateRoot: resolvePluginStateRoot(),
+        signal,
+        deadline,
+        ...this.waitDependencies,
+        afterRegister: () => {
+          observe();
+          postRegistration = inbox.events.length > 0 ||
+            Boolean(selectedProgress) ||
+            (targetJobIds != null && targetBarrierReady());
+          return postRegistration;
+        },
+      });
+      if (typeof this.waitDependencies.onWake === "function") {
+        waitDiagnostics.durableReadCount = durableReadCount;
+        this.waitDependencies.onWake(waitDiagnostics);
+      }
+      if (!postRegistration) observe();
     }
-    const update = inbox.events[0] ?? selectedProgress ?? null;
-    const waitTimedOut = update == null && (!job || ACTIVE_JOB_STATUSES.has(job.status));
+    const update = targetJobIds == null ? (inbox.events[0] ?? selectedProgress ?? null) : null;
+    const targetReady = targetJobIds != null && targetBarrierReady();
+    const waitTimedOut = targetJobIds != null
+      ? !targetReady
+      : update == null && (!job || ACTIVE_JOB_STATUSES.has(job.status));
     return {
       // The public Agent runtime intentionally does not expose the internal
       // acknowledgement receipt; it only needs the next delivery token.
       update,
+      targetReady,
       acknowledgement,
       waitTimedOut,
       message: waitTimedOut

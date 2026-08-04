@@ -74,6 +74,11 @@ describe("typed CC MCP server", () => {
     assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
     const wait = listed.tools.find((tool) => tool.name === "wait_agent");
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "timeout_ms"), false);
+    assert.equal(Object.hasOwn(wait.inputSchema.properties, "targets"), true);
+    assert.equal(wait.inputSchema.properties.targets.items.type, "string");
+    assert.equal(wait.inputSchema.properties.targets.items.minLength, 1);
+    assert.equal(wait.inputSchema.properties.targets.minItems, 1);
+    assert.equal(wait.inputSchema.properties.targets.maxItems, 8);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
     assert.match(wait.description, /critical-path[\s\S]*one-hour completion-first[\s\S]*one progress update per Agent turn[\s\S]*never repeat/i);
@@ -103,6 +108,13 @@ describe("typed CC MCP server", () => {
     await client.callTool({
       name: "wait_agent",
       arguments: {
+        targets: ["/root/first", "/root/second"],
+      },
+      _meta: meta,
+    });
+    await client.callTool({
+      name: "wait_agent",
+      arguments: {
         wake_on_progress: true,
         acknowledge_tokens: ["delivery-prior"],
       },
@@ -120,6 +132,13 @@ describe("typed CC MCP server", () => {
       {
         name: "wait_agent",
         input: {
+          targets: ["/root/first", "/root/second"],
+          timeout_ms: 3_600_000,
+        },
+      },
+      {
+        name: "wait_agent",
+        input: {
           wake_on_progress: true,
           acknowledge_tokens: ["delivery-prior"],
           timeout_ms: 3_600_000,
@@ -128,6 +147,23 @@ describe("typed CC MCP server", () => {
       { name: "list_agents", input: {} },
     ]);
     assert.equal(rejected.isError, true);
+  });
+
+  it("rejects targeted progress combinations and duplicate target identifiers at the typed boundary", async () => {
+    const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({ accepted: true })));
+    closers.push(() => client.close(), () => server.close());
+    const mixed = await client.callTool({
+      name: "wait_agent",
+      arguments: { targets: ["/root/one"], wake_on_progress: true },
+      _meta: meta,
+    });
+    const duplicate = await client.callTool({
+      name: "wait_agent",
+      arguments: { targets: ["/root/one", "/root/one"] },
+      _meta: meta,
+    });
+    assert.equal(mixed.isError, true);
+    assert.equal(duplicate.isError, true);
   });
 
   it("injects the hidden one-hour timeout for wait_agent via runtimeInvoker", async () => {
@@ -448,6 +484,34 @@ export function createClaudeRuntime() {
     });
     assert.deepEqual(first, { revision: "first" });
     assert.deepEqual(second, { revision: "second" });
+  });
+
+  it("settles a real quiet wait through the isolated Worker lifecycle", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-mcp-wait-worker-"));
+    temporaryDirectories.push(directory);
+    const workspace = path.join(directory, "workspace");
+    const claudeConfig = path.join(directory, "claude");
+    const codexHome = path.join(directory, "codex");
+    const runtimeHome = path.join(directory, "runtime");
+    fs.mkdirSync(workspace);
+    fs.mkdirSync(claudeConfig);
+    const receipt = await invokeIsolatedRuntimeOperation({
+      operation: "wait_agent",
+      input: { timeout_ms: 25 },
+      context: {
+        cwd: workspace,
+        envFile: path.join(root, "config", "runtime.env"),
+        env: {
+          CODEX_HOME: codexHome,
+          CC_RUNTIME_HOME: runtimeHome,
+          CODEX_THREAD_ID: "mcp-isolated-wait-timeout",
+          CLAUDE_CONFIG_DIR: claudeConfig,
+          CC_RUNTIME_CHECKOUT: root,
+          CC_RUNTIME_SOURCE_ROOT: root,
+        },
+      },
+    });
+    assert.equal(receipt.timedOut, true);
   });
 
   it("rejects a stale MCP generation before invoking the current runtime", async () => {

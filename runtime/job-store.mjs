@@ -183,6 +183,13 @@ export function resolveStateDir(cwd) {
   return path.join(resolveStateRoot(), resolveWorkspaceHash(cwd));
 }
 
+// Observation-only callers must not materialize the plugin state layout just
+// to inspect a missing job. Writers continue to use resolveStateDir/JobsDir,
+// whose historical ensure behavior is part of their persistence boundary.
+export function resolveJobsDirForObservation(cwd) {
+  return path.join(resolvePluginStateRoot(), resolveWorkspaceHash(cwd), JOBS_DIR_NAME);
+}
+
 export function resolveJobsDir(cwd) {
   return path.join(resolveStateDir(cwd), JOBS_DIR_NAME);
 }
@@ -593,7 +600,8 @@ export function writeJobFile(cwd, jobId, payload) {
 }
 
 export function readJobFile(cwd, jobId) {
-  const jobFile = resolveJobFile(cwd, jobId);
+  sanitizeId(jobId, "job ID");
+  const jobFile = path.join(resolveJobsDirForObservation(cwd), `${jobId}.json`);
   try {
     return JSON.parse(fs.readFileSync(jobFile, "utf8"));
   } catch {

@@ -181,6 +181,11 @@ describe("completion inbox", () => {
       ownerRootId,
       acknowledgedOnlyJob
     ).event;
+    assert.throws(
+      () => acknowledgeAgentCompletionEvents(workspace, ownerRootId, [acknowledgedOnly.deliveryToken]),
+      /never-delivered token/
+    );
+    readUnreadAgentCompletionSummaries(workspace, ownerRootId);
     acknowledgeAgentCompletionEvents(workspace, ownerRootId, [acknowledgedOnly.deliveryToken]);
     const acknowledgedDuplicate = observePersistenceIo(
       () => reconcileTerminalJobCompletion(workspace, ownerRootId, acknowledgedOnlyJob)
@@ -632,5 +637,70 @@ describe("completion inbox", () => {
     assert.equal(compacted.compactedCount, 0);
     const stored = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8"));
     assert.deepEqual(stored.events.map((event) => event.sequence), [5, 6]);
+  });
+
+  it("migrates a version-one cursor to per-event acknowledgement without changing frozen fields", () => {
+    const { workspace, ownerRootId } = setup();
+    const first = appendCompletionEvent(workspace, ownerRootId, completion("v1-first", {
+      agentId: "agent-v1-first",
+      finalMessage: "first",
+    })).event;
+    const second = appendCompletionEvent(workspace, ownerRootId, completion("v1-second", {
+      agentId: "agent-v1-second",
+      finalMessage: "second",
+    })).event;
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const legacy = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    legacy.version = 1;
+    legacy.acknowledgedThrough = first.sequence;
+    legacy.events = legacy.events.map(({ acknowledgedAt, ...event }) => ({ ...event, version: 1 }));
+    fs.writeFileSync(inboxFile, `${JSON.stringify(legacy, null, 2)}\n`);
+    const unread = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    assert.deepEqual(unread.events.map((event) => event.completionMessage), ["second"]);
+    acknowledgeAgentCompletionEvents(workspace, ownerRootId, [second.deliveryToken]);
+    const migrated = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    assert.equal(migrated.version, 2);
+    assert.deepEqual(migrated.events.map((event) => event.version), [1, 1]);
+    assert.deepEqual(migrated.events.map((event) => event.finalMessage), [first.finalMessage, second.finalMessage]);
+    assert.deepEqual(migrated.events.map((event) => event.deliveryToken), [first.deliveryToken, second.deliveryToken]);
+    assert.equal(migrated.acknowledgedThrough, 2);
+  });
+
+  it("acknowledges selected Agent events out of order and derives the hole watermark", () => {
+    const { workspace, ownerRootId } = setup();
+    const events = ["hole-1", "hole-2", "hole-3"].map((jobId) => appendCompletionEvent(
+      workspace,
+      ownerRootId,
+      completion(jobId, { agentId: `agent-${jobId}`, finalMessage: jobId }),
+    ).event);
+    const delivered = readUnreadAgentCompletionSummaries(workspace, ownerRootId, { limit: 3 });
+    assert.equal(delivered.events.length, 3);
+    assert.equal(acknowledgeAgentCompletionEvents(workspace, ownerRootId, [events[1].deliveryToken]).acknowledgedThrough, 0);
+    const storedHole = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8"));
+    assert.equal(storedHole.events[1].acknowledgedAt != null, true);
+    assert.equal(storedHole.acknowledgedThrough, 0);
+    const completed = acknowledgeAgentCompletionEvents(workspace, ownerRootId, [
+      events[2].deliveryToken,
+      events[0].deliveryToken,
+    ]);
+    assert.equal(completed.acknowledgedThrough, 3);
+    assert.equal(completed.acknowledgedCount, 2);
+    assert.equal(acknowledgeAgentCompletionEvents(workspace, ownerRootId, [events[0].deliveryToken]).acknowledgedCount, 0);
+  });
+
+  it("rejects a version-two cursor that skips an unread acknowledgement hole", () => {
+    const { workspace, ownerRootId } = setup();
+    appendCompletionEvent(workspace, ownerRootId, completion("invalid-v2-hole", {
+      agentId: "agent-invalid-v2-hole",
+    }));
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const stored = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    stored.acknowledgedThrough = 1;
+    fs.writeFileSync(inboxFile, `${JSON.stringify(stored, null, 2)}\n`);
+
+    assert.throws(
+      () => readUnreadAgentCompletionSummaries(workspace, ownerRootId),
+      /cursor skips an unread event/,
+    );
   });
 });

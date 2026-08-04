@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   StreamParser,
   classifyClaudeFailure,
+  validateTurnCompletion,
 } from "../../runtime/claude-headless-adapter.mjs";
 
 function feedEvent(parser, event) {
@@ -79,6 +80,85 @@ describe("Claude final handoff boundaries", () => {
     assert.equal(JSON.stringify(parser.state.toolUses).includes("sensitive"), false);
     assert.ok(Buffer.byteLength(JSON.stringify(parser.state.toolUses)) < 1_024);
     assert.deepEqual(parser.state.touchedFiles, ["/tmp/generated.txt"]);
+  });
+
+  it("persists only bounded unknown type/subtype counts, never event payloads", () => {
+    const parser = new StreamParser();
+    const secret = [
+      "hook-body-secret",
+      "prompt-secret",
+      "tool-input-secret",
+      "http://proxy-user:proxy-password@example.invalid",
+      "credential-secret",
+      "native-session-secret",
+    ].join(" ");
+    feedEvent(parser, {
+      type: "future_task",
+      subtype: "started",
+      session_id: "native-session-secret",
+      hook: secret,
+      prompt: secret,
+      tool_input: { value: secret.repeat(20_000) },
+      credentials: { token: secret },
+      proxy: secret,
+      session: { transcript: secret },
+    });
+    feedEvent(parser, {
+      type: "future_task",
+      subtype: "started",
+      payload: secret.repeat(20_000),
+    });
+    feedEvent(parser, {
+      type: "system",
+      subtype: "future_hook",
+      hook_body: secret.repeat(20_000),
+    });
+
+    const serialized = JSON.stringify(parser.state.unknownEvents);
+    assert.deepEqual(parser.state.unknownEvents, [
+      { type: "future_task", subtype: "started", count: 2 },
+      { type: "system", subtype: "future_hook", count: 1 },
+    ]);
+    assert.equal(parser.state.unknownEventCount, 3);
+    assert.equal(parser.state.unknownEventOverflowCount, 0);
+    assert.equal(serialized.includes(secret), false);
+    assert.equal(serialized.includes("proxy-user"), false);
+    assert.ok(Buffer.byteLength(serialized, "utf8") < 4 * 1024);
+  });
+
+  it("keeps unknown metadata out of terminal classification", () => {
+    const parser = new StreamParser();
+    feedEvent(parser, {
+      type: "native_background_task",
+      subtype: "candidate",
+      arbitrary: "must be discarded",
+    });
+    feedEvent(parser, {
+      type: "result",
+      subtype: "success",
+      session_id: "session-final",
+      result: "clean completion",
+    });
+
+    assert.deepEqual(validateTurnCompletion(parser.state, 0), { status: "completed" });
+  });
+
+  it("bounds unknown protocol identities and records overflow without payload retention", () => {
+    const parser = new StreamParser();
+    for (let index = 0; index < 80; index += 1) {
+      feedEvent(parser, {
+        type: `future_protocol_${index}_${"x".repeat(40)}`,
+        subtype: `phase_${index}`,
+        payload: `secret-${index}`.repeat(10_000),
+      });
+    }
+
+    const serialized = JSON.stringify(parser.state.unknownEvents);
+    assert.equal(parser.state.unknownEventCount, 80);
+    assert.ok(parser.state.unknownEvents.length <= 50);
+    assert.ok(parser.state.unknownEventOverflowCount > 0);
+    assert.ok(Buffer.byteLength(serialized, "utf8") <= 4 * 1024);
+    assert.equal(serialized.includes("secret-"), false);
   });
 
   it("keeps a completed tool-only outer-assistant handoff empty", () => {
