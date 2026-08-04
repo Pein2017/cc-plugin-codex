@@ -31,7 +31,7 @@ The local promotion command SHALL verify exact checkout paths, expected branches
 - **THEN** promotion leaves `main` unchanged
 
 ### Requirement: Promotion reports activation class
-The promotion command SHALL classify the exact pre-main to developer diff as `hot_compatible` or `restart_required`. MCP server/schema/generation, Plugin discovery/Skills/descriptors, bootstrap, fixed environment, dependency, and host-instruction changes SHALL be `restart_required`. Compatible runtime implementation and non-runtime project changes MAY be `hot_compatible` only when the MCP API generation is unchanged. The receipt SHALL list decisive paths and the required next action.
+The promotion command SHALL classify the exact pre-main to developer diff as `hot_compatible` or `restart_required`. MCP server/schema/generation, Plugin discovery/Skills/descriptors, bootstrap, fixed environment, dependency, and host-instruction changes SHALL be `restart_required`. Compatible runtime implementation and non-runtime project changes MAY be `hot_compatible` only when the MCP API generation is unchanged. The receipt SHALL list decisive paths and the required next action, including only the dependency installation, Plugin refresh, or release preparation actually required before a new Codex task.
 
 #### Scenario: Compatible lifecycle implementation changes
 - **WHEN** the promoted diff changes only implementation behind the isolated runtime boundary and preserves the MCP API generation
@@ -39,7 +39,7 @@ The promotion command SHALL classify the exact pre-main to developer diff as `ho
 
 #### Scenario: Static Plugin surface changes
 - **WHEN** the promoted diff changes a Skill, MCP schema/server, manifest, descriptor, bootstrap, environment, dependency, or API generation owner
-- **THEN** the receipt reports `restart_required` and directs the operator to the appropriate local refresh or release plus a new Codex task
+- **THEN** the receipt reports `restart_required`, directs the operator to any required dependency/discovery/API preparation, and requires a new Codex task; a checkout-only server change does not require Plugin refresh
 
 #### Scenario: No commits need promotion
 - **WHEN** `main` and `developer` already identify the same commit

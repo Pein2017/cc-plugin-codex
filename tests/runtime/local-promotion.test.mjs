@@ -132,5 +132,6 @@ describe("local developer to main promotion", () => {
     const receipt = await promote(fixture);
     assert.equal(receipt.activation, "restart_required");
     assert.deepEqual(receipt.decisivePaths, ["runtime/mcp-server.mjs"]);
+    assert.match(receipt.nextAction, /No Plugin refresh is required[\s\S]*Start a new Codex task/i);
   });
 });

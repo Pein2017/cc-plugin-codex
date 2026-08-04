@@ -73,10 +73,25 @@ function changedPaths(run, cwd, fromCommit, toCommit) {
   return value.split("\0").filter(Boolean);
 }
 
-function nextAction(activation) {
-  return activation === "restart_required"
-    ? "Run npm run refresh:local or npm run release:local as appropriate, then start a new Codex task."
-    : "Existing Codex tasks use the promoted implementation on their next MCP call; no Plugin refresh is required.";
+function nextAction(classification) {
+  if (classification.activation !== "restart_required") {
+    return "Existing Codex tasks use the promoted implementation on their next MCP call; no Plugin refresh is required.";
+  }
+  const steps = [];
+  const decisive = classification.decisivePaths;
+  if (decisive.includes("package-lock.json")) {
+    steps.push(`Run npm ci in ${LIVE_CHECKOUT}.`);
+  }
+  if (decisive.includes("runtime/mcp-api.mjs")) {
+    steps.push(`Run npm run release:local in ${LIVE_CHECKOUT}.`);
+  } else if (decisive.some((candidate) => candidate.startsWith("plugins/") || candidate.startsWith(".agents/"))) {
+    steps.push(
+      `Run npm run refresh:local in ${LIVE_CHECKOUT}, or release:local if the Plugin version changed.`,
+    );
+  }
+  if (steps.length === 0) steps.push("No Plugin refresh is required.");
+  steps.push("Start a new Codex task.");
+  return steps.join(" ");
 }
 
 export async function promoteLocal(options = {}) {
@@ -160,7 +175,7 @@ export async function promoteLocal(options = {}) {
     fromCommit,
     toCommit,
     ...classification,
-    nextAction: nextAction(classification.activation),
+    nextAction: nextAction(classification),
   };
 }
 

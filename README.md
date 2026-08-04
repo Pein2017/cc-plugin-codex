@@ -456,9 +456,11 @@ than merging divergent histories.
 
 The promotion receipt classifies the exact diff. `hot_compatible` means current
 Codex tasks observe the implementation on their next MCP call. A
-`restart_required` receipt identifies static discovery/server/configuration
-paths and directs the operator to `refresh:local` or `release:local` followed by
-a new Codex task. During the brief Git update, new Worker module imports wait at
+`restart_required` receipt identifies the decisive static paths and prescribes
+only the preparation they require: checkout-only server/configuration changes
+need a new task but no Plugin refresh; dependency, discovery, or API-generation
+changes add `npm ci`, `refresh:local`, or `release:local` as appropriate. During
+the brief Git update, new Worker module imports wait at
 the promotion gate; already-loaded MCP operations and detached Claude turns
 continue normally.
 
