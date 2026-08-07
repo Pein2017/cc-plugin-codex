@@ -40,6 +40,16 @@ describe("native plugin contract", () => {
     assert.equal(manifest.hooks, undefined);
     assert.equal(manifest.mcpServers, "./.mcp.json");
     assert.equal(manifest.author.name, "Pein");
+    assert.equal(manifest.interface.brandColor, "#312E81");
+    assert.equal(manifest.interface.composerIcon, "./assets/cc-for-pein-icon.svg");
+    assert.equal(manifest.interface.logo, "./assets/cc-for-pein-logo.svg");
+    for (const asset of [manifest.interface.composerIcon, manifest.interface.logo]) {
+      assert.match(asset, /^\.\/assets\/[A-Za-z0-9._-]+\.svg$/);
+      const source = fs.readFileSync(path.join(pluginRoot, asset), "utf8");
+      assert.match(source, /^<svg\b/);
+      assert.match(source, /viewBox=/);
+      assert.doesNotMatch(source, /<script|javascript:|(?:href|xlink:href)=["']https?:\/\//i);
+    }
     const skills = fs.readdirSync(path.join(pluginRoot, "skills"), { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(pluginRoot, "skills", entry.name, "SKILL.md")))
       .map((entry) => entry.name)

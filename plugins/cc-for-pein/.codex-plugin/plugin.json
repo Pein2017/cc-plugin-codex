@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein",
-  "version": "0.15.0+codex.20260807023913",
+  "version": "0.15.1+codex.20260807024910",
   "description": "Experimental checkout-owned Claude Code Agent runtime with bounded leaf/Fable delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",
@@ -27,6 +27,9 @@
       "Interactive",
       "Write"
     ],
+    "brandColor": "#312E81",
+    "composerIcon": "./assets/cc-for-pein-icon.svg",
+    "logo": "./assets/cc-for-pein-logo.svg",
     "defaultPrompt": [
       "Use $cc-for-pein:spawn-agent with mcp__cc_for_pein__spawn_agent to create an Experimental named Claude Agent and retain required join obligations",
       "Use $cc-for-pein:followup-task with mcp__cc_for_pein__followup_task to continue a Claude Agent",

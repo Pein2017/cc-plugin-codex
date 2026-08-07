@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.15.1 - 2026-08-07
+
+- Add an original CC for Pein visual identity: a compact bidirectional relay
+  icon and a larger matching logo, declared through `composerIcon`, `logo`, and
+  `brandColor` with Plugin-root-relative asset paths.
+
 ## 0.15.0 - 2026-08-07
 
 - Add compact Agent Cards to spawn and list receipts with closed model, effort,

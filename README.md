@@ -1,5 +1,10 @@
 # CC for Pein: durable Claude Agents for Codex
 
+The Plugin visual identity uses two interlocking relay tracks around one signal
+node: the Codex lead and Claude worker remain distinct while exchanging durable,
+recoverable work. The manifest declares a compact composer icon and a larger
+matching logo from `plugins/cc-for-pein/assets/` with brand color `#312E81`.
+
 CC for Pein is a checkout-owned Codex Plugin with one durable Agent supervisor
 and a static Harness Driver seam. Claude Code is the only admitted production
 Harness and runs in headless stream-json mode. Claude Code remains responsible
