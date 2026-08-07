@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.15.0 - 2026-08-07
+
+- Add compact Agent Cards to spawn and list receipts with closed model, effort,
+  authority, phase, activity, and elapsed-time projections. Keep listing
+  observation-only: it never reconciles lifecycle state, dispatches mail,
+  consumes progress, or acknowledges completion.
+- Propagate a closed, nullable terminal-metrics receipt from Claude stream-json
+  through Driver, supervisor, durable jobs, completion inboxes, targeted joins,
+  pruning, and byte-identical redelivery. Admit only documented numeric fields,
+  distinguish provider-reported usage from Plugin counters, and never expose raw
+  usage payloads or claim billing accuracy.
+- Harden Agent Card provenance against cross-Agent and cross-owner job evidence,
+  keep terminal elapsed time null without a valid completion timestamp, and add
+  fake-Claude, recovery, root-isolation, compatibility, and release-path tests.
+- Shorten the model-facing Skill and MCP guidance while preserving all seven
+  operations, their existing input schemas, dynamic lead-owned join decisions,
+  and the active-wait completion boundary.
+
 ## 0.14.0 - 2026-08-04
 
 - **Breaking:** extend typed `wait_agent` with one-to-eight exact current-root

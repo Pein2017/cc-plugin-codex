@@ -187,8 +187,8 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /one sentence[\s\S]*`model`[\s\S]*`agent_name`[\s\S]*`status`/i);
-    assert.match(text, /no final Claude text[\s\S]*JSON[\s\S]*internal IDs/i);
+    assert.match(text, /one sentence[\s\S]*`model`[\s\S]*`agent_name`[\s\S]*authority[\s\S]*`status`/i);
+    assert.match(text, /no\s+final\s+Claude\s+text[\s\S]*JSON[\s\S]*internal IDs/i);
     assert.match(text, /operator diagnostics[\s\S]*deeper evidence/i);
     assert.match(text, /actionable failure\/recovery detail/i);
     assert.doesNotMatch(text, /receipt exactly as returned/i);
@@ -213,7 +213,7 @@ describe("native plugin contract", () => {
     assert.match(text, /Agent label such as Ops5[\s\S]*partial IDs[\s\S]*substitute another model/i);
     assert.match(text, /subscription[\s\S]*usage[\s\S]*allowance[\s\S]*credit[\s\S]*quota exhaustion[\s\S]*stop further real Claude tests/i);
     assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
-    assert.match(text, /`write: false`[\s\S]*prompt-enforced read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation/i);
+    assert.match(text, /`write: false`[\s\S]*behavioral read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation[\s\S]*not an OS-level/i);
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
     assert.match(text, /`leaf`[\s\S]*native `Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Fable/i);
     assert.match(text, /Fable must join every child[\s\S]*`Workflow` remains[\s\S]*disabled/i);

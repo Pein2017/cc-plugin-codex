@@ -243,11 +243,57 @@ describe("Agent wait persistence", () => {
         agent_name: created.path,
         agent_status: "completed",
         model: "claude-haiku-4-5",
+        reasoning_effort: null,
+        authority: "unknown",
         delegation_mode: "leaf",
+        phase: null,
+        started_at: null,
+        last_activity_at: null,
+        elapsed_seconds: null,
       }],
     });
     assert.deepEqual(observed.counts, zeroPersistenceIo);
     assert.equal(fs.readFileSync(inboxFile, "utf8"), before);
+  });
+
+  it("observes an active assigned mailbox without dispatching or acknowledging it", async () => {
+    const { runtime, workspace, ownerRootId } = setup("list-assigned-mailbox");
+    const created = runtime.store.createAgent({
+      task_name: "list_assigned_mailbox",
+      selectedModel: "claude-sonnet-5",
+    });
+    const jobId = "cc-list-assigned-mailbox";
+    runtime.store.reserveActivation(created.agentId, jobId, { initial: true });
+    const assigned = runtime.store.enqueueMessage(created.agentId, "remain assigned", {
+      kind: "send_message",
+    });
+    writeJobFile(workspace, jobId, {
+      id: jobId,
+      ownerRootId,
+      agentId: created.agentId,
+      workspaceRoot: workspace,
+      status: "running",
+      startedAt: "2026-07-26T00:00:00.000Z",
+      request: { model: "claude-sonnet-5", effort: "high", write: false },
+    });
+
+    const observed = await observePersistenceIo(() => runtime.listAgents());
+
+    assert.equal(observed.result.agents[0].agent_status, "working");
+    assert.deepEqual(observed.counts, zeroPersistenceIo);
+    assert.deepEqual(runtime.store.listMessages(created.agentId).map((message) => ({
+      messageId: message.messageId,
+      state: message.state,
+      assignedJobId: message.assignedJobId,
+      dispatchedAt: message.dispatchedAt,
+      acknowledgedAt: message.acknowledgedAt,
+    })), [{
+      messageId: assigned.message.messageId,
+      state: "assigned",
+      assignedJobId: jobId,
+      dispatchedAt: null,
+      acknowledgedAt: null,
+    }]);
   });
 
   it("lists across identical quarantined legacy completion evidence without persistence mutation", async () => {

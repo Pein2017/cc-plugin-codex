@@ -118,7 +118,16 @@ async function main() {
     event: { delta: { type: "text_delta", text: "completed:" + prompt } },
   }) + "\\n");
   await sleep(delay);
-  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: sessionId, result: "completed:" + prompt }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "result", subtype: "success", session_id: sessionId, result: "completed:" + prompt,
+    duration_ms: 8, duration_api_ms: 5, num_turns: 1, total_cost_usd: 0.002,
+    usage: {
+      input_tokens: 3, output_tokens: 2,
+      cache_creation_input_tokens: 1, cache_read_input_tokens: 0,
+      service_tier: "must-not-project",
+    },
+    modelUsage: { private: "must-not-project" },
+  }) + "\\n");
 }
 main().catch((error) => { process.stderr.write(error.stack + "\\n"); process.exitCode = 1; });
 `, "utf8");
@@ -209,9 +218,6 @@ function list(test, options = {}) {
 }
 
 function agent(test, target, options = {}) {
-  // Public list owns reconciliation; inspect the durable registry only after
-  // exercising that lifecycle boundary so the helper does not bypass it.
-  list(test, options);
   const environment = options.env ?? test.env;
   const workspaceHash = createHash("sha256")
     .update(fs.realpathSync.native(test.workspace))
@@ -238,10 +244,40 @@ function agent(test, target, options = {}) {
   return selected;
 }
 
+function reconcileAgentState(test, options = {}) {
+  const environment = options.env ?? test.env;
+  const moduleUrl = new URL("../../runtime/agent-runtime.mjs", import.meta.url).href;
+  const source = [
+    `import { createAgentRuntime } from ${JSON.stringify(moduleUrl)};`,
+    "const [cwd, envFile] = process.argv.slice(1);",
+    "createAgentRuntime({ cwd, envFile, env: process.env }).reconcile();",
+  ].join("\n");
+  const result = spawnSync(process.execPath, [
+    "--input-type=module",
+    "-e",
+    source,
+    test.workspace,
+    test.envFile,
+  ], {
+    cwd: test.workspace,
+    env: environment,
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+}
+
 function waitForAgent(test, target, predicate, options = {}) {
   const deadline = Date.now() + (options.timeoutMs ?? 10_000);
   let latest = null;
+  let lastReconcileAt = 0;
   while (Date.now() < deadline) {
+    // Tests that need durable lifecycle repair invoke that owner explicitly;
+    // public list_agents is intentionally observation-only.
+    if (Date.now() - lastReconcileAt >= 200) {
+      reconcileAgentState(test, options);
+      lastReconcileAt = Date.now();
+    }
     const current = agent(test, target, options);
     latest = current;
     if (predicate(current)) return current;
@@ -298,7 +334,10 @@ describe("canonical Agent runtime CLI", () => {
       "spawn_agent", "--write=false", "--task-name", "haiku_smoke",
       "--model", "haiku", "--reasoning-effort", "low", "--json", "session=haiku delay=40",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds",
+      "last_activity_at", "model", "phase", "reasoning_effort", "started_at", "status",
+    ]);
     assert.equal(spawned.agent_name, "/root/haiku_smoke");
     assert.equal(spawned.model, "claude-haiku-4-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -340,7 +379,10 @@ describe("canonical Agent runtime CLI", () => {
       "--model", "claude-fable-5", "--reasoning-effort", "max",
       "--delegation-mode", "claude_orchestrator", "--json", "session=fable delay=40",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds",
+      "last_activity_at", "model", "phase", "reasoning_effort", "started_at", "status",
+    ]);
     assert.equal(spawned.agent_name, "/root/fable_smoke");
     assert.equal(spawned.model, "claude-fable-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -396,7 +438,10 @@ describe("canonical Agent runtime CLI", () => {
     const spawned = run(test, [
       "spawn_agent", "--write=false", "--task-name", "alpha", "--model", "sonnet", "--json", "session=alpha delay=700",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds",
+      "last_activity_at", "model", "phase", "reasoning_effort", "started_at", "status",
+    ]);
     assert.equal(spawned.agent_name, "/root/alpha");
     assert.equal(spawned.model, "claude-sonnet-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -621,12 +666,27 @@ describe("canonical Agent runtime CLI", () => {
     const firstList = list(test);
     const secondList = list(test);
     assert.deepEqual(firstList, secondList);
-    assert.deepEqual(firstList.agents, [{
+    assert.equal(firstList.agents.length, 1);
+    assert.deepEqual({
+      agent_name: firstList.agents[0].agent_name,
+      agent_status: firstList.agents[0].agent_status,
+      model: firstList.agents[0].model,
+      reasoning_effort: firstList.agents[0].reasoning_effort,
+      authority: firstList.agents[0].authority,
+      delegation_mode: firstList.agents[0].delegation_mode,
+      phase: firstList.agents[0].phase,
+    }, {
       agent_name: spawned.agent_name,
       agent_status: "completed",
       model: "claude-sonnet-5",
+      reasoning_effort: null,
+      authority: "behavioral_read_only",
       delegation_mode: "leaf",
-    }]);
+      phase: "responding",
+    });
+    assert.match(firstList.agents[0].started_at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(firstList.agents[0].last_activity_at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(Number.isSafeInteger(firstList.agents[0].elapsed_seconds), true);
     assert.equal(JSON.stringify(firstList).includes("completionInbox"), false);
 
     const firstWait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
@@ -636,6 +696,26 @@ describe("canonical Agent runtime CLI", () => {
     assert.ok(firstWait.update.delivery_token);
     assert.match(firstWait.update.completion_message, /^completed:session=delivery/);
     assert.equal(firstWait.update.completion_message_truncated, false);
+    assert.deepEqual(firstWait.update.metrics, {
+      version: 1,
+      provider_reported: {
+        duration_ms: 8,
+        duration_api_ms: 5,
+        turn_count: 1,
+        input_tokens: 3,
+        output_tokens: 2,
+        cache_creation_input_tokens: 1,
+        cache_read_input_tokens: 0,
+        reported_cost_usd: 0.002,
+      },
+      plugin_observed: {
+        tool_call_count: 0,
+        attempt_count: 1,
+        recovery_attempt_count: 0,
+      },
+    });
+    assert.equal(JSON.stringify(firstWait.update).includes("service_tier"), false);
+    assert.equal(JSON.stringify(firstWait.update).includes("modelUsage"), false);
     const redelivered = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
     assert.deepEqual(redelivered, firstWait);
     const secondWait = run(test, [
@@ -827,7 +907,13 @@ describe("canonical Agent runtime CLI", () => {
       },
     });
     assert.equal(delegated.status, 0, delegated.stderr || delegated.stdout);
-    assert.deepEqual(JSON.parse(delegated.stdout), list(test));
+    const stableAgents = (receipt) => receipt.agents.map((entry) => ({
+      agent_name: entry.agent_name,
+      agent_status: entry.agent_status,
+      model: entry.model,
+      delegation_mode: entry.delegation_mode,
+    }));
+    assert.deepEqual(stableAgents(JSON.parse(delegated.stdout)), stableAgents(list(test)));
     assert.equal(fs.existsSync(poisonMarker), false);
 
     for (const args of [

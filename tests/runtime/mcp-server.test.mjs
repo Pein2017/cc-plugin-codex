@@ -81,19 +81,23 @@ describe("typed CC MCP server", () => {
     assert.equal(wait.inputSchema.properties.targets.maxItems, 8);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
-    assert.match(wait.description, /critical-path[\s\S]*one-hour completion-first[\s\S]*one progress update per Agent turn[\s\S]*never repeat/i);
-    assert.match(wait.description, /quiet timeout on required work means calling wait_agent again directly[\s\S]*do not narrate[\s\S]*do not call list_agents or read_agent_messages/i);
+    assert.match(wait.description, /join one current-root Agent turn[\s\S]*all-settled target barrier/i);
+    assert.match(wait.description, /Targets cannot combine with progress wakeup/i);
     const listAgentsTool = listed.tools.find((tool) => tool.name === "list_agents");
-    assert.match(listAgentsTool.description, /logical state only, never completion or live progress/i);
+    assert.match(listAgentsTool.description, /logical Agent Cards[\s\S]*observes state only/i);
+    const descriptionWords = listed.tools
+      .map((tool) => tool.description.trim().split(/\s+/u).length)
+      .reduce((total, words) => total + words, 0);
+    assert.ok(descriptionWords <= 180, `tool descriptions use ${descriptionWords} words`);
   });
 
   it("advertises the anti-polling server instructions", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const instructions = client.getInstructions();
-    assert.match(instructions, /fixed one-hour completion-first window/i);
-    assert.match(instructions, /quiet timeout on required work means calling wait_agent again directly/i);
-    assert.match(instructions, /without calling list_agents or read_agent_messages as a completion or progress recheck/i);
+    assert.match(instructions, /fixed one-hour upper bound/i);
+    assert.match(instructions, /quiet timeout on required work[\s\S]*call wait_agent again directly/i);
+    assert.match(instructions, /not list_agents or read_agent_messages as a completion\/progress recheck/i);
   });
 
   it("injects the hidden one-hour timeout for wait_agent via runtimeFactory, still rejects caller timeout_ms, and forwards other tools unchanged", async () => {
@@ -279,7 +283,14 @@ describe("typed CC MCP server", () => {
       spawn_agent: {
         agent_name: "/root/compact",
         model: "claude-sonnet-5",
+        reasoning_effort: null,
+        authority: "behavioral_read_only",
+        delegation_mode: "leaf",
         status: "working",
+        phase: "thinking",
+        started_at: "2026-08-07T00:00:00.000Z",
+        last_activity_at: null,
+        elapsed_seconds: 3,
       },
       followup_task: {
         agent_name: "/root/compact",

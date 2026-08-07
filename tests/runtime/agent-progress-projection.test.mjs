@@ -77,6 +77,80 @@ function setup(options = {}) {
 }
 
 describe("Agent progress projection", () => {
+  it("lists a safe Agent Card without claiming progress or completion delivery", async () => {
+    const { runtime, workspace, ownerRootId, agent } = setup();
+    const first = runtime.listAgents();
+    const second = runtime.listAgents();
+    assert.deepEqual(first, second);
+    assert.deepEqual(first.agents[0], {
+      agent_name: agent.path,
+      model: "claude-sonnet-5",
+      reasoning_effort: null,
+      authority: "unknown",
+      delegation_mode: "leaf",
+      phase: "tool",
+      started_at: null,
+      last_activity_at: "2026-07-26T00:00:03.000Z",
+      elapsed_seconds: null,
+      agent_status: "working",
+    });
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 0);
+    appendCompletionEvent(workspace, ownerRootId, {
+      jobId: "cc-card-completion",
+      agentId: agent.agentId,
+      terminalStatus: "completed",
+      completedAt: "2026-07-26T00:00:04.000Z",
+      summary: "done",
+      finalMessage: "completion remains unread",
+      resumability: { classification: "resumable", claudeSessionId: "session-card" },
+      detailedResultAvailable: true,
+      resultPointer: "cc-card-completion",
+    });
+    runtime.listAgents();
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).update?.kind, "completion");
+  });
+
+  it("keeps mismatched and foreign-owner retained job evidence out of Agent Cards", () => {
+    const { runtime, workspace, agent } = setup();
+    const poisonJob = (overrides) => ({
+      id: "cc-progress",
+      ownerRootId: "another-root",
+      agentId: agent.agentId,
+      workspaceRoot: workspace,
+      status: "running",
+      startedAt: "2026-07-26T00:00:00.000Z",
+      request: { effort: "max", write: true },
+      publicProgress: {
+        activity: "tool",
+        updatedAt: "2026-07-26T00:00:03.000Z",
+      },
+      ...overrides,
+    });
+    writeJobFile(workspace, "cc-progress", poisonJob({}));
+    const foreignBefore = readJobFile(workspace, "cc-progress");
+    assert.deepEqual(runtime.listAgents().agents[0], {
+      agent_name: agent.path,
+      model: "claude-sonnet-5",
+      reasoning_effort: null,
+      authority: "unknown",
+      delegation_mode: "leaf",
+      phase: null,
+      started_at: null,
+      last_activity_at: null,
+      elapsed_seconds: null,
+      agent_status: "working",
+    });
+    assert.deepEqual(readJobFile(workspace, "cc-progress"), foreignBefore);
+
+    writeJobFile(workspace, "cc-progress", poisonJob({
+      ownerRootId: "root-agent-progress-projection",
+      agentId: "different-agent",
+    }));
+    assert.equal(runtime.listAgents().agents[0].authority, "unknown");
+    assert.equal(runtime.listAgents().agents[0].reasoning_effort, null);
+    assert.equal(runtime.listAgents().agents[0].started_at, null);
+  });
+
   it("delivers one safe progress revision and suppresses normal repeats", async () => {
     const { runtime, workspace, agent } = setup();
     writeJobFile(workspace, "cc-foreign", {

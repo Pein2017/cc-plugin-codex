@@ -92,7 +92,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: use only for a blocked critical-path join. The fixed one-hour completion-first wait returns early on completion or eligible progress; model callers do not pass a timeout. When the dependency set is known, pass one to eight exact current-root Agent targets for a fixed one-turn join or all-settled barrier; targets cannot be combined with progress wakeup. Opt into one progress update per Agent turn only when it changes scheduling, and never repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly: do not narrate the timeout and do not call list_agents or read_agent_messages as a completion or progress recheck. If a completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait.",
+      "Experimental: join one current-root Agent turn or a fixed all-settled target barrier. Targets cannot combine with progress wakeup.",
     inputSchema: z.object({
       targets: z.array(exactTarget).min(1).max(8).optional().describe(
         "Fixed exact current-root Agent turns to join; one target joins one turn and multiple targets form an all-settled barrier."
@@ -127,7 +127,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   list_agents: {
     description:
-      "Experimental: list current-root durable CC Agents, optionally by path prefix. Reports logical state only, never completion or live progress; do not call this to recheck after a quiet wait_agent timeout.",
+      "Experimental: list current-root logical Agent Cards, optionally by path prefix. This observes state only.",
     inputSchema: z.object({ path_prefix: z.string().trim().min(1).optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -324,7 +324,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn is asynchronous: do meaningful non-overlapping work first, then call wait_agent only when the critical path is blocked. Model-facing wait_agent has a fixed one-hour completion-first window and accepts no timeout argument; when the dependency set is known, prefer one fixed targeted join or all-settled barrier over repeated root-wide waits. Never combine targets with progress wakeup or repeat progress waiting by reflex. A quiet timeout on required work means calling wait_agent again directly, without narrating the timeout and without calling list_agents or read_agent_messages as a completion or progress recheck; list_agents reports logical state only. If completion is consumed and no later wait is needed, no acknowledgement-only call is required; otherwise pass its token exactly once on the next wait. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn is asynchronous: do non-overlapping work first and join with wait_agent only at a critical dependency. Model-facing waits are completion-first, wake promptly on durable activity, have a fixed one-hour upper bound, and take no timeout argument. Known dependencies use one exact targeted join or all-settled barrier; targets cannot combine with progress wakeup. Opt into one progress update only when it changes scheduling; do not repeat it by reflex. After a quiet timeout on required work, call wait_agent again directly, not list_agents or read_agent_messages as a completion/progress recheck. A completion token is acknowledged exactly once on a later wait only if needed. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

@@ -18,6 +18,7 @@ import {
   terminateProcessTree,
   validateProcessIdentity,
 } from "./process-control.mjs";
+import { normalizeClaudeTerminalProviderMetrics } from "./terminal-metrics.mjs";
 
 const CLAUDE_PACKAGE_EXE_PARTS = [
   "node_modules",
@@ -366,6 +367,7 @@ export class StreamParser {
       runtimeReceipt: null,
       hookReceipts: [],
       lastByteAt: null,
+      providerReportedMetrics: null,
     };
   }
 
@@ -418,6 +420,7 @@ export class StreamParser {
             this.state.structuredOutput = event.structured_output ?? null;
           }
           if (event.session_id) this.state.sessionId = event.session_id;
+          this.state.providerReportedMetrics = normalizeClaudeTerminalProviderMetrics(event);
           return { kind: "result", data: event };
         case "user": {
           const text = Array.isArray(event.message?.content)
@@ -1329,6 +1332,7 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
           unknownEventOverflowCount: parser.state.unknownEventOverflowCount,
         },
         lastByteAt: parser.state.lastByteAt,
+        providerReportedMetrics: parser.state.providerReportedMetrics,
         stderr,
         pid: proc.pid,
         pidIdentity,

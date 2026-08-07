@@ -15,6 +15,7 @@ import { assertAgentBlocking, deriveAgentBlocking } from "./agent-blocking.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
 import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
+import { normalizeTerminalMetrics } from "./terminal-metrics.mjs";
 
 export const COMPLETION_INBOX_VERSION = 2;
 export const LEGACY_COMPLETION_INBOX_VERSION = 1;
@@ -236,6 +237,9 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   // read as `null`, exactly like an explicitly stored `null`, so an older
   // record on disk is not rejected by a newer runtime.
   assertAgentBlocking(event.blocking ?? null, "stored completion blocking evidence");
+  if (event.metrics != null && normalizeTerminalMetrics(event.metrics) == null) {
+    throw new Error("Completion metrics are invalid.");
+  }
   if (typeof event.detailedResultAvailable !== "boolean") {
     throw new Error("Completion detailed-result availability must be boolean.");
   }
@@ -510,6 +514,7 @@ function normalizeCompletionInput(ownerRootId, completion) {
     claudeSessionIdAvailable: Boolean(
       completion.claudeSessionIdAvailable ?? completion.resumability?.claudeSessionId
     ),
+    metrics: normalizeTerminalMetrics(completion.metrics) ?? null,
   };
 }
 
@@ -533,6 +538,7 @@ function publicEvent(event) {
     finalMessage: event.finalMessage,
     truncated: event.truncated,
     claudeSessionIdAvailable: event.claudeSessionIdAvailable,
+    metrics: event.metrics ?? null,
     deliveryToken: event.deliveryToken,
   };
 }
@@ -557,6 +563,7 @@ function publicAgentCompletionSummary(event) {
     // Absence (a pre-change frozen event) reads as `null`; this frozen
     // projection is never recomputed from the current Agent or job state.
     blocking: event.blocking ?? null,
+    metrics: event.metrics ?? null,
   };
 }
 
@@ -581,7 +588,8 @@ function sameCompletionFact(existing, normalized) {
     // than by the `===` scan used for scalars: a pre-change stored event has
     // no key at all (reads as `null`), so that absence must compare equal to
     // an explicitly stored `null` rather than always registering as changed.
-    JSON.stringify(existing.blocking ?? null) === JSON.stringify(normalized.blocking ?? null);
+    JSON.stringify(existing.blocking ?? null) === JSON.stringify(normalized.blocking ?? null) &&
+    JSON.stringify(existing.metrics ?? null) === JSON.stringify(normalized.metrics ?? null);
 }
 
 function assertSameCompletionIdentity(existing, normalized, ownerRootId) {
@@ -1049,6 +1057,7 @@ function completionFromTerminalJob(job, options) {
     claudeSessionIdAvailable: Boolean(
       options.claudeSessionIdAvailable ?? resumability?.claudeSessionId
     ),
+    metrics: normalizeTerminalMetrics(job.result?.metrics) ?? null,
   };
 }
 

@@ -9,7 +9,7 @@ import {
   appendCompletionEvent,
   resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
-import { writeJobFile } from "../../runtime/job-store.mjs";
+import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 
 const roots = [];
 const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-completion-runtime-"));
@@ -61,6 +61,21 @@ function completion(jobId, agentId = null) {
     resultPointer: jobId,
   };
 }
+
+const TEST_METRICS = Object.freeze({
+  version: 1,
+  provider_reported: {
+    duration_ms: 7,
+    duration_api_ms: null,
+    turn_count: 1,
+    input_tokens: 2,
+    output_tokens: 1,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    reported_cost_usd: 0.001,
+  },
+  plugin_observed: { tool_call_count: 0, attempt_count: 1, recovery_attempt_count: 0 },
+});
 
 function attachJob(context, agent, jobId, status = "completed") {
   context.runtime.store.updateAgent(agent.agentId, (current) => ({
@@ -272,7 +287,15 @@ describe("Agent completion projection", () => {
     const context = setup();
     const agent = context.runtime.store.createAgent({ task_name: "target_restart" });
     attachJob(context, agent, "target-restart");
-    appendCompletionEvent(context.workspace, context.ownerRootId, completion("target-restart", agent.agentId));
+    const storedJob = readJobFile(context.workspace, "target-restart");
+    writeJobFile(context.workspace, "target-restart", {
+      ...storedJob,
+      result: { ...storedJob.result, metrics: TEST_METRICS },
+    });
+    appendCompletionEvent(context.workspace, context.ownerRootId, {
+      ...completion("target-restart", agent.agentId),
+      metrics: TEST_METRICS,
+    });
     const first = await context.runtime.waitAgent({ targets: [agent.path], timeout_ms: 0 });
 
     const restarted = createAgentRuntime({
@@ -290,6 +313,8 @@ describe("Agent completion projection", () => {
     const redelivered = await restarted.waitAgent({ targets: [agent.path], timeout_ms: 0 });
     assert.equal(redelivered.targets[0].delivery_token, first.targets[0].delivery_token);
     assert.equal(redelivered.targets[0].completion_message, first.targets[0].completion_message);
+    assert.deepEqual(first.targets[0].metrics, TEST_METRICS);
+    assert.deepEqual(redelivered.targets[0].metrics, TEST_METRICS);
   });
 
   it("rejects a target owned by another Codex root", async () => {
@@ -351,6 +376,7 @@ describe("Agent completion projection", () => {
         completion_message_truncated: false,
         delivery_token: linked.deliveryToken,
         blocking: null,
+        metrics: null,
       },
     });
     assert.equal(JSON.stringify(first).includes("stored Claude final output"), true);
@@ -371,7 +397,13 @@ describe("Agent completion projection", () => {
         agent_name: agent.path,
         agent_status: "completed",
         model: null,
+        reasoning_effort: null,
+        authority: "unknown",
         delegation_mode: "leaf",
+        phase: null,
+        started_at: null,
+        last_activity_at: null,
+        elapsed_seconds: null,
       }],
     });
     const unrelated = runtime.store.createAgent({ task_name: "unrelated" });
@@ -380,12 +412,40 @@ describe("Agent completion projection", () => {
         agent_name: agent.path,
         agent_status: "completed",
         model: null,
+        reasoning_effort: null,
+        authority: "unknown",
         delegation_mode: "leaf",
+        phase: null,
+        started_at: null,
+        last_activity_at: null,
+        elapsed_seconds: null,
       }],
     });
     assert.deepEqual(runtime.listAgents().agents, [
-      { agent_name: agent.path, agent_status: "completed", model: null, delegation_mode: "leaf" },
-      { agent_name: unrelated.path, agent_status: "starting", model: null, delegation_mode: "leaf" },
+      {
+        agent_name: agent.path,
+        agent_status: "completed",
+        model: null,
+        reasoning_effort: null,
+        authority: "unknown",
+        delegation_mode: "leaf",
+        phase: null,
+        started_at: null,
+        last_activity_at: null,
+        elapsed_seconds: null,
+      },
+      {
+        agent_name: unrelated.path,
+        agent_status: "starting",
+        model: null,
+        reasoning_effort: null,
+        authority: "unknown",
+        delegation_mode: "leaf",
+        phase: null,
+        started_at: null,
+        last_activity_at: null,
+        elapsed_seconds: null,
+      },
     ]);
 
     runtime.store.updateAgent(agent.agentId, (current) => ({

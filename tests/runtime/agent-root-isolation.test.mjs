@@ -165,15 +165,21 @@ describe("owner-scoped Agent reconciliation", () => {
     assert.equal(runtimeB.store.readAgent(foreign.agentId)?.claudeSessionId, null);
     assert.equal(readJobFile(workspace, jobId)?.agentProjectionReconciledAt, undefined);
 
-    const repaired = runtimeB.listAgents().agents[0];
-    assert.equal(repaired.agent_status, "completed");
+    const observed = runtimeB.listAgents().agents[0];
+    assert.equal(observed.agent_status, "completed");
+    assert.equal(runtimeB.store.readAgent(foreign.agentId)?.claudeSessionId, null);
+    assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), false);
+    assert.equal(readJobFile(workspace, jobId)?.agentProjectionReconciledAt, undefined);
+
+    const repaired = await runtimeB.waitAgent({ timeout_ms: 0 });
+    assert.equal(repaired.update?.agent_status, "completed");
     assert.equal(runtimeB.store.readAgent(foreign.agentId)?.claudeSessionId, "foreign-claude-session");
     assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), true);
     assert.ok(readJobFile(workspace, jobId)?.agentProjectionReconciledAt);
     assert.equal(runtimeA.ownerRootId, ownerA);
   });
 
-  it("does not reap a foreign stale job but lets the owning root reap it later", () => {
+  it("does not reap a stale job through list but lets the owning wait path reap it", async () => {
     const { workspace, ownerB, runtimeA, runtimeB } = setup("stale");
     const old = "2026-07-25T00:00:00.000Z";
     const jobId = "cc-agent-foreign-stale";
@@ -194,13 +200,17 @@ describe("owner-scoped Agent reconciliation", () => {
     assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), false);
 
     runtimeB.listAgents();
+    assert.equal(readJobFile(workspace, jobId)?.status, "queued");
+    assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), false);
+
+    await runtimeB.waitAgent({ timeout_ms: 0 });
     const reaped = readJobFile(workspace, jobId);
     assert.equal(reaped?.status, "failed");
     assert.match(reaped?.errorMessage ?? "", /Auto-reaped/);
     assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), true);
   });
 
-  it("migrates only matching legacy owners and gives explicit ownerRootId precedence", () => {
+  it("observes legacy owners without mutation and migrates only on an owning wait", async () => {
     const { workspace, ownerA, ownerB, runtimeA } = setup("legacy");
     const local = runtimeA.store.createAgent({
       task_name: "local_legacy",
@@ -243,6 +253,11 @@ describe("owner-scoped Agent reconciliation", () => {
 
     const listed = runtimeA.listAgents().agents;
     assert.equal(listed[0]?.agent_status, "completed");
+    assert.equal(readJobFile(workspace, localJob.id)?.ownerRootId, undefined);
+    assert.deepEqual(readJobFile(workspace, foreignLegacy.id), foreignLegacyBefore);
+    assert.deepEqual(readJobFile(workspace, explicitForeign.id), explicitForeignBefore);
+
+    await runtimeA.waitAgent({ timeout_ms: 0 });
     assert.equal(readJobFile(workspace, localJob.id)?.ownerRootId, ownerA);
     assert.equal(readJobFile(workspace, localJob.id)?.sessionId, ownerA);
     assert.deepEqual(readJobFile(workspace, foreignLegacy.id), foreignLegacyBefore);

@@ -209,6 +209,32 @@ describe("Harness Driver contract", () => {
       /final message must be text/,
     );
     assert.throws(
+      () => validateHarnessTurnResult(terminalResult({ metrics: {
+        version: 1,
+        provider_reported: { duration_ms: 1, unknown: "payload" },
+        plugin_observed: null,
+      } }), driver),
+      /metrics must use the closed version-one schema/,
+    );
+    assert.deepEqual(validateHarnessTurnResult(terminalResult({ metrics: {
+      version: 1,
+      provider_reported: { duration_ms: 1 },
+      plugin_observed: null,
+    } }), driver).metrics, {
+      version: 1,
+      provider_reported: {
+        duration_ms: 1,
+        duration_api_ms: null,
+        turn_count: null,
+        input_tokens: null,
+        output_tokens: null,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        reported_cost_usd: null,
+      },
+      plugin_observed: null,
+    });
+    assert.throws(
       () => validateHarnessTurnResult(terminalResult({ harnessId: "other-exec" }), driver),
       /declares other-exec; expected claude-code/,
     );

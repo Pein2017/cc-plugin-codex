@@ -37,9 +37,10 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
 
 ## Authority and delegation
 
-- `write: false` is prompt-enforced read/review-only; `write: true` permits only
+- `write: false` is behavioral read/review-only authority; `write: true` permits
   task-scoped mutation. Both use fixed config, `IS_SANDBOX=1`, full-access
-  terminal parity, and `--dangerously-skip-permissions`; never omit `write`.
+  terminal parity, and `--dangerously-skip-permissions`; it is not an OS-level
+  process-permission switch. Never omit `write`.
 - Names are unique flat `/root/<task_name>` paths. Never adopt a Terminal Claude
   session. The message must stand alone without Codex history.
 - Omit `delegation_mode` or use `leaf` normally. Leaf disables native `Agent`
@@ -50,23 +51,15 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
   disabled. Haiku/Sonnet/Opus orchestration requests must fail.
 ## Parent join policy
 
-Classify the result before spawn:
+Before spawn, classify the result as `required` (wait and synthesize),
+`parallel-then-join` (do independent work then join), or `explicitly-detached`
+(only when the user does not need the result now). A `starting`/`working` card
+does not resolve a required join. It carries retained effort, behavioral
+authority, delegation mode, safe phase, and nullable timing evidence. Report
+one sentence from `model`, role, `agent_name`, authority, and `status`; no final
+Claude text, JSON, or internal IDs. Use operator diagnostics for deeper evidence
+and preserve actionable failure/recovery detail.
 
-- `required`: wait and synthesize before answering.
-- `parallel-then-join`: do independent work, then wait before dependency/final.
-- `explicitly-detached`: only when the user wants background work whose result
-  is not needed now; disclose that Codex will not auto-reactivate.
-
-Spawn independent lanes before waiting; do not reflexively wait while useful
-work remains. A `starting`/`working` acknowledgement never resolves a required
-join. On success report one sentence from `model`, its role, `agent_name`, and
-`status`; no final Claude text, JSON, or internal IDs. Use operator diagnostics
-for deeper evidence, and preserve actionable failure/recovery detail.
-
-A join's non-null `blocking.retry` decides the response, not `scope` alone:
-`same_agent_followup` continues on that same Agent identity via
-`$cc-for-pein:followup-task`, never a new spawn; `new_agent` re-delegates only
-that lane under a new Agent while sibling Agents keep running;
-`operator_required` (always Harness scope) stops every further spawn in that
-workflow, the same stop rule as subscription/usage exhaustion above, with no
-retry, fallback, or model/Harness substitution.
+For non-null `blocking`, branch on `retry`: `same_agent_followup` continues
+this Agent, `new_agent` re-delegates that lane, and `operator_required` stops
+further spawning in this workflow.

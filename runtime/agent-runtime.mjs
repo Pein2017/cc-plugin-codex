@@ -32,6 +32,7 @@ import {
   markAgentProjectionReconciled,
   readJobFile,
 } from "./job-store.mjs";
+import { projectAgentCard } from "./agent-card.mjs";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
@@ -296,10 +297,36 @@ function canonicalFrozenAgentStatus(status) {
   }
 }
 
-function publicSpawnReceipt(agent) {
+function observedAgentStatus(agent, job) {
+  if (!job || job.agentId !== agent.agentId) return canonicalAgentStatus(agent);
+  switch (job.status) {
+    case "completed":
+      return "completed";
+    case "interrupted":
+    case "cancelled":
+      return "interrupted";
+    case "failed":
+    case "unknown":
+      return "failed";
+    default:
+      return canonicalAgentStatus(agent);
+  }
+}
+
+function observedAgentJob(agent, job, ownerRootId) {
+  if (!job || job.agentId !== agent.agentId) return null;
+  const jobOwnerRootId = typeof job.ownerRootId === "string" && job.ownerRootId.trim()
+    ? job.ownerRootId.trim()
+    : typeof job.sessionId === "string" && job.sessionId.trim()
+      ? job.sessionId.trim()
+      : null;
+  return jobOwnerRootId === ownerRootId ? job : null;
+}
+
+function publicSpawnReceipt(cwd, agent) {
+  const job = agent.activeJobId ? readJobFile(cwd, agent.activeJobId) : null;
   return {
-    agent_name: agent.path,
-    model: agent.selectedModel,
+    ...projectAgentCard(agent, job),
     status: canonicalAgentStatus(agent),
   };
 }
@@ -326,6 +353,7 @@ function publicCompletionUpdate(summary, agents) {
     // Pass through the frozen value exactly as stored; never recompute it
     // from the Agent's current (possibly later) lifecycle.
     blocking: summary.blocking ?? null,
+    metrics: summary.metrics ?? null,
   };
 }
 
@@ -922,7 +950,7 @@ class AgentRuntime {
       const assigned = activation.assignedMessages;
       await this.jobs.launchPreparedStart(attached, messageText(assigned));
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
-      return publicSpawnReceipt(this.store.resolveTarget(agent.agentId));
+      return publicSpawnReceipt(this.cwd, this.store.resolveTarget(agent.agentId));
     } catch (error) {
       const handoffDisposition = launchAttempted
         ? preparedStartDisposition(error)
@@ -1405,6 +1433,7 @@ class AgentRuntime {
           entry.completion_message = event.completionMessage;
           entry.completion_message_truncated = event.completionMessageTruncated;
           entry.delivery_token = event.deliveryToken;
+          entry.metrics = event.metrics ?? null;
         }
         return entry;
       });
@@ -1532,13 +1561,18 @@ class AgentRuntime {
   listAgents(inputValue = {}) {
     const input = assertObject(inputValue, "list_agents input");
     if (input.all != null) throw new Error("list_agents does not expose cross-root all.");
-    this.reconcile();
-    const agents = this.store.listAgents({ pathPrefix: optionalText(input.path_prefix) }).map((agent) => ({
-      agent_name: agent.path,
-      agent_status: canonicalAgentStatus(agent),
-      model: agent.selectedModel,
-      delegation_mode: agent.delegationMode,
-    }));
+    const agents = this.store.listAgents({ pathPrefix: optionalText(input.path_prefix) }).map((agent) => {
+      const jobId = agent.activeJobId ?? agent.latestJobId;
+      const job = observedAgentJob(
+        agent,
+        jobId ? readJobFile(this.cwd, jobId) : null,
+        this.ownerRootId,
+      );
+      return {
+        ...projectAgentCard(agent, job),
+        agent_status: observedAgentStatus(agent, job),
+      };
+    });
     return {
       agents,
     };

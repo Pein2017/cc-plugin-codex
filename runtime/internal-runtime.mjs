@@ -1164,6 +1164,7 @@ class ClaudeRuntime {
       requiresAttention: Boolean(turn.failure.requiresAttention),
       toolUses: receipts.toolUses ?? [],
       touchedFiles: receipts.touchedFiles ?? [],
+      metrics: turn.metrics ?? null,
       harnessId: turn.harnessId,
       driverVersion: turn.driverVersion,
       nativeSessionRef: turn.nativeSession,

@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 
 import { validateHarnessCapabilities } from "./harness-capabilities.mjs";
 import { assertHarnessTurnFailureClass } from "./harness-failure-classes.mjs";
+import { normalizeTerminalMetrics } from "./terminal-metrics.mjs";
 
 export const HARNESS_DRIVER_CONTRACT_VERSION = 1;
 
@@ -228,6 +229,10 @@ export function validateHarnessTurnResult(result, driver) {
   if (!result.receipts || typeof result.receipts !== "object") {
     throw new Error("Harness turn result must carry bounded activity receipts.");
   }
+  const normalizedMetrics = result.metrics == null ? null : normalizeTerminalMetrics(result.metrics);
+  if (result.metrics != null && normalizedMetrics == null) {
+    throw new Error("Harness turn metrics must use the closed version-one schema.");
+  }
   if (result.runtime != null && (typeof result.runtime !== "object" || Array.isArray(result.runtime))) {
     throw new Error("Harness turn runtime evidence must be an object when present.");
   }
@@ -245,7 +250,7 @@ export function validateHarnessTurnResult(result, driver) {
       throw new Error("Harness turn Driver receipt exceeds its durable bound.");
     }
   }
-  return result;
+  return result.metrics == null ? result : { ...result, metrics: normalizedMetrics };
 }
 
 /**

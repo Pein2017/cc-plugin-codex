@@ -200,6 +200,7 @@ function withAggregateReceipts(result, aggregate) {
       ...(result.runtimeReceipt ?? {}),
       hookReceipts: [...aggregate.hookReceipts],
     },
+    providerReportedMetrics: result.providerReportedMetrics ?? null,
   };
 }
 
@@ -218,6 +219,7 @@ function cancelledDuringRecoveryResult(sessionId, attempts, recoveryAttempts, fi
     resumable: false,
     attempts,
     recoveryAttempts,
+    providerReportedMetrics: null,
   };
 }
 

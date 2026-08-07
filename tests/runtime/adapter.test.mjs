@@ -36,7 +36,7 @@ process.stdin.on("data", (chunk) => {
   finished = true;
   fs.writeFileSync(observedFile, JSON.stringify({ accepted: fs.existsSync(acceptedFile) }));
   process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "fake-session" }) + "\\n");
-  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "fake-session", result: "ok" }) + "\\n", () => process.exit(0));
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "fake-session", result: "ok", duration_ms: 4, duration_api_ms: 3, num_turns: 1, total_cost_usd: 0.001, usage: { input_tokens: 2, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, service_tier: "private" }, modelUsage: { private: true } }) + "\\n", () => process.exit(0));
 });
 process.on("SIGTERM", () => {
   fs.writeFileSync(terminatedFile, "terminated");
@@ -318,6 +318,16 @@ describe("Claude headless adapter", () => {
     assert.equal(promptExistedAtAcceptance, false);
     assert.equal(fs.readFileSync(fixture.inputFile, "utf8").includes("guarded prompt"), true);
     assert.deepEqual(JSON.parse(fs.readFileSync(fixture.observedFile, "utf8")), { accepted: true });
+    assert.deepEqual(result.providerReportedMetrics, {
+      duration_ms: 4,
+      duration_api_ms: 3,
+      turn_count: 1,
+      input_tokens: 2,
+      output_tokens: 1,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      reported_cost_usd: 0.001,
+    });
   });
 
   for (const scenario of [

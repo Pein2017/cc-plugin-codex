@@ -71,13 +71,19 @@ $cc-for-pein:read-agent-messages
 $cc-for-pein:list-agents
 ```
 
-Successful `spawn-agent` calls return only `agent_name`, `model`, and `status`;
-the parent reports one concise sentence with the model role, Agent name, and
-status—never final Claude text or raw JSON. `send-message` and `followup-task`
+Successful `spawn-agent` calls return a compact Agent Card: `agent_name`,
+`model`, nullable retained `reasoning_effort`, behavioral `authority`,
+immutable `delegation_mode`, `status`, safe `phase`, nullable timestamps, and
+query-time elapsed seconds. `write: false` is behavioral read/review authority,
+not a process sandbox. The parent reports one concise sentence with the model
+role, Agent name, authority, and status—never final Claude text or raw JSON.
+`send-message` and `followup-task`
 return only `agent_name` plus their delivery disposition. `interrupt-agent`
-returns only `agent_name` and operation status. `list-agents` reports only
-canonical name/status/model/delegation-mode records. Internal execution evidence
-remains available through operator diagnostics.
+returns only `agent_name` and operation status. `list-agents` reports compact
+Agent Cards with the same retained model/effort, behavioral authority,
+delegation, safe phase, and nullable timing evidence while keeping delivery and
+internal execution evidence out of the list surface. Deeper evidence remains
+available through operator diagnostics.
 `wait-agent` reports at most one update for an untargeted call: by default a
 completion with the complete stored Claude final message for parent synthesis,
 or one coalesced safe
@@ -88,6 +94,12 @@ unique exact current-root Agent identifiers. One target joins its fixed turn;
 multiple targets return one all-settled barrier in caller order. Targeted waits
 cannot combine with `wake_on_progress`, and a barrier timeout is status-only
 with no partial completion delivery.
+Completion and settled barrier receipts additionally carry optional closed
+metrics: Claude-reported durations, turn/tokens, and `reported_cost_usd` when
+present, plus Plugin-observed tool/attempt counts. Reported cost is not a
+subscription bill or charge estimate. After a bounded reconnect, provider
+fields describe the final native attempt; Plugin attempt/recovery/tool counters
+span the retained attempts.
 `read-agent-messages` retrieves recent outer-assistant text from the exact
 Agent's bound native Claude transcript without activation.
 
@@ -171,13 +183,13 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.11 |
+| Surface | Codex Multi-Agent V2 | CC for Pein v0.14 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | The same six lifecycle names plus the `read_agent_messages` native-history extension, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | `task_name`, self-contained `message`, exact `model`, and explicit `write`; the runtime never inherits Codex turns |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
-| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Same root-wide barrier, completion-first by default, with one safe progress milestone only on explicit opt-in |
+| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Completion-first event-wakeup join; one exact target is a single-turn join and multiple targets are an all-settled barrier, with one safe progress milestone only on explicit opt-in |
 | History | No model-facing transcript reader | Root-scoped recent outer-assistant history from the Agent's bound native Claude transcript |
 | Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
 

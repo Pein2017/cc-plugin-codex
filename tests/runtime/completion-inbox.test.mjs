@@ -129,6 +129,34 @@ function readFromFreshProcess(workspace, ownerRootId, runtimeHome) {
 }
 
 describe("completion inbox", () => {
+  it("freezes normalized metrics and projects legacy completion metrics as null", () => {
+    const { workspace, ownerRootId } = setup();
+    const metrics = {
+      version: 1,
+      provider_reported: {
+        duration_ms: 7,
+        duration_api_ms: null,
+        turn_count: 1,
+        input_tokens: 2,
+        output_tokens: null,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        reported_cost_usd: 0.001,
+      },
+      plugin_observed: { tool_call_count: 1, attempt_count: 1, recovery_attempt_count: 0 },
+    };
+    appendCompletionEvent(workspace, ownerRootId, completion("metrics", { agentId: "agent-metrics", metrics }));
+    appendCompletionEvent(workspace, ownerRootId, completion("legacy-metrics", { agentId: "agent-legacy-metrics" }));
+    const first = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    assert.deepEqual(first.events.map((event) => event.metrics), [metrics]);
+    const second = readUnreadAgentCompletionSummaries(workspace, ownerRootId);
+    assert.deepEqual(second.events.map((event) => event.metrics), [metrics]);
+    assert.deepEqual(
+      readUnreadCompletionEvents(workspace, ownerRootId).events.map((event) => event.metrics),
+      [metrics, null],
+    );
+  });
+
   it("keeps identical reconciliation lock-free while serializing mutable corrections", () => {
     const { workspace, ownerRootId } = setup();
     const job = {
@@ -367,6 +395,7 @@ describe("completion inbox", () => {
       completionMessageTruncated: false,
       deliveryToken: initial.deliveryToken,
       blocking: null,
+      metrics: null,
     }]);
   });
 
@@ -575,6 +604,7 @@ describe("completion inbox", () => {
       completionMessageTruncated: false,
       deliveryToken: linked.deliveryToken,
       blocking: null,
+      metrics: null,
     }]);
     assert.equal("finalMessage" in delivered.events[0], false);
     assert.equal("resultPointer" in delivered.events[0], false);

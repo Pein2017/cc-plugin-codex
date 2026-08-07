@@ -39,6 +39,7 @@ import {
 } from "./harness-contract.mjs";
 import { enqueueSteeringMessage, getSteeringSnapshot } from "./job-store.mjs";
 import { runClaudeTaskSession } from "./job-supervisor.mjs";
+import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const CLAUDE_CODE_HARNESS_ID = "claude-code";
 export const CLAUDE_CODE_DRIVER_VERSION = "claude-code@1";
@@ -143,6 +144,15 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       recoveryAttempts: result.recoveryAttempts ?? 0,
       steering: result.steering ?? null,
     },
+    metrics: terminalMetricsFromEvidence({
+      providerReported: result.providerReportedMetrics,
+      toolCallCount: Array.isArray(result.attempts)
+        ? result.attempts.reduce((count, attempt) =>
+          count + (Array.isArray(attempt?.toolUses) ? attempt.toolUses.length : 0), 0)
+        : (Array.isArray(result.toolUses) ? result.toolUses.length : 0),
+      attemptCount: Array.isArray(result.attempts) ? result.attempts.length : 0,
+      recoveryAttemptCount: result.recoveryAttempts ?? 0,
+    }),
     warning: result.warning ?? null,
     lastActivityAt: result.lastByteAt ?? null,
     manualContinuationCommand: result.manualResumeCommand ?? null,

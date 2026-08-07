@@ -1,0 +1,66 @@
+/** SPDX-License-Identifier: Apache-2.0 */
+
+const SAFE_PHASES = Object.freeze({
+  initialized: "starting",
+  tool: "tool",
+  thinking: "thinking",
+  responding: "responding",
+  retrying: "retrying",
+  reconnecting: "reconnecting",
+});
+const SAFE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+function nullableEffort(value) {
+  return typeof value === "string" && SAFE_EFFORTS.has(value) ? value : null;
+}
+
+function nullableTimestamp(value) {
+  if (typeof value !== "string" || !value) return null;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return null;
+  return new Date(milliseconds).toISOString() === value ? value : null;
+}
+
+function safeElapsedSeconds(startedAt, endedAt, now) {
+  const start = Date.parse(startedAt ?? "");
+  const reference = endedAt ?? (now instanceof Date ? now.toISOString() : String(now));
+  const end = Date.parse(reference);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, Math.floor((end - start) / 1000));
+}
+
+/**
+ * Project only retained Agent/job facts.  This is observation, not a liveness
+ * or progress-delivery operation; callers must not persist its result.
+ */
+export function projectAgentCard(agent, job, options = {}) {
+  const terminal = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
+  const progress = job?.publicProgress;
+  const activity = typeof progress?.activity === "string" ? progress.activity : null;
+  const phase = activity && activity !== "hook" ? SAFE_PHASES[activity] ?? null : null;
+  const progressTimestamp = phase ? nullableTimestamp(progress?.updatedAt) : null;
+  const driverLastByteAt = phase
+    ? nullableTimestamp(job?.result?.lastByteAt ?? job?.lastByteAt)
+    : null;
+  const startedAt = nullableTimestamp(job?.startedAt);
+  const terminalJob = terminal.has(job?.status);
+  const completedAt = terminalJob ? nullableTimestamp(job?.completedAt) : null;
+  return {
+    agent_name: agent.path,
+    model: agent.selectedModel,
+    reasoning_effort: nullableEffort(job?.request?.effort),
+    authority: job?.request?.write === true
+      ? "behavioral_write"
+      : job?.request?.write === false
+        ? "behavioral_read_only"
+        : "unknown",
+    delegation_mode: agent.delegationMode,
+    phase,
+    started_at: startedAt,
+    // Private or unknown activity cannot lend its timestamp to a public card.
+    last_activity_at: phase ? driverLastByteAt ?? progressTimestamp : null,
+    elapsed_seconds: terminalJob && completedAt == null
+      ? null
+      : safeElapsedSeconds(startedAt, completedAt, options.now ?? new Date()),
+  };
+}

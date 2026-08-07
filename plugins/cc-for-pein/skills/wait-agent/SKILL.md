@@ -30,7 +30,9 @@ ordinary completion-first join; never repeat progress waiting for that job.
   not need an acknowledgement-only call. A newly returned completion stays
   unread for crash-safe redelivery.
 - Completion has priority and includes the complete stored
-  `completion_message`, legacy truncation flag, and token. Use it directly; do
+  `completion_message`, legacy truncation flag, token, and optional closed
+  `metrics`. Provider `reported_cost_usd` is Claude-reported, not billed cost.
+  Use it directly; do
   not follow up, read history, or request a file merely to recover that result.
 - Opt-in progress returns at most one sanitized update per active Agent job.
   Hook activity stays private, and the update excludes Claude text, thinking,
