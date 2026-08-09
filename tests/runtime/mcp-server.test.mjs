@@ -82,7 +82,7 @@ describe("typed CC MCP server", () => {
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
     assert.match(wait.description, /join one current-root Agent turn[\s\S]*all-settled target barrier/i);
-    assert.match(wait.description, /Targets cannot combine with progress wakeup/i);
+    assert.match(wait.description, /one target may opt into one progress update/i);
     const listAgentsTool = listed.tools.find((tool) => tool.name === "list_agents");
     assert.match(listAgentsTool.description, /logical Agent Cards[\s\S]*observes state only/i);
     const descriptionWords = listed.tools
@@ -112,6 +112,14 @@ describe("typed CC MCP server", () => {
     await client.callTool({
       name: "wait_agent",
       arguments: {
+        targets: ["/root/first"],
+        wake_on_progress: true,
+      },
+      _meta: meta,
+    });
+    await client.callTool({
+      name: "wait_agent",
+      arguments: {
         targets: ["/root/first", "/root/second"],
       },
       _meta: meta,
@@ -136,6 +144,14 @@ describe("typed CC MCP server", () => {
       {
         name: "wait_agent",
         input: {
+          targets: ["/root/first"],
+          wake_on_progress: true,
+          timeout_ms: 3_600_000,
+        },
+      },
+      {
+        name: "wait_agent",
+        input: {
           targets: ["/root/first", "/root/second"],
           timeout_ms: 3_600_000,
         },
@@ -153,12 +169,12 @@ describe("typed CC MCP server", () => {
     assert.equal(rejected.isError, true);
   });
 
-  it("rejects targeted progress combinations and duplicate target identifiers at the typed boundary", async () => {
+  it("rejects multi-target progress and duplicate target identifiers at the typed boundary", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({ accepted: true })));
     closers.push(() => client.close(), () => server.close());
     const mixed = await client.callTool({
       name: "wait_agent",
-      arguments: { targets: ["/root/one"], wake_on_progress: true },
+      arguments: { targets: ["/root/one", "/root/two"], wake_on_progress: true },
       _meta: meta,
     });
     const duplicate = await client.callTool({

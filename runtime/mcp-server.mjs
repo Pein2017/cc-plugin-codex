@@ -92,21 +92,21 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   wait_agent: {
     description:
-      "Experimental: join one current-root Agent turn or a fixed all-settled target barrier. Targets cannot combine with progress wakeup.",
+      "Experimental: join one current-root Agent turn or a fixed all-settled target barrier; one target may opt into one progress update.",
     inputSchema: z.object({
       targets: z.array(exactTarget).min(1).max(8).optional().describe(
-        "Fixed exact current-root Agent turns to join; one target joins one turn and multiple targets form an all-settled barrier."
+        "Fixed exact current-root Agent turns to join; one target may observe progress and multiple targets form a completion-only barrier."
       ),
       wake_on_progress: z.boolean().optional().describe(
         "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit."
       ),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
     }).strict().superRefine((value, context) => {
-      if (value.targets && value.wake_on_progress === true) {
+      if (value.targets && value.wake_on_progress === true && value.targets.length !== 1) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["targets"],
-          message: "targets cannot be combined with wake_on_progress",
+          message: "wake_on_progress requires exactly one target when targets are provided",
         });
       }
       if (value.targets && new Set(value.targets).size !== value.targets.length) {
@@ -324,7 +324,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn is asynchronous: do non-overlapping work first and join with wait_agent only at a critical dependency. Model-facing waits are completion-first, wake promptly on durable activity, have a fixed one-hour upper bound, and take no timeout argument. Known dependencies use one exact targeted join or all-settled barrier; targets cannot combine with progress wakeup. Opt into one progress update only when it changes scheduling; do not repeat it by reflex. After a quiet timeout on required work, call wait_agent again directly, not list_agents or read_agent_messages as a completion/progress recheck. A completion token is acknowledged exactly once on a later wait only if needed. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn is asynchronous: do non-overlapping work first and join with wait_agent only at a critical dependency. Model-facing waits are completion-first, wake promptly on durable activity, have a fixed one-hour upper bound, and take no timeout argument. Known dependencies use one exact targeted join or all-settled barrier; only one target may opt into progress wakeup. Opt into one progress update only when it changes scheduling; do not repeat it by reflex. After a quiet timeout on required work, call wait_agent again directly, not list_agents or read_agent_messages as a completion/progress recheck. A completion token is acknowledged exactly once on a later wait only if needed. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

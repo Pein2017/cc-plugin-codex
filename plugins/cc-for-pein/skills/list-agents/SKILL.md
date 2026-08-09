@@ -9,7 +9,9 @@ description: 'Experimental: list durable CC Agents in the current Codex root, in
 > completion delivery, and it cannot reactivate Codex.
 
 Call `mcp__cc_for_pein__list_agents` with no fields, or optional `path_prefix`
-for the flat `/root/<task_name>` tree. Trusted Codex metadata owns cwd/root. If
+for the flat `/root/<task_name>` tree. Exact `/root` is the same unfiltered
+current-root view as omitting the field; use `/root/...` only to narrow it.
+Trusted Codex metadata owns cwd/root. If
 unavailable, report Plugin startup or discovery failure; never use shell.
 
 The list includes nonresident current-root Agents. Each Agent Card has retained

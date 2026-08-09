@@ -98,7 +98,7 @@ async function main() {
   if (failMode) {
     process.stderr.write(failMode === "auth"
       ? "Error: unauthorized. Please re-authenticate.\\n"
-      : "Error: usage limit reached for this billing period.\\n");
+      : "Error: You've hit your session limit. Your limit will reset at 8pm.\\n");
     process.exit(1);
   }
   process.stdin.on("data", (chunk) => {

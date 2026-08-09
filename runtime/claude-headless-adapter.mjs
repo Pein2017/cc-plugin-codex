@@ -702,13 +702,17 @@ export function classifyClaudeFailure(result = {}) {
   const callerBudgetLimit = /\b(?:maximum|max)\s+budget\b|error_max_budget_usd|--max-budget-usd/i.test(nativeFailureText);
   const accountCapacityScope = "(?:subscription|quota|credits?|weekly|monthly|allowance|billing[- ]period)";
   const exhaustionSignal = "(?:hit|reached|exceeded|exhausted|depleted|used[ -]up|no remaining|insufficient)";
+  const requestRateContext = /\b(?:rate|request)\s+limit\b|\blimit\b[^\n]{0,30}\b(?:for|on)\s+(?:api\s+)?requests?\b/i.test(nativeFailureText);
+  const genericUserLimit = !requestRateContext &&
+    /\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:limit|quota)\b/i.test(nativeFailureText);
   const explicitAccountLimit = !callerBudgetLimit && (
     new RegExp(`\\b${accountCapacityScope}\\b[^\\n]{0,100}\\b${exhaustionSignal}\\b`, "i").test(nativeFailureText) ||
     new RegExp(`\\b${exhaustionSignal}\\b[^\\n]{0,100}\\b${accountCapacityScope}\\b`, "i").test(nativeFailureText) ||
     /\busage\s+(?:limit|quota|allowance)\b[^\n]{0,60}\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b/i.test(nativeFailureText) ||
     /\b(?:reached|exceeded|exhausted|depleted|used[ -]up)\b[^\n]{0,60}\busage\s+(?:limit|quota|allowance)\b/i.test(nativeFailureText) ||
     /\b(?:insufficient|no|zero)\s+(?:remaining\s+)?credits?\b/i.test(nativeFailureText) ||
-    /\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:limit|quota)\b/i.test(nativeFailureText)
+    /\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+(?:your\s+)?session\s+limit\b/i.test(nativeFailureText) ||
+    genericUserLimit
   );
   if (explicitAccountLimit) {
     return {

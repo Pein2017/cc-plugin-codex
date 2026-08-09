@@ -100,6 +100,16 @@ function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, 
 }
 
 describe("Agent durable store", () => {
+  it("validates list prefixes before an empty root can return", () => {
+    const { store } = setup();
+    assert.deepEqual(store.listAgents(), []);
+    assert.deepEqual(store.listAgents({ pathPrefix: "/root" }), []);
+    assert.deepEqual(store.listAgents({ pathPrefix: "/root/" }), []);
+    for (const prefix of ["/root//alpha", "/root/../alpha", "/foreign/alpha"]) {
+      assert.throws(() => store.listAgents({ pathPrefix: prefix }), /Agent path prefix/);
+    }
+  });
+
   it("atomically reserves normalized names within a logical root while isolating roots", () => {
     const { workspace, claudeConfigDir, store } = setup();
     const created = store.createAgent({ task_name: "Researcher", description: "bounded task" });
@@ -160,6 +170,17 @@ describe("Agent durable store", () => {
     assert.equal(store.resolveTarget(" ALPHA ").agentId, alpha.agentId);
     assert.throws(() => store.resolveTarget("/root/al"), /No Agent with that exact/);
     assert.deepEqual(store.listAgents({ pathPrefix: "/root/al" }).map((agent) => agent.path), ["/root/alpha", "/root/alpine"]);
+    assert.deepEqual(
+      store.listAgents({ pathPrefix: "/root" }).map((agent) => agent.path),
+      store.listAgents().map((agent) => agent.path),
+    );
+    assert.deepEqual(
+      store.listAgents({ pathPrefix: "/root/" }).map((agent) => agent.path),
+      store.listAgents().map((agent) => agent.path),
+    );
+    for (const prefix of ["/root//alpha", "/root/../alpha", "/foreign/alpha"]) {
+      assert.throws(() => store.listAgents({ pathPrefix: prefix }), /Agent path prefix/);
+    }
 
     const first = store.reserveActivation(alpha.path, "job-alpha-1", { initial: true });
     assert.equal(first.reserved, true);

@@ -217,6 +217,7 @@ describe("Claude headless adapter", () => {
   it("classifies explicit account limits from terminal errors without confusing budgets or generic 429", () => {
     for (const message of [
       "You've hit your limit · resets 8pm",
+      "You've hit your session limit. Your limit will reset at 8pm.",
       "Weekly usage limit exceeded for this subscription",
       "Quota exhausted: no remaining credits",
     ]) {
@@ -262,6 +263,8 @@ describe("Claude headless adapter", () => {
       "HTTP 429: You've hit your rate limit; retry after 30 seconds",
       "HTTP 429: You have reached your request limit; retry later",
       "HTTP 429: You've exceeded your rate limit",
+      "HTTP 429: You have reached your limit for requests; retry later",
+      "HTTP 429: You've hit your limit on requests; retry after 30 seconds",
     ]) {
       const rateLimited = classifyClaudeFailure({
         status: "failed",

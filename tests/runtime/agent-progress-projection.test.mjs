@@ -197,6 +197,93 @@ describe("Agent progress projection", () => {
     });
   });
 
+  it("scopes targeted progress and completion observation to the snapshotted job", async () => {
+    const { runtime, workspace, ownerRootId, agent } = setup();
+    const other = runtime.store.createAgent({
+      task_name: "unrelated_progress",
+      selectedModel: "claude-sonnet-5",
+    });
+    runtime.store.updateAgent(other.agentId, (current) => ({
+      ...current,
+      status: "running",
+      activeJobId: "cc-unrelated-progress",
+      latestJobId: "cc-unrelated-progress",
+    }));
+    writeJobFile(workspace, "cc-unrelated-progress", {
+      id: "cc-unrelated-progress",
+      ownerRootId,
+      agentId: other.agentId,
+      workspaceRoot: workspace,
+      status: "running",
+      workerPid: process.pid,
+      workerPidIdentity: getProcessIdentity(process.pid),
+      publicProgressDeliveredRevision: 0,
+      publicProgress: {
+        revision: 1,
+        activity: "responding",
+        phase: "responding",
+        summary: "Claude is preparing a response.",
+        updatedAt: "2026-07-26T00:00:01.000Z",
+      },
+    });
+    const unrelated = appendCompletionEvent(workspace, ownerRootId, {
+      jobId: "cc-unrelated-completion",
+      agentId: "unrelated-agent",
+      terminalStatus: "completed",
+      completedAt: "2026-07-26T00:00:02.000Z",
+      summary: "unrelated completion",
+      finalMessage: "unrelated completion remains unread",
+      resumability: { classification: "resumable", claudeSessionId: "session-unrelated" },
+      detailedResultAvailable: true,
+      resultPointer: "cc-unrelated-completion",
+    }).event;
+
+    const receipt = await runtime.waitAgent({
+      targets: [agent.path],
+      timeout_ms: 0,
+      wake_on_progress: true,
+    });
+    assert.equal(receipt.update?.kind, "progress");
+    assert.equal(receipt.update.agent_name, agent.path);
+    assert.equal(receipt.update.progress.revision, 3);
+    assert.equal(readJobFile(workspace, "cc-unrelated-progress").publicProgressDeliveredRevision, 0);
+
+    const stillUnread = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.equal(stillUnread.update.delivery_token, unrelated.deliveryToken);
+    assert.equal(stillUnread.update.completion_message, "unrelated completion remains unread");
+  });
+
+  it("uses the existing one-progress budget for a targeted observation", async () => {
+    const { runtime, workspace, agent } = setup();
+    const first = await runtime.waitAgent({
+      targets: [agent.path],
+      timeout_ms: 0,
+      wake_on_progress: true,
+    });
+    const second = await runtime.waitAgent({
+      targets: [agent.path],
+      timeout_ms: 0,
+      wake_on_progress: true,
+    });
+    assert.equal(first.update?.kind, "progress");
+    assert.equal(second.timedOut, true);
+    assert.equal("update" in second, false);
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 3);
+  });
+
+  it("rejects progress-enabled multi-target waits before claiming progress", async () => {
+    const { runtime, workspace, agent } = setup();
+    await assert.rejects(
+      runtime.waitAgent({
+        targets: [agent.path, "/root/another"],
+        timeout_ms: 0,
+        wake_on_progress: true,
+      }),
+      /requires exactly one target/
+    );
+    assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 0);
+  });
+
   it("keeps hook progress private without consuming the job progress budget", async () => {
     const { runtime, workspace } = setup();
     let job = readJobFile(workspace, "cc-progress");

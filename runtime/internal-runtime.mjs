@@ -1449,6 +1449,9 @@ class ClaudeRuntime {
       ? [...new Set(options.targetJobIds.map((value) => assertJobId(value)))]
       : null;
     if (targetJobIds?.length === 0) throw new Error("Targeted wait requires at least one job ID.");
+    if (wakeOnProgress && targetJobIds != null && targetJobIds.length !== 1) {
+      throw new Error("Targeted progress wait requires exactly one job ID.");
+    }
     const resolveProgressJobIds = () => {
       const values = typeof options.progressJobIds === "function"
         ? options.progressJobIds()
@@ -1494,15 +1497,19 @@ class ClaudeRuntime {
             this.cwd,
             ownerRootId,
             jobId,
-            resolveProgressJobIds()
+            targetJobIds ?? resolveProgressJobIds()
           )
         : null;
       if (!progress) return;
       // Completion is authoritative and always wins a race with advisory
       // progress. Recheck immediately before advancing the progress revision.
       noteRead("completion");
-      inbox = readUnreadAgentCompletionSummaries(this.cwd, ownerRootId);
-      if (inbox.events.length > 0) return;
+      inbox = targetJobIds == null
+        ? readUnreadAgentCompletionSummaries(this.cwd, ownerRootId)
+        : (targetBarrierReady()
+          ? readTargetedAgentCompletionSummaries(this.cwd, ownerRootId, targetJobIds, { freeze: false })
+          : { events: [], consumed: [] });
+      if (inbox.events.length > 0 || (targetJobIds != null && targetBarrierReady())) return;
       const claimed = claimJobPublicProgress(this.cwd, progress.jobId);
       if (claimed.claimed && claimed.job) {
         selectedProgress = projectPublicProgress(claimed.job, ownerRootId, jobId, {
@@ -1537,10 +1544,12 @@ class ClaudeRuntime {
       }
       if (!postRegistration) observe();
     }
-    const update = targetJobIds == null ? (inbox.events[0] ?? selectedProgress ?? null) : null;
+    const update = targetJobIds == null
+      ? (inbox.events[0] ?? selectedProgress ?? null)
+      : (wakeOnProgress ? selectedProgress : null);
     const targetReady = targetJobIds != null && targetBarrierReady();
     const waitTimedOut = targetJobIds != null
-      ? !targetReady
+      ? !targetReady && update == null
       : update == null && (!job || ACTIVE_JOB_STATUSES.has(job.status));
     return {
       // The public Agent runtime intentionally does not expose the internal

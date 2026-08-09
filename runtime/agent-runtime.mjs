@@ -1305,8 +1305,8 @@ class AgentRuntime {
     if (hasTargets && (input.targets.length < 1 || input.targets.length > MAX_TARGETED_WAIT_TARGETS)) {
       throw new Error(`wait_agent targets must contain between 1 and ${MAX_TARGETED_WAIT_TARGETS} Agents.`);
     }
-    if (hasTargets && input.wake_on_progress === true) {
-      throw new Error("wait_agent targets cannot be combined with wake_on_progress.");
+    if (hasTargets && input.wake_on_progress === true && input.targets.length !== 1) {
+      throw new Error("wait_agent wake_on_progress requires exactly one target when targets are provided.");
     }
     const wakeOnProgress = input.wake_on_progress === true;
     const acknowledgeTokens = Array.isArray(input.acknowledge_tokens)
@@ -1370,7 +1370,7 @@ class AgentRuntime {
         timeoutMs: timeout,
         targetJobIds,
         acknowledgeTokens,
-        wakeOnProgress: false,
+        wakeOnProgress,
         signal: this.abortSignal,
       });
       // Reconcile once more before the final fixed-snapshot observation. The
@@ -1387,6 +1387,13 @@ class AgentRuntime {
         if (finalObservation.targetReady) waited = finalObservation;
       }
       this.reconcile();
+      if (waited.update?.kind === "progress" && !waited.targetReady) {
+        return {
+          message: waited.message,
+          timedOut: false,
+          update: publicProgressUpdate(waited.update, this.store.listAgents()),
+        };
+      }
       const inspected = waited.targetReady
         ? readTargetedAgentCompletionSummaries(this.cwd, this.ownerRootId, targetJobIds, { freeze: false })
         : { events: [], consumed: [] };

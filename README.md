@@ -95,10 +95,11 @@ or one coalesced safe
 progress update when explicitly requested. The model-facing wait has a fixed
 3,600,000 ms (one-hour) completion-first window and accepts no timeout
 argument. When the dependency set is known, `targets` accepts one to eight
-unique exact current-root Agent identifiers. One target joins its fixed turn;
-multiple targets return one all-settled barrier in caller order. Targeted waits
-cannot combine with `wake_on_progress`, and a barrier timeout is status-only
-with no partial completion delivery.
+unique exact current-root Agent identifiers. One target joins its fixed turn
+and may combine with `wake_on_progress: true` for one target-scoped advisory
+update. Multiple targets return one completion-only all-settled barrier in
+caller order and cannot combine with progress wakeup. A barrier timeout is
+status-only with no partial completion delivery.
 Completion and settled barrier receipts additionally carry optional closed
 metrics: Claude-reported durations, turn/tokens, and `reported_cost_usd` when
 present, plus Plugin-observed tool/attempt counts. Reported cost is not a
@@ -166,7 +167,8 @@ background terminal is needed. `wait_agent` is the explicit synchronous join.
 Model-facing callers use a fixed completion-first 3,600,000 ms (one-hour)
 upper bound and return immediately when completion arrives; they do not pass a
 timeout. Set `wake_on_progress: true` only for one intentional intermediate
-progress observation; the next call defaults back to completion-first.
+progress observation; optionally combine it with exactly one target to observe
+only that fixed Agent turn. The next call defaults back to completion-first.
 Cancelling the MCP call stops only that observation; it never interrupts or
 cancels the Agent.
 Codex MCP calls do not expose Unified Exec terminal session IDs, and this
@@ -177,7 +179,8 @@ Plugin deliberately does not add a second background-terminal/session layer.
 An Agent belongs to the logical Codex root that created it. Its path is flat:
 `/root/<task_name>`. Names are unique within that root. Mutating operations
 accept only an exact Agent ID, full path, or normalized name; prefixes are
-valid only for `list_agents(path_prefix)`.
+valid only for `list_agents(path_prefix)`. Exact `/root` means the same
+unfiltered current-root view as omitting `path_prefix`; `/root/...` narrows it.
 
 This is a logical default-isolation boundary against accidental cross-root
 orchestration, not a cryptographic authorization mechanism. Normal plugin
@@ -194,7 +197,7 @@ native Claude process permits it:
 | Spawn | `task_name`, `message`, `fork_turns` | `task_name`, self-contained `message`, exact `model`, and explicit `write`; the runtime never inherits Codex turns |
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
-| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Completion-first event-wakeup join; one exact target is a single-turn join and multiple targets are an all-settled barrier, with one safe progress milestone only on explicit opt-in |
+| Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Completion-first event-wakeup join; one exact target is a single-turn join that may expose one explicit safe progress milestone, while multiple targets remain a completion-only all-settled barrier |
 | History | No model-facing transcript reader | Root-scoped recent outer-assistant history from the Agent's bound native Claude transcript |
 | Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
 
@@ -214,9 +217,11 @@ ordinary join omits progress wakeup, and one explicit progress observation must
 not turn into reflexive polling. After its bounded observation, `wait_agent`
 reconciles current-root terminal facts and, unless that observation already
 returned a completion, takes one further zero-time completion-only look at the
-same mailbox before returning; a completion visible there replaces a stale
-timeout or claimed progress update. A timeout therefore means no unread
-current-root completion was visible at that final observation — nothing more.
+same observation scope before returning; an eligible completion visible there
+replaces a stale timeout or claimed progress update. An untargeted timeout means
+no unread current-root completion was visible there. A targeted timeout means
+only that its fixed selected turn had no eligible result; unrelated root
+activity may still exist.
 Quiet wait timeouts are not failures and should not trigger repetitive
 narration or an immediate `list_agents` or `read_agent_messages` call made
 solely to recheck completion. If required work remains unresolved after that
@@ -257,8 +262,11 @@ An ordinary wait neither returns nor claims safe public progress. With
 `wake_on_progress: true`, the call may return one advisory update containing
 only a generic activity/phase summary plus, at most, a sanitized tool name;
 Claude response, thinking, tool arguments, paths, hook payloads, receipts, and
-session IDs stay private. Repeated routine activity is coalesced into the
-latest revision and remains subject to an adaptive 5, 10, 20, then 30 second
+session IDs stay private. With exactly one target, that progress observation
+is scoped to the snapshotted target job; unrelated root activity remains
+untouched. Multiple-target barriers never expose progress. Repeated routine
+activity is coalesced into the latest revision and remains subject to an
+adaptive 5, 10, 20, then 30 second
 eligibility backoff. Retry, reconnect, and first-response transitions reset
 that backoff, while completion always bypasses it.
 
@@ -384,6 +392,45 @@ lifecycle state, and it never treats anything under `CLAUDE_CONFIG_DIR` as a
 Plugin cleanup candidate. Claude history older than 30 days is an observation,
 not deletion authority.
 
+The separate operator usage report reads Codex's persisted rollout events and
+selects only completed MCP calls whose server is exactly `cc_for_pein`. It is
+not a Skill or MCP tool, performs no Claude call, defaults to the preceding
+seven 24-hour periods, and requires explicit cross-task scope:
+
+```bash
+node runtime/operator-cli.mjs usage-report --all --json
+node runtime/operator-cli.mjs usage-report --all \
+  --days 7 --until 2026-08-09T00:00:00.000Z --json
+```
+
+The fixed UTC report globally deduplicates replayed non-empty call IDs and
+aggregates tool errors, wait outcomes, selected spawn routes, completion
+redelivery, terminal status, and closed metrics. `reported_cost_usd` remains a
+provider-reported runtime field, never a billed-cost or subscription-price
+estimate. The reader scans retained rollout files oldest-first and reserves a
+non-empty call ID before applying the report window. Consequently a historical
+call copied into a later Codex fork cannot be redated into the report. A no-ID
+record from a fork, or any record from a fork whose direct parent rollout is no
+longer retained, fails closed because its provenance cannot be resolved. The
+report emits no prompts, final messages, assistant history, raw
+tool arguments/output, environment values, native sessions, internal jobs, or
+absolute evidence paths.
+
+Acceptance is never inferred from completion, acknowledgement, tests,
+follow-up, terminal status, or metrics. After the lead/operator actually
+dispositions a delivered result, record that exact opaque token explicitly:
+
+```bash
+node runtime/operator-cli.mjs record-disposition \
+  --delivery-token <token> \
+  --disposition accepted_first_pass
+```
+
+The other admitted outcomes are `accepted_after_correction`,
+`rejected_or_escalated`, and `surface_failure`. The append-only owner-readable
+ledger stores only a one-way token digest, outcome, schema version, and
+timestamp. A completion without a valid explicit record remains `unknown`.
+
 The default release smoke also costs no Claude model usage:
 
 ```bash
@@ -413,8 +460,10 @@ distinct.
 
 ## Environment
 
-The installed MCP bootstrap and operator CLI load exactly
-`/data/CoordExp/cc-plugin-codex/config/runtime.env`. `--env-file`,
+The installed MCP bootstrap and the operator Agent-listing path load exactly
+`/data/CoordExp/cc-plugin-codex/config/runtime.env`. The operator usage report
+and disposition recorder need only `CODEX_HOME` and do not initialize Claude.
+`--env-file`,
 `CC_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, and workspace `.codex/.env` are not
 environment selectors for `cc:*`. The public CLI rejects `--env-file` rather
 than pretending to honor it.

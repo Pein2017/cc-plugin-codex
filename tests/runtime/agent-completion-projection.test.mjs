@@ -421,6 +421,11 @@ describe("Agent completion projection", () => {
         elapsed_seconds: null,
       }],
     });
+    assert.deepEqual(runtime.listAgents({ path_prefix: "/root" }), runtime.listAgents());
+    assert.deepEqual(runtime.listAgents({ path_prefix: "/root/" }), runtime.listAgents());
+    for (const prefix of ["/root//proj", "/root/../proj", "/foreign/proj"]) {
+      assert.throws(() => runtime.listAgents({ path_prefix: prefix }), /Agent path prefix/);
+    }
     assert.deepEqual(runtime.listAgents().agents, [
       {
         agent_name: agent.path,

@@ -200,4 +200,20 @@ describe("Claude final handoff boundaries", () => {
     assert.equal(classified.kind, "fatal");
     assert.equal(classified.resumable, false);
   });
+
+  it("does not derive account exhaustion from a successful assistant session-limit discussion", () => {
+    const classified = classifyClaudeFailure({
+      status: "completed",
+      finalMessage: "You've hit your session limit when this test account is exhausted.",
+      terminalEvents: [{
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "You've hit your session limit when this test account is exhausted.",
+      }],
+    });
+
+    assert.equal(classified.kind, null);
+    assert.equal(classified.resumable, false);
+  });
 });

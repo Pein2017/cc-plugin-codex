@@ -322,4 +322,41 @@ describe("Agent wait final observation", () => {
     assert.equal(followupReceipt.update?.kind, "progress");
     assert.equal(followupReceipt.update.progress.revision, 1);
   });
+
+  it("lets final targeted completion supersede claimed progress for the fixed turn", async () => {
+    const { runtime, workspace, agent } = setupWithProgress();
+    patchReconcileOnce(runtime, () => {
+      writeJobFile(
+        workspace,
+        "cc-final-observation",
+        terminalJobFrom(readJobFile(workspace, "cc-final-observation"), {
+          result: {
+            status: "completed",
+            rawOutput: "targeted completion supersedes claimed progress",
+            resumable: false,
+          },
+        }),
+      );
+    });
+    const jobsWaitCalls = spyOnJobsWait(runtime);
+
+    const waited = await runtime.waitAgent({
+      targets: [agent.path],
+      timeout_ms: 0,
+      wake_on_progress: true,
+    });
+
+    assert.equal(waited.timedOut, false);
+    assert.equal(waited.targets[0].state, "settled");
+    assert.equal(
+      waited.targets[0].completion_message,
+      "targeted completion supersedes claimed progress",
+    );
+    assert.equal(readJobFile(workspace, "cc-final-observation").publicProgressDeliveredRevision, 3);
+    assert.equal(jobsWaitCalls.length, 2);
+    assert.deepEqual(jobsWaitCalls[0].targetJobIds, ["cc-final-observation"]);
+    assert.equal(jobsWaitCalls[0].wakeOnProgress, true);
+    assert.deepEqual(jobsWaitCalls[1].targetJobIds, ["cc-final-observation"]);
+    assert.equal(jobsWaitCalls[1].wakeOnProgress, false);
+  });
 });

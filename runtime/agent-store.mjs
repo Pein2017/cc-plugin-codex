@@ -900,12 +900,23 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness } 
   }
 
   function listAgents(options = {}) {
+    const requestedPrefix = options.pathPrefix == null
+      ? null
+      : assertText(options.pathPrefix, "Agent path prefix");
+    const prefix = requestedPrefix === "/root" ? null : requestedPrefix;
+    if (prefix != null) {
+      if (!prefix.startsWith("/root/")) {
+        throw new Error("Agent path prefix must be /root or begin with /root/.");
+      }
+      const segments = prefix === "/root/"
+        ? []
+        : prefix.slice("/root/".length).split("/");
+      if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment.includes("\\"))) {
+        throw new Error("Agent path prefix must be /root or a non-relative /root/... path.");
+      }
+    }
     const registry = getRegistry();
     if (!registry) return [];
-    const prefix = options.pathPrefix == null ? null : assertText(options.pathPrefix, "Agent path prefix");
-    if (prefix != null && !prefix.startsWith("/root/")) {
-      throw new Error("Agent path prefix must begin with /root/.");
-    }
     return Object.values(registry.agents)
       .filter((agent) => prefix == null || agent.path.startsWith(prefix))
       .sort((left, right) => left.path.localeCompare(right.path))

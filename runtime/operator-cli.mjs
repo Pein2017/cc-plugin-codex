@@ -6,23 +6,39 @@ import process from "node:process";
 import { createAgentStore } from "./agent-store.mjs";
 import { parseArgs } from "./args.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
+import {
+  appendDisposition,
+  buildUsageReport,
+} from "./operator-usage-ledger.mjs";
 
 function usage() {
   return [
     "Usage:",
     "  node runtime/operator-cli.mjs list-agents --all [--cwd <path>] [--env-file <path>] [--json]",
+    "  node runtime/operator-cli.mjs record-disposition --delivery-token <opaque-token> --disposition <accepted_first_pass|accepted_after_correction|rejected_or_escalated|surface_failure> [--json]",
+    "  node runtime/operator-cli.mjs usage-report --all [--days <positive-integer>] [--until <UTC-timestamp>] [--json]",
     "",
-    "This is an explicit read-only operator diagnostic. Plugin skills never invoke it.",
+    "These are explicit operator diagnostics. Plugin skills and model-facing tools never invoke them.",
   ].join("\n");
 }
 
-function main() {
-  const [command, ...argv] = process.argv.slice(2);
-  if ([undefined, "help", "--help"].includes(command)) {
-    process.stdout.write(`${usage()}\n`);
-    return;
+function output(payload, pretty) {
+  process.stdout.write(`${JSON.stringify(payload, null, pretty ? 2 : 0)}\n`);
+}
+
+function parsePositiveDays(value) {
+  if (value == null) return 7;
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new Error("Operator usage-report --days must be a positive integer.");
   }
-  if (command !== "list-agents") throw new Error(`Unknown operator command ${command}.\n${usage()}`);
+  const days = Number(value);
+  if (!Number.isSafeInteger(days)) {
+    throw new Error("Operator usage-report --days must be a safe positive integer.");
+  }
+  return days;
+}
+
+function listAgents(argv) {
   const { options, positionals } = parseArgs(argv, {
     valueOptions: ["cwd", "env-file"],
     booleanOptions: ["all", "json"],
@@ -42,18 +58,67 @@ function main() {
     ownerRootId: "operator-diagnostic",
     claudeConfigDir: runtime.env.CLAUDE_CONFIG_DIR,
   });
-  const payload = {
+  output({
     workspaceRoot: runtime.cwd,
     operatorMode: true,
     readOnly: true,
     agents: store.listAllAgents(),
-  };
-  process.stdout.write(`${JSON.stringify(payload, null, options.json ? 2 : 0)}\n`);
+  }, options.json);
 }
 
-try {
-  main();
-} catch (error) {
+function recordDisposition(argv) {
+  const { options, positionals } = parseArgs(argv, {
+    valueOptions: ["delivery-token", "disposition"],
+    booleanOptions: ["json"],
+  });
+  if (positionals.length > 0 || !options["delivery-token"] || !options.disposition) {
+    throw new Error("Operator record-disposition requires --delivery-token and --disposition and accepts no positional values.");
+  }
+  output(appendDisposition({
+    deliveryToken: options["delivery-token"],
+    disposition: options.disposition,
+    env: process.env,
+  }), options.json);
+}
+
+async function usageReport(argv) {
+  const { options, positionals } = parseArgs(argv, {
+    valueOptions: ["days", "until"],
+    booleanOptions: ["all", "json"],
+  });
+  if (!options.all || positionals.length > 0) {
+    throw new Error("Operator usage-report requires explicit --all and accepts no positional values.");
+  }
+  const report = await buildUsageReport({
+    days: parsePositiveDays(options.days),
+    until: options.until,
+    env: process.env,
+  });
+  output(report, options.json);
+}
+
+async function main() {
+  const [command, ...argv] = process.argv.slice(2);
+  if ([undefined, "help", "--help"].includes(command)) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
+  if (command === "list-agents") {
+    listAgents(argv);
+    return;
+  }
+  if (command === "record-disposition") {
+    recordDisposition(argv);
+    return;
+  }
+  if (command === "usage-report") {
+    await usageReport(argv);
+    return;
+  }
+  throw new Error(`Unknown operator command ${command}.\n${usage()}`);
+}
+
+main().catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
-}
+});

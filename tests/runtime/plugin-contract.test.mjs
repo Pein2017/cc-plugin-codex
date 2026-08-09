@@ -125,6 +125,16 @@ describe("native plugin contract", () => {
     }
   });
 
+  it("keeps single-target progress discoverable through the existing wait skill", () => {
+    const text = fs.readFileSync(
+      path.join(root, "plugins", "cc-for-pein", "skills", "wait-agent", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(text, /wake_on_progress: true[\s\S]*exactly one target/i);
+    assert.match(text, /multiple[\s\S]*targets form one completion-only all-settled barrier/i);
+    assert.match(text, /unrelated root[\s\S]*activity remains available to its proper consumer/i);
+  });
+
   it("publishes one checkout-owned stdio MCP server with the one-hour timeout margin", () => {
     const pluginRoot = path.join(root, "plugins", "cc-for-pein");
     const config = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".mcp.json"), "utf8"));
