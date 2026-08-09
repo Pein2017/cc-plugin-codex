@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.16.0 - 2026-08-09
+
+- Permit one exact targeted `wait_agent` join to opt into its single bounded
+  progress update while preserving the snapshotted turn, unrelated-root
+  isolation, completion priority, and completion-only multi-target barriers.
+- Classify Claude's native session-capacity limit as terminal account
+  exhaustion without misclassifying successful assistant prose, caller
+  budgets, or generic request/rate HTTP 429 failures. Normalize exact
+  `list_agents(path_prefix: "/root")` to the current-root unfiltered view.
+- Add a privacy-preserving operator-only usage report and append-only
+  acceptance-disposition ledger. Retained rollout evidence is scanned with
+  fixed UTC bounds, replay-safe call identities, fail-closed fork provenance,
+  closed metrics, and no delegated content; the model-facing surface remains
+  exactly seven Agent tools.
+
 ## 0.15.1 - 2026-08-07
 
 - Add an original CC for Pein visual identity: a compact bidirectional relay
