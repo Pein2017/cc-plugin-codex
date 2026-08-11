@@ -11,6 +11,12 @@ import path from "node:path";
 import { createAgentStore } from "./agent-store.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
+  isLocallyCurrentOAuthCredential,
+  isNativeOAuthCredentialObservation,
+  observeClaudeCredentialState,
+  sameCredentialGeneration,
+} from "./claude-credential-state.mjs";
+import {
   acknowledgeAgentCompletionEvents,
   readTargetedAgentCompletionSummaries,
 } from "./completion-inbox.mjs";
@@ -67,6 +73,31 @@ function messageText(messages) {
 
 function resultSessionId(job) {
   return job?.threadId ?? job?.result?.sessionId ?? job?.recoverability?.exactSessionId ?? null;
+}
+
+function emptyEvidenceArray(value) {
+  return Array.isArray(value) && value.length === 0;
+}
+
+function sideEffectFreeAuthenticationFailure(job) {
+  if (
+    job?.status !== "failed" ||
+    job?.preClaudeLaunch === true ||
+    job?.parentJobId != null ||
+    job?.result?.failureClass !== "auth_or_permission" ||
+    job?.recoverability?.reason !== "auth_or_permission" ||
+    job?.result?.assistantOutputObserved !== false ||
+    !emptyEvidenceArray(job?.result?.toolUses) ||
+    !emptyEvidenceArray(job?.result?.touchedFiles) ||
+    !Array.isArray(job?.result?.attempts)
+  ) {
+    return false;
+  }
+  return job.result.attempts.every((attempt) =>
+    attempt?.assistantOutputObserved === false &&
+    emptyEvidenceArray(attempt?.toolUses) &&
+    emptyEvidenceArray(attempt?.touchedFiles)
+  );
 }
 
 function internalOptions(input, fallback = {}) {
@@ -1087,6 +1118,55 @@ class AgentRuntime {
     return marked;
   }
 
+  recoverCredentialBlockedAgent(agent, driver, failedJob) {
+    if (agent.continuation.mode !== "blocked") return agent;
+    if (agent.continuation.evidence?.reason !== "auth_or_permission") return agent;
+    if (
+      !failedJob ||
+      failedJob.id !== agent.latestJobId ||
+      failedJob.agentId !== agent.agentId ||
+      failedJob.ownerRootId !== agent.rootThreadId ||
+      failedJob.harnessId !== agent.harnessId ||
+      failedJob.harnessId !== driver.harnessId ||
+      !sideEffectFreeAuthenticationFailure(failedJob)
+    ) {
+      return agent;
+    }
+    const failureObservation = failedJob.result?.runtimeReceipt?.credentialObservation;
+    const observedAtMs = Date.now();
+    const replacement = observeClaudeCredentialState({
+      env: this.jobs.env,
+      nowMs: observedAtMs,
+    });
+    if (
+      !isNativeOAuthCredentialObservation(failureObservation) ||
+      !isNativeOAuthCredentialObservation(replacement) ||
+      failureObservation.configIdentity !== replacement.configIdentity ||
+      sameCredentialGeneration(failureObservation, replacement) ||
+      !isLocallyCurrentOAuthCredential(replacement, observedAtMs)
+    ) {
+      return agent;
+    }
+    const driverInstanceKey = driver.resolveInstanceKey?.(this.jobs.env) ?? null;
+    const failedInstanceKey = failedJob.harnessInstanceKey ?? failedJob.claudeConfigDir ?? null;
+    if (
+      driverInstanceKey !== replacement.configIdentity ||
+      failedInstanceKey !== replacement.configIdentity ||
+      agent.claudeSessionId != null
+    ) {
+      return agent;
+    }
+    try {
+      const recovered = this.store.recoverCredentialBlockedActivation(agent.agentId, {
+        failedJobId: failedJob.id,
+        replacementCredential: replacement,
+      });
+      return recovered.recovered ? recovered.agent : agent;
+    } catch {
+      return agent;
+    }
+  }
+
   async followupTask(inputValue) {
     const input = assertObject(inputValue, "followup_task input");
     assertNoHarnessImplementationSelector(input, "followup_task");
@@ -1108,7 +1188,10 @@ class AgentRuntime {
     // publish completion, or otherwise mutate durable state before rejection.
     let agent = this.store.resolveTarget(assertText(input.target, "followup_task target"));
     const driver = this.assertAgentDriver(agent);
-    if (agent.continuation.mode === "blocked") {
+    const credentialRecoveryCandidate =
+      agent.continuation.mode === "blocked" &&
+      agent.continuation.evidence?.reason === "auth_or_permission";
+    if (agent.continuation.mode === "blocked" && !credentialRecoveryCandidate) {
       throw blockedContinuationRejection(agent, "continue");
     }
     if (agent.continuation.mode === "exact_session") {
@@ -1134,6 +1217,12 @@ class AgentRuntime {
       model: validationLatestJob?.request?.model ?? agent.selectedModel,
       delegationMode: agent.delegationMode,
     });
+    if (credentialRecoveryCandidate) {
+      agent = this.recoverCredentialBlockedAgent(agent, driver, validationLatestJob);
+      if (agent.continuation.mode === "blocked") {
+        throw blockedContinuationRejection(agent, "continue");
+      }
+    }
     this.reconcile();
     agent = this.store.resolveTarget(agent.agentId);
     if (agent.continuation.mode === "blocked") {

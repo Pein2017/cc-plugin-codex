@@ -21,6 +21,7 @@ import {
   interruptClaudeProcess,
   sanitizeUnknownEventSummary,
 } from "./claude-headless-adapter.mjs";
+import { observeClaudeCredentialState } from "./claude-credential-state.mjs";
 import { readBoundClaudeAgentMessages } from "./claude-session-history.mjs";
 import {
   assertPreparedClaudeCompatibility,
@@ -113,6 +114,9 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
   const unknownEvents = unknownEventSummary(result);
   const drifted = result.failureClass === "protocol_session_drift";
   const finalMessagePresent = rawOutput.length > 0;
+  const credentialObservation = result.failureClass === "auth_or_permission"
+    ? observeClaudeCredentialState({ env })
+    : null;
   return {
     harnessId: CLAUDE_CODE_HARNESS_ID,
     driverVersion: CLAUDE_CODE_DRIVER_VERSION,
@@ -138,6 +142,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       : (result.failureReason ?? result.failureClass ?? "no_outer_assistant_message"),
     process: processEvidence,
     receipts: {
+      assistantOutputObserved: result.assistantOutputObserved === true,
       toolUses: result.toolUses ?? [],
       touchedFiles: result.touchedFiles ?? [],
       attempts: result.attempts ?? [],
@@ -158,6 +163,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
     manualContinuationCommand: result.manualResumeCommand ?? null,
     runtime: {
       ...(result.runtimeReceipt ?? {}),
+      ...(credentialObservation ? { credentialObservation } : {}),
       ...unknownEvents,
       executionProfile: profileReceipt,
       hostClaudeVersion: compatibility.compatibility?.version ?? null,
@@ -183,6 +189,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       steering: result.steering ?? null,
       runtimeReceipt: {
         ...(result.runtimeReceipt ?? {}),
+        ...(credentialObservation ? { credentialObservation } : {}),
         ...unknownEvents,
         executionProfile: profileReceipt,
         claudeCompatibility: compatibility.compatibility,
@@ -192,6 +199,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       lastByteAt: result.lastByteAt ?? null,
       manualResumeCommand: result.manualResumeCommand ?? null,
       requiresAttention: Boolean(result.requiresAttention),
+      assistantOutputObserved: result.assistantOutputObserved === true,
       toolUses: result.toolUses ?? [],
       touchedFiles: result.touchedFiles ?? [],
       ...unknownEvents,

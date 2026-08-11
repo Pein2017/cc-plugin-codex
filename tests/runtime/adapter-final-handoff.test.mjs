@@ -57,6 +57,19 @@ describe("Claude final handoff boundaries", () => {
     });
 
     assert.equal(parser.state.finalMessage, "Final evidence memo.");
+    assert.equal(parser.state.assistantOutputObserved, true);
+  });
+
+  it("does not mistake terminal authentication prose for useful assistant output", () => {
+    const parser = new StreamParser();
+    feedEvent(parser, {
+      type: "result",
+      subtype: "error",
+      is_error: true,
+      session_id: "session-auth-failure",
+      result: "OAuth access token has expired. Re-authenticate to continue.",
+    });
+    assert.equal(parser.state.assistantOutputObserved, false);
   });
 
   it("persists bounded tool metadata without arbitrary input values", () => {

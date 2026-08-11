@@ -14,6 +14,7 @@ import {
   getClaudeAvailability,
   resolveClaudeExecutable,
 } from "./claude-headless-adapter.mjs";
+import { observeClaudeCredentialState } from "./claude-credential-state.mjs";
 import { diagnoseClaudeCompatibility } from "./claude-version-compatibility.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import {
@@ -296,8 +297,19 @@ function inspectDependencies(checkout, options = {}) {
 }
 
 function inspectAuth(cwd, env, options = {}) {
+  const credential = (options.observeCredentialImpl ?? observeClaudeCredentialState)({
+    env,
+    nowMs: options.nowMs,
+  });
   if (env.ANTHROPIC_API_KEY) {
-    return { loggedIn: true, authMethod: "api-key", apiProvider: null, subscriptionType: null };
+    return {
+      loggedIn: true,
+      liveValidated: false,
+      authMethod: "api-key",
+      apiProvider: null,
+      subscriptionType: null,
+      credential,
+    };
   }
   const executable = options.executable ?? resolveClaudeExecutable({ env });
   const result = (options.spawnSyncImpl ?? spawnSync)(executable, ["auth", "status", "--json"], {
@@ -308,7 +320,14 @@ function inspectAuth(cwd, env, options = {}) {
     maxBuffer: 1024 * 1024,
   });
   if (result?.error || result?.status !== 0) {
-    return { loggedIn: false, authMethod: null, apiProvider: null, subscriptionType: null };
+    return {
+      loggedIn: false,
+      liveValidated: false,
+      authMethod: null,
+      apiProvider: null,
+      subscriptionType: null,
+      credential,
+    };
   }
   let parsed = {};
   try { parsed = JSON.parse(result.stdout); } catch {}
@@ -318,9 +337,11 @@ function inspectAuth(cwd, env, options = {}) {
   };
   return {
     loggedIn: parsed.loggedIn === true,
+    liveValidated: false,
     authMethod: publicText(parsed.authMethod),
     apiProvider: publicText(parsed.apiProvider),
     subscriptionType: publicText(parsed.subscriptionType),
+    credential,
   };
 }
 
@@ -501,12 +522,25 @@ export async function runDoctor(options = {}) {
     ));
 
     const auth = inspectAuth(cwd, environment.env, options);
+    const credentialPresent = auth.credential?.state === "present";
+    const credentialUnproven =
+      !credentialPresent ||
+      (auth.credential?.source === "native_oauth" && auth.credential?.accessLocallyExpired !== false);
+    const authStatus = !auth.loggedIn || !credentialPresent
+      ? "fail"
+      : credentialUnproven
+        ? "warn"
+        : "pass";
     checks.push(makeCheck(
       "claude-auth",
-      auth.loggedIn ? "pass" : "fail",
-      auth.loggedIn ? "Claude authentication is active." : "Claude authentication is unavailable.",
+      authStatus,
+      authStatus === "pass"
+        ? "Claude credential metadata is present; provider liveness was not validated."
+        : authStatus === "warn"
+          ? "Claude reports authentication, but the local access credential is expired or unproven; provider liveness was not validated."
+          : "Claude credential metadata is unavailable; provider liveness was not validated.",
       auth,
-      auth.loggedIn ? null : `Run CLAUDE_CONFIG_DIR=${EXPECTED_CLAUDE_CONFIG_DIR} claude auth login.`,
+      authStatus === "pass" ? null : `Run CLAUDE_CONFIG_DIR=${EXPECTED_CLAUDE_CONFIG_DIR} claude auth login, then rerun doctor.`,
     ));
 
   } else {

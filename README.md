@@ -252,6 +252,18 @@ active turn, or starts one exact-session or receipt-proven safe-fresh turn and
 assigns queued entries in order. Its successful public receipt contains only
 `agent_name` and `delivery`.
 
+If an Agent's first activation ends in `auth_or_permission`, the failure and
+its `auth_required / harness / operator_required` completion remain immutable.
+After the operator refreshes native OAuth credentials in the fixed
+`CLAUDE_CONFIG_DIR`, an activating `followup_task` may reuse that same logical
+Agent through a new safe-fresh Claude session only when the credential file has
+a different redacted filesystem generation, its access expiry is locally
+current, and the failed turn proves no tool use, file touch, or useful
+assistant output. The original task messages are requeued with the same IDs and
+delivered once together with the follow-up. Later-turn failures, legacy records
+without this evidence, API-key rotation, foreign config state, and ambiguous
+side effects remain blocked. `send_message` never performs this recovery.
+
 `wait_agent` first checks the current root's durable completion mailbox.
 Model-facing MCP calls use a fixed 3,600,000 ms (one-hour) observation upper
 bound and accept no timeout argument. The checkout CLI and direct runtime
@@ -476,6 +488,13 @@ localhost bypasses. Those values overlay conflicting inherited values; valid
 unrelated host state such as `PATH`, Codex root identity, and runtime-state
 location is preserved. Receipts expose only selected non-secret fields and
 redact proxy credentials.
+
+Readiness and `doctor` inspect credential metadata only. Their
+`liveValidated: false` field is intentional: a successful local `claude auth
+status` process or a locally current expiry does not prove that the provider
+will accept the next headless turn. Credential observations never retain bearer
+tokens, token hashes, account email, organization, scopes, prompts, or native
+session content.
 
 Every MCP call is bound to the trusted Codex `_meta.threadId` and local
 `_meta["codex/sandbox-state-meta"].sandboxCwd`; tool arguments cannot select a

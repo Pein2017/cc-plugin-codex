@@ -195,6 +195,7 @@ describe("Claude headless adapter", () => {
     parser.feed(`${JSON.stringify({ type: "result", subtype: "success", session_id: "s-1", result: "partial" })}\n`);
     assert.equal(parser.state.sessionId, "s-1");
     assert.equal(parser.state.finalMessage, "partial");
+    assert.equal(parser.state.assistantOutputObserved, true);
     assert.equal(parser.state.receivedTerminalEvent, true);
   });
 

@@ -180,6 +180,18 @@ describe("operator doctor", () => {
       expectedCheckout: SOURCE_ROOT,
       env: { ...process.env, CODEX_HOME: codexHome },
       spawnSyncImpl: fakeSpawn,
+      observeCredentialImpl: () => ({
+        version: 1,
+        source: "native_oauth",
+        configIdentity: "/data/CoordExp/.claude",
+        state: "present",
+        liveValidated: false,
+        generation: { dev: "1", ino: "2", size: "3", mtimeNs: "4", ctimeNs: "5" },
+        accessExpiresAt: "2026-08-11T20:00:00.000Z",
+        accessLocallyExpired: false,
+        refreshExpiresAt: null,
+        refreshLocallyExpired: null,
+      }),
       probeMcp: async () => ({
         healthy: true,
         tools: [
@@ -193,9 +205,88 @@ describe("operator doctor", () => {
     assert.equal(report.status, "pass");
     assert.equal(report.checks.find((check) => check.id === "checkout").details.packageVersion, PACKAGE_VERSION);
     assert.equal(report.checks.find((check) => check.id === "claude-auth").details.subscriptionType, "max");
+    assert.equal(report.checks.find((check) => check.id === "claude-auth").details.liveValidated, false);
+    assert.match(
+      report.checks.find((check) => check.id === "claude-auth").summary,
+      /provider liveness was not validated/,
+    );
     assert.equal(report.checks.find((check) => check.id === "plugin-compatibility-shells").status, "pass");
     assert.doesNotMatch(JSON.stringify(report), new RegExp(secretEmail));
     assert.doesNotMatch(JSON.stringify(report), /private-org/);
     assert.equal(fs.existsSync(path.join(codexHome, "plugins", "data", "cc", "state")), false);
+  });
+
+  it("warns on locally expired OAuth and fails on unavailable credential metadata without claiming liveness", async () => {
+    const fakeSpawn = (_command, args) => {
+      if (args.join(" ") === "plugin list --json") {
+        return { status: 0, stdout: JSON.stringify({ installed: [] }), stderr: "" };
+      }
+      if (args[0] === "--version") return { status: 0, stdout: "2.1.220 (Claude Code)\n", stderr: "" };
+      if (args[0] === "--help") {
+        return {
+          status: 0,
+          stdout: [
+            "-p", "--output-format", "--verbose", "--include-partial-messages",
+            "--input-format", "--replay-user-messages", "--include-hook-events", "--name",
+            "--model", "--effort", "--resume", "--allowedTools", "--disallowedTools",
+            "--append-system-prompt", "--settings", "--permission-mode",
+            "--dangerously-skip-permissions", "stream-json", "low", "medium", "high",
+            "xhigh", "max", "dontAsk", "bypassPermissions",
+          ].join(" "),
+          stderr: "",
+        };
+      }
+      if (args.join(" ") === "auth status --json") {
+        return { status: 0, stdout: JSON.stringify({ loggedIn: true, authMethod: "oauth" }), stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    };
+    const base = {
+      cwd: SOURCE_ROOT,
+      expectedCheckout: SOURCE_ROOT,
+      env: { ...process.env, CODEX_HOME: temporaryDirectory("cc-doctor-auth-state-") },
+      spawnSyncImpl: fakeSpawn,
+      probeMcp: async () => ({ healthy: false, tools: [], agentCount: 0 }),
+    };
+    const expired = await runDoctor({
+      ...base,
+      observeCredentialImpl: () => ({
+        version: 1,
+        source: "native_oauth",
+        configIdentity: "/data/CoordExp/.claude",
+        state: "present",
+        liveValidated: false,
+        generation: { dev: "1", ino: "2", size: "3", mtimeNs: "4", ctimeNs: "5" },
+        accessExpiresAt: "2026-08-11T10:00:00.000Z",
+        accessLocallyExpired: true,
+        refreshExpiresAt: null,
+        refreshLocallyExpired: null,
+      }),
+    });
+    const expiredAuth = expired.checks.find((check) => check.id === "claude-auth");
+    assert.equal(expiredAuth.status, "warn");
+    assert.equal(expiredAuth.details.liveValidated, false);
+    assert.match(expiredAuth.summary, /expired or unproven/);
+
+    const unavailable = await runDoctor({
+      ...base,
+      observeCredentialImpl: () => ({
+        version: 1,
+        source: "native_oauth",
+        configIdentity: "/data/CoordExp/.claude",
+        state: "unavailable",
+        liveValidated: false,
+        generation: null,
+        accessExpiresAt: null,
+        accessLocallyExpired: null,
+        refreshExpiresAt: null,
+        refreshLocallyExpired: null,
+      }),
+    });
+    const unavailableAuth = unavailable.checks.find((check) => check.id === "claude-auth");
+    assert.equal(unavailableAuth.status, "fail");
+    assert.equal(unavailableAuth.details.liveValidated, false);
+    assert.match(unavailableAuth.summary, /provider liveness was not validated/);
+    assert.doesNotMatch(JSON.stringify(unavailableAuth), /accessToken|refreshToken|private@/);
   });
 });

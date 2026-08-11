@@ -729,6 +729,14 @@ function isPreClaudeJob(job) {
 function prepareTerminalAgentSessionBinding(cwd, job) {
   if (!job?.agentId || !TERMINAL_JOB_STATUSES.has(job.status)) return job;
   if (isPreClaudeJob(job)) return job;
+  // An authentication-failed process may emit a native session identifier
+  // before Claude accepts the turn. It is diagnostic history, not a proven
+  // exact-resume target, and must never become the Agent's native pointer.
+  if (
+    job?.result?.failureClass === "auth_or_permission" ||
+    job?.recoverability?.reason === "auth_or_permission" ||
+    job?.lastFailureClass === "auth_or_permission"
+  ) return job;
   const ownerRootId = ownerRootIdOf(job);
   const sessionId = exactSessionIdOf(job);
   if (!ownerRootId || !sessionId) return job;

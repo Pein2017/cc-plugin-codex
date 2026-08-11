@@ -1162,6 +1162,7 @@ class ClaudeRuntime {
       lastByteAt: turn.lastActivityAt ?? null,
       manualResumeCommand: turn.manualContinuationCommand ?? null,
       requiresAttention: Boolean(turn.failure.requiresAttention),
+      assistantOutputObserved: receipts.assistantOutputObserved === true,
       toolUses: receipts.toolUses ?? [],
       touchedFiles: receipts.touchedFiles ?? [],
       metrics: turn.metrics ?? null,

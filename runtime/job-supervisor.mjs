@@ -160,6 +160,7 @@ function attemptReceipt(result, attempt, startedAt, completedAt) {
     sessionId: result.sessionId ?? null,
     lastByteAt: result.lastByteAt ?? null,
     partialOutput: result.finalMessage ?? "",
+    assistantOutputObserved: result.assistantOutputObserved === true,
     toolUses: Array.isArray(result.toolUses) ? result.toolUses : [],
     touchedFiles: Array.isArray(result.touchedFiles) ? result.touchedFiles : [],
     hookReceipts: Array.isArray(result.runtimeReceipt?.hookReceipts)

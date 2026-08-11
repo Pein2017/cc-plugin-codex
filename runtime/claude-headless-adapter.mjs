@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { observeClaudeCredentialState } from "./claude-credential-state.mjs";
 import { normalizePathSlashes, resolvePluginRuntimeRoot } from "./paths.mjs";
 import {
   getProcessIdentity,
@@ -320,8 +321,15 @@ export function getClaudeAuthStatus(cwd, options = {}) {
   const env = options.env ?? process.env;
   const claudeBin = options.claudeBin ?? resolveClaudeExecutable({ env });
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
+  const credential = observeClaudeCredentialState({ env, nowMs: options.nowMs });
   if (env.ANTHROPIC_API_KEY) {
-    return { available: true, loggedIn: true, detail: "API key configured" };
+    return {
+      available: true,
+      loggedIn: true,
+      liveValidated: false,
+      detail: "API key present (provider not live-validated)",
+      credential,
+    };
   }
   try {
     const result = spawnSyncImpl(claudeBin, ["auth", "status"], {
@@ -331,12 +339,20 @@ export function getClaudeAuthStatus(cwd, options = {}) {
       timeout: 10_000,
     });
     if (result.status !== 0) throw new Error("not authenticated");
-    return { available: true, loggedIn: true, detail: "authenticated" };
+    return {
+      available: true,
+      loggedIn: true,
+      liveValidated: false,
+      detail: "credential present (provider not live-validated)",
+      credential,
+    };
   } catch {
     return {
       available: true,
       loggedIn: false,
+      liveValidated: false,
       detail: "not authenticated — run `claude auth login`",
+      credential,
     };
   }
 }
@@ -354,6 +370,7 @@ export class StreamParser {
     this.state = {
       sessionId: null,
       finalMessage: "",
+      assistantOutputObserved: false,
       structuredOutput: null,
       receivedTerminalEvent: false,
       unknownEvents: [],
@@ -467,6 +484,7 @@ export class StreamParser {
     }
     const delta = inner?.delta;
     if (delta?.type === "text_delta" && delta.text) {
+      this.state.assistantOutputObserved = true;
       if (this.currentAssistantMessage !== null) {
         this.currentAssistantMessage += delta.text;
         this.state.finalMessage = this.currentAssistantMessage;
@@ -486,6 +504,7 @@ export class StreamParser {
     if (inner?.type === "content_block_delta") {
       const blockDelta = inner.delta;
       if (blockDelta?.type === "text_delta" && blockDelta.text) {
+        this.state.assistantOutputObserved = true;
         if (this.currentAssistantMessage !== null) {
           this.currentAssistantMessage += blockDelta.text;
           this.state.finalMessage = this.currentAssistantMessage;
@@ -1320,6 +1339,7 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
         signal,
         sessionId: parser.state.sessionId,
         finalMessage: parser.state.finalMessage,
+        assistantOutputObserved: parser.state.assistantOutputObserved,
         structuredOutput: parser.state.structuredOutput,
         toolUses: parser.state.toolUses,
         touchedFiles: parser.state.touchedFiles,
@@ -1359,6 +1379,7 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
         exitCode: -1,
         sessionId: null,
         finalMessage: "",
+        assistantOutputObserved: false,
         structuredOutput: null,
         toolUses: [],
         touchedFiles: [],

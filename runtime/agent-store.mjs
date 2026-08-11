@@ -1068,6 +1068,87 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness } 
     };
   }
 
+  function recoverCredentialBlockedActivation(target, options = {}) {
+    const failedJobId = normalizeJobId(options.failedJobId);
+    const replacement = options.replacementCredential;
+    if (!replacement || typeof replacement !== "object" || Array.isArray(replacement)) {
+      throw new Error("Credential recovery requires a redacted replacement observation.");
+    }
+    const result = withRegistry(workspace, root, (registry) => {
+      const current = internalAgent(registry, target);
+      const currentRef = internalNativeSessionRef(current);
+      const ownsFirstFailure =
+        current.activeJobId == null &&
+        current.latestJobId === failedJobId &&
+        current.lastTerminalJobId === failedJobId &&
+        current.latestCompletionSequence === 1 &&
+        current.finalizedJobIds?.length === 1 &&
+        current.finalizedJobIds[0] === failedJobId;
+      if (!ownsFirstFailure) {
+        return { registry, write: false, recovered: false, reason: "agent_advanced", agent: current };
+      }
+      if (
+        current.status !== "errored" ||
+        current.continuation.mode !== "blocked" ||
+        current.continuation.evidence?.reason !== "auth_or_permission"
+      ) {
+        return { registry, write: false, recovered: false, reason: "not_auth_blocked", agent: current };
+      }
+      if (currentRef) {
+        return { registry, write: false, recovered: false, reason: "native_session_present", agent: current };
+      }
+      let recoveredMessages = 0;
+      const messages = current.mailbox.messages.map((message) => {
+        if (message.assignedJobId !== failedJobId) {
+          if (["assigned", "dispatched", "acknowledged"].includes(message.state)) {
+            throw new Error("Credential recovery found mailbox ownership from another turn.");
+          }
+          return message;
+        }
+        if (!["assigned", "dispatched", "acknowledged"].includes(message.state)) {
+          throw new Error("Credential recovery found an invalid failed-turn mailbox state.");
+        }
+        recoveredMessages += 1;
+        const { receipt: _receipt, ...withoutReceipt } = message;
+        return {
+          ...withoutReceipt,
+          state: "queued",
+          assignedJobId: null,
+          assignedAt: null,
+          deliveryIntent: null,
+          dispatchedAt: null,
+          acknowledgedAt: null,
+        };
+      });
+      if (recoveredMessages === 0) {
+        return { registry, write: false, recovered: false, reason: "no_failed_turn_messages", agent: current };
+      }
+      const agent = {
+        ...current,
+        continuation: continuation("safe_fresh", {
+          reason: "credential_refresh_proven_safe_fresh",
+          failedJobId,
+          configIdentity: replacement.configIdentity,
+          credentialGeneration: clone(replacement.generation),
+          accessExpiresAt: replacement.accessExpiresAt,
+        }),
+        mailbox: { ...current.mailbox, messages },
+        updatedAt: nowIso(),
+      };
+      return {
+        registry: { ...registry, agents: { ...registry.agents, [agent.agentId]: agent } },
+        recovered: true,
+        reason: "credential_refresh_proven_safe_fresh",
+        agent,
+      };
+    });
+    return {
+      recovered: Boolean(result.recovered),
+      reason: result.reason ?? null,
+      agent: publicAgent(result.agent),
+    };
+  }
+
   function enqueueMessage(target, text, options = {}) {
     const messageText = assertText(text, "Agent message");
     const result = withRegistry(workspace, root, (registry) => {
@@ -1311,7 +1392,11 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness } 
     let sessionBindingError = null;
     const candidateIsCurrent = agentBefore.activeJobId === jobId
       || (agentBefore.activeJobId == null && (agentBefore.latestJobId == null || agentBefore.latestJobId === jobId));
-    if (candidateIsCurrent && observedSessionId && !agentBefore.nativeSessionRef) {
+    const authenticationFailed =
+      job?.result?.failureClass === "auth_or_permission" ||
+      job?.recoverability?.reason === "auth_or_permission" ||
+      job?.lastFailureClass === "auth_or_permission";
+    if (candidateIsCurrent && observedSessionId && !agentBefore.nativeSessionRef && !authenticationFailed) {
       try {
         sessionBinding = bindSession(target, observedSessionId, {
           jobId,
@@ -1516,6 +1601,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness } 
     listAllAgents,
     updateAgent,
     reserveActivation,
+    recoverCredentialBlockedActivation,
     finalizeFromJob,
     enqueueMessage,
     listMessages,

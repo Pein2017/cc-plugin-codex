@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.17.0 - 2026-08-11
+
+- Observe native Claude OAuth credential generations without retaining tokens,
+  token hashes, account identity, scopes, or provider-live claims. Readiness
+  and doctor now expose metadata-only `liveValidated: false` evidence and warn
+  on locally expired or unproven access credentials.
+- Let an activating `followup_task` recover the same logical Agent after a
+  credential refresh only for a first-turn `auth_or_permission` failure with
+  durable zero-side-effect evidence. The historical failure remains immutable,
+  its original task messages are atomically requeued once, and the new turn is
+  always a safe-fresh native Claude session; all ambiguous cases remain blocked.
+- Prevent authentication-failed native session IDs from becoming exact-resume
+  pointers and persist an explicit assistant-output observation bit across the
+  Claude stream, Driver, supervisor attempt, and job boundaries.
+
 ## 0.16.0 - 2026-08-09
 
 - Permit one exact targeted `wait_agent` join to opt into its single bounded

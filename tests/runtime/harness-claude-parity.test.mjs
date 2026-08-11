@@ -249,6 +249,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
           exitCode: 1,
           sessionId: "observed-session",
           finalMessage: "",
+          assistantOutputObserved: false,
           failureClass: "protocol_session_drift",
           failureReason: "expected session-a, observed observed-session",
           stderr: "native drift diagnostic",
@@ -295,7 +296,59 @@ describe("claude-code Driver preserves established Claude execution semantics", 
     );
     assert.equal(result.failure.class, "usage_or_subscription_limit");
     assert.equal(result.failure.resumable, false);
+    assert.equal(result.receipts.assistantOutputObserved, false);
+    assert.equal(result.nativeReceipt.assistantOutputObserved, false);
     assert.equal(result.nativeSession, null);
+  });
+
+  it("binds a fresh redacted credential observation to an authentication failure", async () => {
+    const root = scratch("auth-failure-observation");
+    const claudeConfigDir = path.join(root, ".claude");
+    fs.mkdirSync(claudeConfigDir);
+    fs.writeFileSync(path.join(claudeConfigDir, ".credentials.json"), `${JSON.stringify({
+      claudeAiOauth: {
+        accessToken: "driver-secret-access",
+        refreshToken: "driver-secret-refresh",
+        expiresAt: Date.parse("2026-08-12T00:00:00.000Z"),
+        refreshTokenExpiresAt: Date.parse("2026-09-12T00:00:00.000Z"),
+        email: "driver-private@example.invalid",
+      },
+    })}\n`, { mode: 0o600 });
+
+    const { result } = await captureTurn(
+      { model: "opus", write: false, delegationMode: "leaf" },
+      {
+        cwd: root,
+        claudeConfigDir,
+        turn: {
+          status: "failed",
+          exitCode: 1,
+          sessionId: "auth-failed-session",
+          finalMessage: "",
+          failureClass: "auth_or_permission",
+          failureReason: "native authentication failed",
+          stderr: "OAuth access token has expired",
+          resumable: false,
+          recoveryAttempts: 0,
+          attempts: [],
+          steering: { messages: [], latestAcknowledgedSequence: 0 },
+          runtimeReceipt: {},
+          toolUses: [],
+          touchedFiles: [],
+        },
+      },
+    );
+
+    assert.equal(result.failure.class, "auth_or_permission");
+    assert.equal(result.failure.resumable, false);
+    assert.equal(result.runtime.credentialObservation.source, "native_oauth");
+    assert.equal(result.runtime.credentialObservation.configIdentity, fs.realpathSync.native(claudeConfigDir));
+    assert.equal(result.runtime.credentialObservation.liveValidated, false);
+    assert.deepEqual(
+      result.nativeReceipt.runtimeReceipt.credentialObservation,
+      result.runtime.credentialObservation,
+    );
+    assert.doesNotMatch(JSON.stringify(result), /driver-secret|driver-private/);
   });
 
   it("derives its native instance identity from the fixed Claude configuration", () => {
