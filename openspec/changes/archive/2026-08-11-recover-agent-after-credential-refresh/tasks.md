@@ -20,6 +20,6 @@
 ## 4. Verification and Release Preparation
 
 - [x] 4.1 Run the focused credential, Driver, Agent recovery, completion, diagnostics, and Plugin contract test suites and resolve all failures.
-- [ ] 4.2 Run one explicit Haiku/low real Claude smoke through the fixed config/proxy path; stop paid Claude testing if account-limit evidence appears.
+- [x] 4.2 Run one explicit Haiku/low real Claude smoke through the fixed config/proxy path; stop paid Claude testing if account-limit evidence appears.
 - [x] 4.3 Update `CHANGELOG.md` and the package base version from the single version source for the release.
-- [ ] 4.4 Run `npm run check`, strict OpenSpec validation, local Plugin validation, zero-cost release smoke, doctor, and readiness with no P0/P1 gaps.
+- [x] 4.4 Run `npm run check`, strict OpenSpec validation, local Plugin validation, zero-cost release smoke, doctor, and readiness with no P0/P1 gaps.
