@@ -12,6 +12,12 @@ const cli = path.join(root, "runtime", "cli.mjs");
 const operatorCli = path.join(root, "runtime", "operator-cli.mjs");
 const bootstrap = path.join(root, "plugins", "cc-for-pein", "bootstrap", "cc-runtime.mjs");
 const cleanups = [];
+const COMMON_DENIED_TOOLS = [
+  "Workflow", "ListAgents", "ListPeers", "ScheduleWakeup", "CronCreate", "CronDelete",
+  "CronList", "CronUpdate", "RemoteTrigger", "PushNotification", "SendUserMessage",
+  "SendUserFile", "SendFile", "EnterWorktree", "ExitWorktree",
+];
+const LEAF_DENIED_TOOLS = [...COMMON_DENIED_TOOLS, "Agent", "SendMessage"];
 
 afterEach(() => {
   while (cleanups.length) fs.rmSync(cleanups.pop(), { recursive: true, force: true });
@@ -28,6 +34,7 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 const value = (flag) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : null; };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const teamTools = ["Agent", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"];
 
 function textOf(event) {
   return Array.isArray(event && event.message && event.message.content)
@@ -61,12 +68,13 @@ function appendInvocation(record) {
 
 async function main() {
   if (args[0] === "--version") return process.stdout.write("2.1.220 (Claude Code)\\n");
-  if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --disallowedTools --append-system-prompt --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
+  if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --disallowedTools --append-system-prompt --agents --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
   if (args[0] === "auth" && args[1] === "status") return process.stdout.write("authenticated\\n");
   if (args[0] !== "-p") throw new Error("unexpected args " + JSON.stringify(args));
   const initial = await firstEvent();
   const prompt = textOf(initial);
   const resume = value("--resume");
+  const agents = value("--agents") ? JSON.parse(value("--agents")) : null;
   const token = (prompt.match(/session=([a-z0-9_-]+)/i) || [])[1] || "default";
   // Test-only fixture switch: a resumed turn that must observe a foreign
   // native session id instead of the one it was asked to resume, to drive the
@@ -89,16 +97,35 @@ async function main() {
   process.stdout.write(JSON.stringify({
     type: "system", subtype: "init", session_id: sessionId,
     claude_code_version: "2.1.220", model: value("--model"),
+    ...(agents ? { tools: teamTools, agents } : {}),
   }) + "\\n");
   // Test-only fixture switch: fail the turn itself (after session
   // establishment) with stderr text that Claude's own failure classifier
   // recognizes, to drive a Harness-scoped turn failure without a real Claude
   // account.
-  const failMode = (prompt.match(/fail=(auth|account_limit)/) || [])[1];
-  if (failMode) {
+  const failMode = (prompt.match(/fail=(auth|account_limit|transport)/) || [])[1];
+  if (failMode && failMode !== "transport") {
     process.stderr.write(failMode === "auth"
       ? "Error: unauthorized. Please re-authenticate.\\n"
       : "Error: You've hit your session limit. Your limit will reset at 8pm.\\n");
+    process.exit(1);
+  }
+  if (agents) {
+    process.stdout.write(JSON.stringify({
+      type: "assistant",
+      message: { content: [{
+        type: "tool_use", id: "fixture-team-spawn", name: "Agent",
+        input: { name: "fixture-scout", subagent_type: "haiku-scout" },
+      }] },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "fixture-team-spawn" }] },
+      tool_use_result: { status: "teammate_spawned" },
+    }) + "\\n");
+  }
+  if (failMode === "transport") {
+    process.stderr.write("Error: Connection closed mid-response.\\n");
     process.exit(1);
   }
   process.stdin.on("data", (chunk) => {
@@ -347,7 +374,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "low");
     assert.deepEqual(
       invocation.args.flatMap((value, index) => value === "--disallowedTools" ? [invocation.args[index + 1]] : []),
-      ["Agent", "Workflow"],
+      LEAF_DENIED_TOOLS,
     );
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /Act as a leaf/i);
@@ -359,7 +386,7 @@ describe("canonical Agent runtime CLI", () => {
     const launched = readInternalJob(test, record.latestJobId);
     assert.equal(launched.harnessStateVersion, 2);
     assert.equal(launched.harnessId, "claude-code");
-    assert.equal(launched.driverVersion, "claude-code@1");
+    assert.equal(launched.driverVersion, "claude-code@2");
     assert.equal(launched.harnessCapabilities.continuation, "exact_resume");
     assert.equal(launched.harnessCapabilities.authorityEnforcement, "prompt_only");
     assert.deepEqual(launched.harnessRoute, {
@@ -392,10 +419,10 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "max");
     assert.deepEqual(
       invocation.args.flatMap((value, index) => value === "--disallowedTools" ? [invocation.args[index + 1]] : []),
-      ["Workflow"],
+      COMMON_DENIED_TOOLS,
     );
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
-    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /join every child/i);
+    assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /Wait for required teammate outcomes/i);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /read(?: and|\/)review only/i);
 
     const followed = run(test, [
@@ -420,17 +447,60 @@ describe("canonical Agent runtime CLI", () => {
     );
     assert.deepEqual(
       followupInvocation.args.flatMap((value, index) => value === "--disallowedTools" ? [followupInvocation.args[index + 1]] : []),
-      ["Workflow"],
+      COMMON_DENIED_TOOLS,
     );
     assert.equal(followupInvocation.args.includes("--dangerously-skip-permissions"), true);
     assert.match(
       followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1],
-      /join every child/i,
+      /Wait for required teammate outcomes/i,
     );
     assert.match(
       followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1],
       /read(?: and|\/)review only/i,
     );
+    const firstCohort = invocation.args[invocation.args.indexOf("--append-system-prompt") + 1]
+      .match(/cc-native-team-[a-f0-9]+/)[0];
+    const followupCohort = followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1]
+      .match(/cc-native-team-[a-f0-9]+/)[0];
+    assert.notEqual(firstCohort, followupCohort);
+  });
+
+  it("keeps the durable parent session after a team transport close but starts a fresh follow-up team", () => {
+    const test = fixture();
+    const spawned = run(test, [
+      "spawn_agent", "--write=false", "--task-name", "transport_team",
+      "--model", "claude-opus-5", "--delegation-mode", "claude_orchestrator", "--json",
+      "session=team-close fail=transport",
+    ]);
+    const closed = waitForAgent(test, spawned.agent_name, (value) => value.status === "errored");
+    const closedJob = readInternalJob(test, closed.latestJobId);
+    assert.equal(closed.continuation.mode, "exact_session");
+    assert.equal(closed.nativeSessionRef.nativeSessionId, "fake-session-team-close");
+    assert.equal(closedJob.result.failureClass, "transport_closed_resumable");
+    assert.equal(closedJob.result.recoveryAttempts, 0);
+    assert.equal(invocations(test).length, 1);
+
+    const followed = run(test, [
+      "followup_task", spawned.agent_name, "--json", "session=team-recovered delay=40",
+    ]);
+    assert.equal(followed.delivery, "new_turn");
+    const recovered = waitForAgent(
+      test,
+      spawned.agent_name,
+      (value) => value.status === "completed" && value.latestJobId !== closed.latestJobId,
+    );
+    const recorded = invocations(test);
+    const firstPrompt = recorded[0].args[recorded[0].args.indexOf("--append-system-prompt") + 1];
+    const secondPrompt = recorded[1].args[recorded[1].args.indexOf("--append-system-prompt") + 1];
+    assert.equal(recovered.agentId, closed.agentId);
+    assert.equal(recorded[1].args[recorded[1].args.indexOf("--resume") + 1], "fake-session-team-close");
+    assert.notEqual(
+      firstPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
+      secondPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
+    );
+    assert.deepEqual(Object.keys(JSON.parse(recorded[1].args[recorded[1].args.indexOf("--agents") + 1])), [
+      "haiku-scout", "opus", "sonnet",
+    ]);
   });
 
   it("exposes all seven operations with flat exact targeting and duplicate-name rejection", () => {
@@ -866,7 +936,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.deepEqual(
       invocation.args.flatMap((value, index) => value === "--disallowedTools" ? [invocation.args[index + 1]] : []),
-      ["Agent", "Workflow"],
+      LEAF_DENIED_TOOLS,
     );
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /bounded Claude Agent/i);
     assert.match(invocation.args[invocation.args.indexOf("--append-system-prompt") + 1], /read(?: and|\/)review only/i);

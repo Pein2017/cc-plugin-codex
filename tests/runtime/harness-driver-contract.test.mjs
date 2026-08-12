@@ -123,12 +123,92 @@ describe("Harness Driver contract", () => {
   it("admits exactly the checkout-owned Claude Code Driver", () => {
     assert.deepEqual(ADMITTED_HARNESS_IDS, ["claude-code"]);
     assert.equal(DEFAULT_HARNESS_ID, "claude-code");
+    assert.equal(CLAUDE_CODE_DRIVER_VERSION, "claude-code@2");
     const resolved = resolveHarnessDriver(DEFAULT_HARNESS_ID, { env: {} });
     assert.equal(resolved.harnessId, "claude-code");
     assert.equal(resolved.driverVersion, CLAUDE_CODE_DRIVER_VERSION);
     assert.equal(resolved.contractVersion, HARNESS_DRIVER_CONTRACT_VERSION);
     assert.throws(() => resolveHarnessDriver("other-exec"), /Unknown Harness other-exec/);
     assert.throws(() => resolveHarnessDriver("Other Exec"), /Invalid Harness ID/);
+  });
+
+  it("gives each orchestrator turn a fresh job-bound team and disables only its automatic reconnect", async () => {
+    const requests = [];
+    const runTurnSession = async (request) => {
+      requests.push(request);
+      return {
+        status: "failed",
+        exitCode: 1,
+        sessionId: "parent-session",
+        finalMessage: "partial parent evidence",
+        stderr: "Connection closed mid-response",
+        failureClass: "transport_closed_resumable",
+        failureReason: "Connection closed mid-response",
+        resumable: true,
+        recoveryAttempts: 0,
+        attempts: [],
+        steering: { messages: [], latestAcknowledgedSequence: 0 },
+        runtimeReceipt: {},
+        toolUses: [],
+        touchedFiles: [],
+      };
+    };
+    const launchContext = {
+      compatibility: { fingerprint: "fingerprint", executable: process.execPath },
+    };
+    const common = {
+      workspaceRoot: "/workspace",
+      cwd: "/workspace",
+      prompt: "continue the bounded work",
+      env: { CLAUDE_CONFIG_DIR: "/tmp/claude-driver-contract" },
+      launchContext,
+      runTurnSession,
+    };
+
+    const first = await driver.startTurn({
+      ...common,
+      jobId: "orchestrator-job-one",
+      route: {
+        model: "claude-opus-5",
+        effort: "high",
+        write: false,
+        delegationMode: "claude_orchestrator",
+      },
+    });
+    const second = await driver.startTurn({
+      ...common,
+      jobId: "orchestrator-job-two",
+      resumeSessionId: "parent-session",
+      route: {
+        model: "claude-opus-5",
+        effort: "high",
+        write: true,
+        delegationMode: "claude_orchestrator",
+      },
+    });
+    await driver.startTurn({
+      ...common,
+      jobId: "leaf-job",
+      route: {
+        model: "claude-sonnet-5",
+        effort: "high",
+        write: false,
+        delegationMode: "leaf",
+      },
+    });
+
+    assert.equal(first.failure.class, "transport_closed_resumable");
+    assert.equal(first.failure.resumable, true);
+    assert.equal(first.nativeSession.nativeSessionId, "parent-session");
+    assert.deepEqual(requests[0].retryPolicy, { maxReconnectAttempts: 0 });
+    assert.deepEqual(requests[1].retryPolicy, { maxReconnectAttempts: 0 });
+    assert.equal(Object.hasOwn(requests[2], "retryPolicy"), false);
+    assert.equal(requests[0].claudeOptions.resumeSessionId, undefined);
+    assert.equal(requests[1].claudeOptions.resumeSessionId, "parent-session");
+    assert.notEqual(
+      requests[0].claudeOptions.appendSystemPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
+      requests[1].claudeOptions.appendSystemPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
+    );
   });
 
   it("rejects caller and ambient attempts to select a Driver implementation", () => {
@@ -520,8 +600,8 @@ describe("Harness Driver contract", () => {
       /Unknown Harness other-exec/,
     );
     assert.throws(
-      () => runtime.assertJobDriver({ ...prepared, driverVersion: "claude-code@0" }),
-      /prepared by Driver claude-code@0/,
+      () => runtime.assertJobDriver({ ...prepared, driverVersion: "claude-code@1" }),
+      /prepared by Driver claude-code@1/,
     );
     assert.throws(
       () => runtime.assertJobDriver({
@@ -540,7 +620,7 @@ describe("Harness Driver contract", () => {
 
     // Stopping a live turn stays possible across a Driver version bump; an
     // unknown capability vocabulary still fails closed.
-    const drifted = { ...prepared, driverVersion: "claude-code@0" };
+    const drifted = { ...prepared, driverVersion: "claude-code@1" };
     assert.equal(runtime.assertJobDriver(drifted, { allowDriverVersionDrift: true }).harnessId, "claude-code");
     assert.throws(
       () => runtime.assertJobDriver(
@@ -555,6 +635,18 @@ describe("Harness Driver contract", () => {
         { allowDriverVersionDrift: true },
       ),
       /Unknown Harness other-exec/,
+    );
+
+    // A rollback must likewise refuse a queued @2 job. Process control uses
+    // the persisted Harness identity/capabilities and remains separately safe.
+    runtime.driver = Object.freeze({ ...runtime.driver, driverVersion: "claude-code@1" });
+    assert.throws(
+      () => runtime.assertJobDriver(prepared),
+      /prepared by Driver claude-code@2; this runtime provides claude-code@1/,
+    );
+    assert.equal(
+      runtime.assertJobDriver(prepared, { allowDriverVersionDrift: true }).harnessId,
+      "claude-code",
     );
   });
 

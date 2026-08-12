@@ -43,7 +43,7 @@ import { runClaudeTaskSession } from "./job-supervisor.mjs";
 import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const CLAUDE_CODE_HARNESS_ID = "claude-code";
-export const CLAUDE_CODE_DRIVER_VERSION = "claude-code@1";
+export const CLAUDE_CODE_DRIVER_VERSION = "claude-code@2";
 
 /**
  * Observable behavior of a Claude Code turn under this checkout.
@@ -345,6 +345,12 @@ export function createClaudeCodeDriver(_options = {}) {
         throw new Error("Claude Code Driver requires a revalidated launch context.");
       }
       const profile = createExecutionProfile({ ...route, env, jobId });
+      // Native teammates exist only in this Claude process. A transport loss
+      // may leave their in-process state ambiguous, so only an explicit later
+      // parent follow-up may create a new team.
+      const retryPolicy = route.delegationMode === "claude_orchestrator"
+        ? { maxReconnectAttempts: 0 }
+        : undefined;
       const processEvidence = { spawnAccepted: false, identityProven: false };
       try {
         const result = await runTurnSession({
@@ -353,6 +359,7 @@ export function createClaudeCodeDriver(_options = {}) {
           cwd,
           prompt,
           write: Boolean(route.write),
+          ...(retryPolicy ? { retryPolicy } : {}),
           claudeOptions: {
             ...profile.claudeOptions,
             claudeBin: launchCompatibility.executable,

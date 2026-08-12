@@ -84,6 +84,32 @@ describe("job supervisor", () => {
     assert.equal(result.finalMessage, "partial then done");
   });
 
+  it("returns an orchestrator transport close without reconnect while retaining exact parent continuation evidence", async () => {
+    const { workspace } = setup();
+    let calls = 0;
+    const result = await runClaudeTaskSession({
+      workspaceRoot: workspace,
+      jobId: "cc-1",
+      cwd: workspace,
+      prompt: "bounded team task",
+      write: true,
+      retryPolicy: { maxReconnectAttempts: 0 },
+      runAttempt: async () => {
+        calls += 1;
+        return { ...failed("parent-session"), resumable: true };
+      },
+    });
+
+    assert.equal(calls, 1);
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "transport_closed_resumable");
+    assert.equal(result.resumable, true);
+    assert.equal(result.sessionId, "parent-session");
+    assert.equal(result.recoveryAttempts, 0);
+    assert.equal(result.manualResumeCommand, "claude --resume parent-session");
+    assert.match(result.warning, /Automatic recovery budget exhausted/);
+  });
+
   it("returns only the completed recovery attempt handoff", async () => {
     const { workspace } = setup();
     let attempts = 0;
