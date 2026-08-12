@@ -62,7 +62,9 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
   six creations; depth/tool denial is hard, while concurrency is only a
   residual ordinary-subagent guard.
 - Same-team `SendMessage`, shared tasks, and native idle/failure delivery are
-  allowed only inside the current team. No cross-session recipients, nested
+  instructed to stay inside the current team. Native `SendMessage` can
+  technically reach other sessions, so recipient and completed-peer-resume
+  restrictions are behavioral/prompt-governed, not hard containment. No nested
   delegation, isolation, fork, or completed-peer resume. Join required native
   settle evidence and return one parent synthesis. Transport never
   auto-reconnects: an explicit follow-up forms a fresh native team in the

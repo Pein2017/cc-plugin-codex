@@ -609,7 +609,7 @@ export class StreamParser {
           }
           if (event.session_id) this.state.sessionId = event.session_id;
           this.state.providerReportedMetrics = normalizeClaudeTerminalProviderMetrics(event);
-          if (this.delegationMode === "claude_orchestrator") {
+          if (this.delegationMode === "claude_orchestrator" && event.subtype === "success" && event.is_error !== true) {
             this._nativeTeamWitness({ type: "native_team_parent_synthesis" });
           }
           return { kind: "result", data: event };

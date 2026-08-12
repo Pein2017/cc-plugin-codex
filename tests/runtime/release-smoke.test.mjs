@@ -236,4 +236,16 @@ describe("release smoke", () => {
     assert.equal(witness.status, "account_limit_stopped");
     assert.equal(witness.liveVerified, false);
   });
+
+  it("does not verify a failed Driver terminal turn even when native events claim completion", async () => {
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      runTurnSession: async () => ({
+        status: "failed", exitCode: 1, sessionId: null, finalMessage: "", failureClass: "fatal", failureReason: "failed",
+        resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
+      }),
+    });
+    assert.equal(witness.liveVerified, false);
+    assert.ok(witness.missingEvidence.includes("successful_terminal"));
+  });
 });

@@ -153,9 +153,11 @@ The one-layer depth and teammate `Agent` denial are hard topology boundaries.
 At most three active teammates and six total creations are behavioral budgets;
 the concurrency environment is only a residual guard if forbidden ordinary
 subagent execution is attempted. Current-team `SendMessage`, shared tasks, and
-native idle/failure delivery are Claude-local coordination only: no cross-session
-recipient, peer-driven resume, Plugin-owned mailbox, or teammate lifecycle is
-added. A lead joins required native settle evidence, inspects actual work, and
+native idle/failure delivery are Claude-local coordination only. Current-team
+recipient and completed-peer-resume limits are behavioral/prompt-governed:
+native `SendMessage` can technically reach other sessions, and the Plugin adds
+no hard containment, mailbox, or teammate lifecycle. A lead joins required
+native settle evidence, inspects actual work, and
 returns one parent synthesis. Orchestrator transport has zero automatic
 reconnect attempts; an explicit parent follow-up starts a fresh cohort/team.
 

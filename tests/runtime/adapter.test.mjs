@@ -305,6 +305,13 @@ describe("Claude headless adapter", () => {
     assert.doesNotMatch(JSON.stringify(witnesses), /private/);
   });
 
+  it("does not call a failed terminal result a parent synthesis", () => {
+    const witnesses = [];
+    const parser = new StreamParser({ delegationMode: "claude_orchestrator", onNativeTeamWitness: (fact) => witnesses.push(fact) });
+    parser.feed(`${JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "private" })}\n`);
+    assert.equal(witnesses.some((fact) => fact.type === "native_team_parent_synthesis"), false);
+  });
+
   it("admits a clean orchestrator inventory without mistaking it for team transport and leaves absent leaf inventory unvalidated", () => {
     const orchestrator = new StreamParser({ delegationMode: "claude_orchestrator" });
     orchestrator.feed(`${JSON.stringify({

@@ -1,5 +1,5 @@
 /** SPDX-License-Identifier: Apache-2.0 */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,6 +11,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
 import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
+import { buildArgs } from "./claude-headless-adapter.mjs";
+import { createExecutionProfile } from "./execution-profile.mjs";
 import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "./version.mjs";
 
@@ -21,6 +23,9 @@ const NATIVE_TEAM_WITNESS_MEMORY_PREFIXES = Object.freeze([
   ".claude/agent-memory-local/haiku-scout",
   ".claude/agent-memory-local/sonnet",
 ]);
+const MAX_NATIVE_TEAM_WITNESS_EVENTS = 32;
+const MAX_NATIVE_TEAM_WITNESS_NAME_BYTES = 96;
+const SAFE_WITNESS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 function gitStatus(cwd) {
   const result = spawnSync("git", ["-C", cwd, "status", "--porcelain", "--untracked-files=all"], {
@@ -38,22 +43,31 @@ function initializeWitnessWorkspace() {
     throw new Error("Native-team witness could not initialize its disposable Git workspace.");
   }
   fs.writeFileSync(path.join(cwd, "README.md"), "# Native Agent Team witness fixture\n", "utf8");
+  for (const prefix of NATIVE_TEAM_WITNESS_MEMORY_PREFIXES) {
+    fs.mkdirSync(path.join(cwd, prefix), { recursive: true });
+  }
   return cwd;
 }
 
-function snapshotWorkspacePaths(root) {
+function snapshotWorkspacePaths(root, options = {}) {
   const snapshot = new Map();
   const visit = (relative) => {
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute);
-    snapshot.set(relative || ".", {
+    const allowedMemory = options.allowMemory !== false && nativeMemoryPathAllowed(relative);
+    const metadata = {
       type: stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file",
       size: stat.size,
       mode: stat.mode,
-      mtimeMs: stat.mtimeMs,
-    });
+    };
+    if (!stat.isDirectory()) metadata.mtimeMs = stat.mtimeMs;
+    if (!allowedMemory && stat.isFile()) {
+      metadata.sha256 = createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
+    }
+    snapshot.set(relative || ".", metadata);
     if (!stat.isDirectory()) return;
     for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+      if (!relative && entry.name === ".git") continue;
       visit(relative ? path.join(relative, entry.name) : entry.name);
     }
   };
@@ -68,18 +82,32 @@ function changedSnapshotPaths(before, after) {
 
 function nativeMemoryPathAllowed(relative) {
   const normalized = String(relative ?? "").replaceAll("\\", "/");
-  if (normalized === ".") return true;
   return NATIVE_TEAM_WITNESS_MEMORY_PREFIXES.some((prefix) =>
-    normalized === prefix || normalized.startsWith(`${prefix}/`) || prefix.startsWith(`${normalized}/`)
+    normalized.startsWith(`${prefix}/`)
   );
+}
+
+function assertWitnessMemoryRoots(cwd) {
+  for (const prefix of NATIVE_TEAM_WITNESS_MEMORY_PREFIXES) {
+    const stat = fs.lstatSync(path.join(cwd, prefix));
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error("Native-team witness memory root must be an in-workspace directory.");
+    }
+  }
+}
+
+function safeWitnessName(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text && Buffer.byteLength(text, "utf8") <= MAX_NATIVE_TEAM_WITNESS_NAME_BYTES && SAFE_WITNESS_NAME.test(text)
+    ? text : null;
 }
 
 function boundedWitnessEvent(fact) {
   if (!fact || typeof fact !== "object") return null;
   switch (fact.type) {
     case "native_team_member_requested":
-      return typeof fact.memberName === "string" && typeof fact.memberType === "string"
-        ? { type: fact.type, memberName: fact.memberName, memberType: fact.memberType }
+      return safeWitnessName(fact.memberName) && safeWitnessName(fact.memberType)
+        ? { type: fact.type, memberName: safeWitnessName(fact.memberName), memberType: safeWitnessName(fact.memberType) }
         : null;
     case "native_team_surface":
       return { type: fact.type, observed: fact.observed === true };
@@ -88,8 +116,8 @@ function boundedWitnessEvent(fact) {
     case "native_team_message":
       return { type: fact.type, sameTeamRecipient: fact.sameTeamRecipient === true };
     case "native_team_settled":
-      return typeof fact.memberName === "string" && typeof fact.signal === "string"
-        ? { type: fact.type, memberName: fact.memberName, signal: fact.signal }
+      return safeWitnessName(fact.memberName) && ["idle", "completed", "failed"].includes(fact.signal)
+        ? { type: fact.type, memberName: safeWitnessName(fact.memberName), signal: fact.signal }
         : null;
     case "native_team_parent_synthesis":
       return { type: fact.type };
@@ -106,15 +134,22 @@ function boundedWitnessEvent(fact) {
 export async function runNativeTeamWitness(options = {}) {
   const sourceRoot = fs.realpathSync.native(options.sourceRoot ?? SOURCE_ROOT);
   const sourceBefore = gitStatus(sourceRoot);
+  const sourceSnapshotBefore = snapshotWorkspacePaths(sourceRoot, { allowMemory: false });
   const cwd = initializeWitnessWorkspace();
   const before = snapshotWorkspacePaths(cwd);
+  assertWitnessMemoryRoots(cwd);
   const events = [];
   const requestedMembers = new Map();
+  let requestedModelHaiku = null;
+  let requestedModelSonnet = null;
   const settledMembers = new Set();
   let firstSpawnTransport = false;
   let sameTeamMessage = false;
   let parentSynthesis = false;
   let turn;
+  const witnessRoute = {
+    model: "claude-opus-5", effort: "low", write: false, delegationMode: "claude_orchestrator",
+  };
   try {
     const driver = options.driver ?? createClaudeCodeDriver();
     const env = {
@@ -122,17 +157,23 @@ export async function runNativeTeamWitness(options = {}) {
       ...(options.env ?? {}),
       CLAUDE_CONFIG_DIR: options.env?.CLAUDE_CONFIG_DIR ?? path.join(cwd, ".claude-config"),
     };
+    const profile = createExecutionProfile({ ...witnessRoute, env, jobId: "native-team-witness" });
+    try {
+      // Exercise the same production profile and adapter serialization that the
+      // Driver uses. This records requested definitions, never effective facts.
+      buildArgs("witness", { agents: profile.claudeOptions.agents });
+      const agents = profile.claudeOptions.agents;
+      requestedModelHaiku = agents["haiku-scout"]?.model ?? null;
+      requestedModelSonnet = agents.sonnet?.model ?? null;
+    } finally {
+      profile.cleanup();
+    }
     turn = await driver.startTurn({
       workspaceRoot: cwd,
       cwd,
       jobId: "native-team-witness",
-      prompt: "Use one Haiku scout and one Sonnet reviewer; return one parent synthesis.",
-      route: {
-        model: "claude-opus-5",
-        effort: "low",
-        write: false,
-        delegationMode: "claude_orchestrator",
-      },
+      prompt: "Use one Haiku scout with intended effort low and one Sonnet reviewer with intended effort low; return one parent synthesis.",
+      route: witnessRoute,
       env,
       launchContext: {
         compatibility: {
@@ -143,6 +184,7 @@ export async function runNativeTeamWitness(options = {}) {
       onNativeTeamWitness: (fact) => {
         const event = boundedWitnessEvent(fact);
         if (!event) return;
+        if (events.length >= MAX_NATIVE_TEAM_WITNESS_EVENTS) return;
         events.push(event);
         if (event.type === "native_team_member_requested") requestedMembers.set(event.memberType, event.memberName);
         if (event.type === "native_team_transport") firstSpawnTransport ||= event.teamTransportLiveValidated;
@@ -160,8 +202,13 @@ export async function runNativeTeamWitness(options = {}) {
   const changedPaths = changedSnapshotPaths(before, after);
   const unauthorizedPaths = changedPaths.filter((relative) => !nativeMemoryPathAllowed(relative));
   const sourceAfter = gitStatus(sourceRoot);
+  const sourceSnapshotAfter = snapshotWorkspacePaths(sourceRoot, { allowMemory: false });
+  const sourceChangedPaths = changedSnapshotPaths(sourceSnapshotBefore, sourceSnapshotAfter);
   const accountLimit = isClaudeSubscriptionLimit(`${turn?.failure?.reason ?? ""}\n${turn?.failure?.detail ?? ""}`);
+  const requestedModels = { haikuScout: requestedModelHaiku, sonnet: requestedModelSonnet };
+  const successfulTerminal = turn?.status === "completed" && turn?.failure?.class == null && turn?.exitStatus === 0;
   const missingEvidence = [
+    ...(successfulTerminal ? [] : ["successful_terminal"]),
     ...(requestedMembers.has("haiku-scout") ? [] : ["requested_haiku_scout"]),
     ...(requestedMembers.has("sonnet") ? [] : ["requested_sonnet"]),
     ...(firstSpawnTransport ? [] : ["first_spawn_transport"]),
@@ -170,16 +217,17 @@ export async function runNativeTeamWitness(options = {}) {
     ...(settledMembers.has(requestedMembers.get("sonnet")) ? [] : ["settled_sonnet"]),
     ...(parentSynthesis ? [] : ["parent_synthesis"]),
   ];
-  const status = accountLimit ? "account_limit_stopped" : (unauthorizedPaths.length || sourceBefore !== sourceAfter || missingEvidence.length ? "unverified" : "verified");
+  const status = accountLimit ? "account_limit_stopped" : (unauthorizedPaths.length || sourceBefore !== sourceAfter || sourceChangedPaths.length || missingEvidence.length ? "unverified" : "verified");
   const report = {
     status,
     liveVerified: status === "verified",
-    requestedModels: { haikuScout: "claude-haiku-4-5", sonnet: "claude-sonnet-5" },
+    requestedModels,
+    intendedEffort: { haikuScout: "low", sonnet: "low" },
     effectiveTeammate: { model: "unknown", effort: "unknown", cost: "unknown" },
     firstSpawnTransport,
     missingEvidence,
     events,
-    source: { unchanged: sourceBefore === sourceAfter, statusBefore: sourceBefore, statusAfter: sourceAfter },
+    source: { unchanged: sourceBefore === sourceAfter && sourceChangedPaths.length === 0, statusBefore: sourceBefore, statusAfter: sourceAfter, changedPaths: sourceChangedPaths },
     disposable: {
       gitStatus: gitStatus(cwd),
       snapshot: { beforePathCount: before.size, afterPathCount: after.size },
