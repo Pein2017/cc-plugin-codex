@@ -5,7 +5,7 @@
 - [x] 1.3 Add failing adapter/integration cases for deterministic one-value `--agents` JSON, init `Task`→`Agent` canonicalization, required definition/necessary-tool admission, first named `status: teammate_spawned` transport proof, rejection of ordinary-subagent results, forbidden/unknown/absent inventories, complete-inventory classification before display caps, and witness-only structured events.
 - [x] 1.4 Add failing Driver/recovery cases for `claude-code@2`, old/new prepared-job hot-refresh and rollback rejection, unchanged leaf reconnect, orchestrator zero automatic reconnect, and explicit follow-up forming a fresh team.
 - [x] 1.5 Add failing environment/memory cases proving `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` wins after any selected env file and that read-only acceptance distinguishes exact native-memory paths from task-state mutation.
-- [ ] 1.6 Extend plugin-contract and fake release-smoke tests for the unchanged seven-tool API, model-visible Opus/Fable team-lead guidance, production-shaped native events, missing-evidence behavior, and account-limit stop.
+- [x] 1.6 Extend plugin-contract and fake release-smoke tests for the unchanged seven-tool API, model-visible Opus/Fable team-lead guidance, production-shaped native events, missing-evidence behavior, and account-limit stop.
 
 ## 2. Native Team Policy and Profile
 
@@ -32,10 +32,10 @@
 
 ## 5. Skills, MCP Guidance, and Documentation
 
-- [ ] 5.1 Update all seven files under `plugins/cc-for-pein/skills/`, `plugins/cc-for-pein/skills/spawn-agent/agents/openai.yaml`, and `runtime/mcp-server.mjs` together so model-visible guidance calls `claude_orchestrator` an experimental Native Agent Team lead valid only for exact Opus/Fable.
-- [ ] 5.2 Update `README.md` with hard/residual-guard/behavioral boundaries, Agent Teams experimental/resumption limits, pinned definition models, inherited effort, local native-memory writes, same-team messaging, zero auto-reconnect, Driver-version transition, and unobservable teammate metrics.
-- [ ] 5.3 Extend `runtime/release-smoke.mjs` with an explicit fake-testable native-team witness controller that directly invokes the production Driver/profile/adapter, creates a disposable Git workspace, consumes the adapter's optional bounded in-process callback, snapshots every disposable path plus source-checkout status, allows only exact witness memory prefixes, and stops on account limits; do not add public MCP fields, cross-process IPC, or durable teammate-event storage.
-- [ ] 5.4 Keep package version, manifest cachebuster, installation, changelog release entry, and publication state unchanged during implementation; handle them only in a separately authorized lifecycle task.
+- [x] 5.1 Update all seven files under `plugins/cc-for-pein/skills/`, `plugins/cc-for-pein/skills/spawn-agent/agents/openai.yaml`, and `runtime/mcp-server.mjs` together so model-visible guidance calls `claude_orchestrator` an experimental Native Agent Team lead valid only for exact Opus/Fable.
+- [x] 5.2 Update `README.md` with hard/residual-guard/behavioral boundaries, Agent Teams experimental/resumption limits, pinned definition models, inherited effort, local native-memory writes, same-team messaging, zero auto-reconnect, Driver-version transition, and unobservable teammate metrics.
+- [x] 5.3 Extend `runtime/release-smoke.mjs` with an explicit fake-testable native-team witness controller that directly invokes the production Driver/profile/adapter, creates a disposable Git workspace, consumes the adapter's optional bounded in-process callback, snapshots every disposable path plus source-checkout status, allows only exact witness memory prefixes, and stops on account limits; do not add public MCP fields, cross-process IPC, or durable teammate-event storage.
+- [x] 5.4 Keep package version, manifest cachebuster, installation, changelog release entry, and publication state unchanged during implementation; handle them only in a separately authorized lifecycle task.
 
 ## 6. Zero-Cost Verification
 
