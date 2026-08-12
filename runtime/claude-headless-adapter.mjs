@@ -15,6 +15,7 @@ import { observeClaudeCredentialState } from "./claude-credential-state.mjs";
 import {
   assessObservedNativeSurface,
   canonicalizeInitToolName,
+  resolveNativeTeamPolicy,
 } from "./claude-native-team-policy.mjs";
 import { normalizePathSlashes, resolvePluginRuntimeRoot } from "./paths.mjs";
 import {
@@ -119,13 +120,22 @@ export const MAX_STREAM_PARSER_HOOK_RECEIPTS = 64;
 export const MAX_STDERR_BYTES = 64 * 1024;
 export const SANDBOX_TEMP_DIR = normalizePathSlashes(path.resolve(os.tmpdir()));
 
-const NATIVE_TEAM_DEFINITION_NAMES = Object.freeze(["haiku-scout", "opus", "sonnet"]);
-const NATIVE_TEAM_DEFINITION_MODELS = Object.freeze({
-  "haiku-scout": "claude-haiku-4-5",
-  opus: "claude-opus-5",
-  sonnet: "claude-sonnet-5",
-});
+const NATIVE_TEAM_DEFINITION_EXPECTATIONS = Object.freeze(Object.fromEntries(
+  resolveNativeTeamPolicy({
+    model: "claude-opus-5",
+    delegationMode: "claude_orchestrator",
+    write: false,
+    jobId: "adapter-definition-validation",
+  }).teammateDefinitions.map(({ name, model, disallowedTools }) => [name, Object.freeze({
+    model,
+    disallowedTools: [...disallowedTools],
+  })]),
+));
+const NATIVE_TEAM_DEFINITION_NAMES = Object.freeze(
+  Object.keys(NATIVE_TEAM_DEFINITION_EXPECTATIONS).sort((left, right) => left.localeCompare(right)),
+);
 const NATIVE_TEAM_DEFINITION_FIELDS = new Set([
+  "description",
   "disallowedTools",
   "memory",
   "model",
@@ -407,6 +417,7 @@ export class StreamParser {
       delegationMode: options.delegationMode ?? "leaf",
       nativeTeamWarning: null,
       nativeTeamTransportPending: false,
+      nativeTeamFirstAgentObserved: false,
     };
     this.delegationMode = options.delegationMode ?? "leaf";
     this.onNativeTeamWitness = typeof options.onNativeTeamWitness === "function"
@@ -465,14 +476,9 @@ export class StreamParser {
 
   _recordFirstNamedAgentResult(event) {
     if (!this.firstNamedAgentToolUseId || this.state.nativeTeamSurface == null) return;
-    const parts = Array.isArray(event.message?.content) ? event.message.content : [];
-    const result = parts.find((part) =>
-      part?.type === "tool_result" && part.tool_use_id === this.firstNamedAgentToolUseId,
-    );
-    if (!result) return;
-    const status = result.content && typeof result.content === "object" && !Array.isArray(result.content)
-      ? result.content.status
-      : null;
+    const result = event.tool_use_result;
+    if (!result || typeof result !== "object" || result.tool_use_id !== this.firstNamedAgentToolUseId) return;
+    const status = result.status;
     const teamTransportLiveValidated = status === "teammate_spawned";
     const surface = Object.freeze({
       ...this.state.nativeTeamSurface,
@@ -488,6 +494,28 @@ export class StreamParser {
     this.firstNamedAgentToolUseId = null;
     this.state.nativeTeamTransportPending = false;
     if (!teamTransportLiveValidated) this.state.compatibilitySurfaceDrift = true;
+  }
+
+  _recordNamedAgentToolUse(toolUse) {
+    if (
+      this.delegationMode !== "claude_orchestrator" ||
+      this.state.nativeTeamFirstAgentObserved === true ||
+      canonicalizeInitToolName(toolUse?.name) !== "Agent"
+    ) return;
+    this.state.nativeTeamFirstAgentObserved = true;
+    const input = toolUse.input;
+    const memberName = typeof input?.name === "string" ? input.name.trim() : "";
+    const memberType = typeof input?.subagent_type === "string" ? input.subagent_type.trim() : "";
+    if (!memberName || !Object.hasOwn(NATIVE_TEAM_DEFINITION_EXPECTATIONS, memberType)) {
+      this.state.compatibilitySurfaceDrift = true;
+      return;
+    }
+    if (typeof toolUse.id !== "string" || !toolUse.id) {
+      this.state.compatibilitySurfaceDrift = true;
+      return;
+    }
+    this.firstNamedAgentToolUseId = toolUse.id;
+    this.state.nativeTeamTransportPending = true;
   }
 
   /** Feed a raw stdout chunk. Returns parsed events. */
@@ -558,8 +586,15 @@ export class StreamParser {
             threadId: this.state.sessionId,
           };
         }
+        case "assistant": {
+          const content = Array.isArray(event.message?.content) ? event.message.content : [];
+          for (const part of content) {
+            if (part?.type === "tool_use") this._recordNamedAgentToolUse(part);
+          }
+          return null;
+        }
         case "tool_result":
-          this._recordFirstNamedAgentResult({ message: { content: [event] } });
+          this._recordFirstNamedAgentResult({ tool_use_result: event.tool_use_result ?? event });
           return null;
         default:
           recordUnknownEvent(this.state, event.type, event.subtype);
@@ -652,18 +687,7 @@ export class StreamParser {
           { tool, inputKeys },
           MAX_STREAM_PARSER_TOOL_USES
         );
-        if (
-          this.delegationMode === "claude_orchestrator" &&
-          this.firstNamedAgentToolUseId == null &&
-          canonicalizeInitToolName(cb.name) === "Agent"
-        ) {
-          if (typeof cb.id === "string" && cb.id) {
-            this.firstNamedAgentToolUseId = cb.id;
-            this.state.nativeTeamTransportPending = true;
-          } else {
-            this.state.compatibilitySurfaceDrift = true;
-          }
-        }
+        this._recordNamedAgentToolUse(cb);
         if (cb.name === "Write" || cb.name === "Edit") {
           const touchedPath = cb.input?.file_path ?? cb.input?.path ?? null;
           pushUniqueBoundedTail(
@@ -776,6 +800,12 @@ export function validateTurnCompletion(state, exitCode) {
   if (state.delegationMode === "claude_orchestrator" && state.nativeTeamTransportPending === true) {
     return { status: "failed", warning: "Claude native team transport result is missing." };
   }
+  if (
+    state.delegationMode === "claude_orchestrator" &&
+    state.nativeTeamSurface?.teamTransportLiveValidated !== true
+  ) {
+    return { status: "failed", warning: "Claude native team transport was not validated." };
+  }
   if (exitCode !== 0) {
     return { status: "failed", exitCode };
   }
@@ -811,7 +841,7 @@ export function validateTurnCompletion(state, exitCode) {
 }
 
 export function classifyClaudeFailure(result = {}) {
-  if (result.compatibilitySurfaceDrift === true) {
+  if (result.compatibilitySurfaceDrift === true || result.nativeTeamTransportUnvalidated === true) {
     return { kind: "compatibility_surface_drift", resumable: false, reason: "native_team_surface" };
   }
   if (result.status === "completed") {
@@ -1192,17 +1222,20 @@ export function serializeClaudeAgents(agents) {
         throw new Error(`Claude native team definition ${name} has unsupported field ${field}.`);
       }
     }
-    if (definition.model !== NATIVE_TEAM_DEFINITION_MODELS[name]) {
+    const expected = NATIVE_TEAM_DEFINITION_EXPECTATIONS[name];
+    if (definition.model !== expected.model) {
       throw new Error(`Claude native team definition ${name} has an unsupported model.`);
     }
     if (definition.memory !== "local") {
       throw new Error(`Claude native team definition ${name} must use local memory.`);
     }
-    if (
-      !Array.isArray(definition.disallowedTools) ||
-      definition.disallowedTools.some((tool) => typeof tool !== "string" || !tool.trim() || tool.includes("\0"))
-    ) {
-      throw new Error(`Claude native team definition ${name} has malformed tool denials.`);
+    if (!Array.isArray(definition.disallowedTools) ||
+      definition.disallowedTools.length !== expected.disallowedTools.length ||
+      definition.disallowedTools.some((tool, index) => tool !== expected.disallowedTools[index])) {
+      throw new Error(`Claude native team definition ${name} must retain the complete policy-owned tool denial boundary.`);
+    }
+    if (typeof definition.description !== "string" || !definition.description.trim() || definition.description.includes("\0")) {
+      throw new Error(`Claude native team definition ${name} must have a non-empty description without NUL bytes.`);
     }
     if (typeof definition.prompt !== "string" || !definition.prompt.trim() || definition.prompt.includes("\0")) {
       throw new Error(`Claude native team definition ${name} must have a non-empty prompt without NUL bytes.`);
@@ -1548,6 +1581,8 @@ export async function runClaudeTurn(cwd, prompt, options = {}) {
         lastByteAt: parser.state.lastByteAt,
         providerReportedMetrics: parser.state.providerReportedMetrics,
         compatibilitySurfaceDrift: parser.state.compatibilitySurfaceDrift,
+        nativeTeamTransportUnvalidated: parser.state.delegationMode === "claude_orchestrator" &&
+          parser.state.nativeTeamSurface?.teamTransportLiveValidated !== true,
         stderr,
         pid: proc.pid,
         pidIdentity,

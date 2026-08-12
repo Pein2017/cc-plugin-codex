@@ -138,31 +138,39 @@ describe("Claude headless adapter", () => {
   });
 
   it("serializes exactly one canonical closed native-team definition argument", () => {
+    const teammateDenials = [
+      "Workflow", "ListAgents", "ListPeers", "ScheduleWakeup", "CronCreate", "CronDelete",
+      "CronList", "CronUpdate", "RemoteTrigger", "PushNotification", "SendUserMessage",
+      "SendUserFile", "SendFile", "EnterWorktree", "ExitWorktree", "Agent",
+    ];
     const agents = {
       opus: {
+        description: "Opus implementer",
         prompt: "opus member",
-        disallowedTools: ["Agent", "Workflow"],
+        disallowedTools: teammateDenials,
         memory: "local",
         model: "claude-opus-5",
       },
       "haiku-scout": {
+        description: "Haiku scout",
         model: "claude-haiku-4-5",
         memory: "local",
-        disallowedTools: ["Agent", "Workflow"],
+        disallowedTools: teammateDenials,
         prompt: "haiku member",
       },
       sonnet: {
+        description: "Sonnet reviewer",
         memory: "local",
         prompt: "sonnet member",
         model: "claude-sonnet-5",
-        disallowedTools: ["Agent", "Workflow"],
+        disallowedTools: teammateDenials,
       },
     };
     const args = buildArgs("ignored", { agents });
     assert.equal(args.filter((value) => value === "--agents").length, 1);
     assert.equal(
       args[args.indexOf("--agents") + 1],
-      '{"haiku-scout":{"disallowedTools":["Agent","Workflow"],"memory":"local","model":"claude-haiku-4-5","prompt":"haiku member"},"opus":{"disallowedTools":["Agent","Workflow"],"memory":"local","model":"claude-opus-5","prompt":"opus member"},"sonnet":{"disallowedTools":["Agent","Workflow"],"memory":"local","model":"claude-sonnet-5","prompt":"sonnet member"}}',
+      '{"haiku-scout":{"description":"Haiku scout","disallowedTools":["Workflow","ListAgents","ListPeers","ScheduleWakeup","CronCreate","CronDelete","CronList","CronUpdate","RemoteTrigger","PushNotification","SendUserMessage","SendUserFile","SendFile","EnterWorktree","ExitWorktree","Agent"],"memory":"local","model":"claude-haiku-4-5","prompt":"haiku member"},"opus":{"description":"Opus implementer","disallowedTools":["Workflow","ListAgents","ListPeers","ScheduleWakeup","CronCreate","CronDelete","CronList","CronUpdate","RemoteTrigger","PushNotification","SendUserMessage","SendUserFile","SendFile","EnterWorktree","ExitWorktree","Agent"],"memory":"local","model":"claude-opus-5","prompt":"opus member"},"sonnet":{"description":"Sonnet reviewer","disallowedTools":["Workflow","ListAgents","ListPeers","ScheduleWakeup","CronCreate","CronDelete","CronList","CronUpdate","RemoteTrigger","PushNotification","SendUserMessage","SendUserFile","SendFile","EnterWorktree","ExitWorktree","Agent"],"memory":"local","model":"claude-sonnet-5","prompt":"sonnet member"}}',
     );
     assert.throws(
       () => buildArgs("ignored", { agents: { ...agents, extra: agents.opus } }),
@@ -176,10 +184,31 @@ describe("Claude headless adapter", () => {
       () => buildArgs("ignored", { agents: { ...agents, opus: { ...agents.opus, effort: "high" } } }),
       /unsupported field effort/,
     );
+    assert.throws(
+      () => buildArgs("ignored", { agents: { ...agents, opus: { ...agents.opus, description: "" } } }),
+      /non-empty description/,
+    );
+    const { description: _description, ...withoutDescription } = agents.opus;
+    assert.throws(
+      () => buildArgs("ignored", { agents: { ...agents, opus: withoutDescription } }),
+      /non-empty description/,
+    );
+    assert.throws(
+      () => buildArgs("ignored", { agents: { ...agents, opus: { ...agents.opus, disallowedTools: [] } } }),
+      /complete policy-owned tool denial boundary/,
+    );
+    assert.throws(
+      () => buildArgs("ignored", { agents: { ...agents, opus: { ...agents.opus, disallowedTools: teammateDenials.slice(1) } } }),
+      /complete policy-owned tool denial boundary/,
+    );
   });
 
   it("retains only sanitized init surface evidence and detects native-team transport drift", () => {
-    const parser = new StreamParser({ delegationMode: "claude_orchestrator" });
+    const witnesses = [];
+    const parser = new StreamParser({
+      delegationMode: "claude_orchestrator",
+      onNativeTeamWitness: (fact) => witnesses.push(fact),
+    });
     parser.feed(`${JSON.stringify({
       type: "system",
       subtype: "init",
@@ -202,11 +231,17 @@ describe("Claude headless adapter", () => {
     });
     assert.doesNotMatch(JSON.stringify(parser.state.runtimeReceipt.nativeTeamSurface), /secret|transcript|mcp__/);
     assert.match(parser.state.nativeTeamWarning, /unreviewed native tool/i);
+    assert.doesNotMatch(JSON.stringify(witnesses), /secret|transcript|mcp__/);
 
     parser.feed(`${JSON.stringify({
-      type: "stream_event",
+      type: "assistant",
       session_id: "team-session",
-      event: { type: "content_block_start", content_block: { type: "tool_use", id: "agent-1", name: "Agent", input: {} } },
+      message: { content: [{
+        type: "tool_use",
+        id: "agent-1",
+        name: "Agent",
+        input: { name: "scout-1", subagent_type: "haiku-scout" },
+      }] },
     })}\n`);
     assert.deepEqual(
       validateTurnCompletion(parser.state, 0),
@@ -215,10 +250,16 @@ describe("Claude headless adapter", () => {
     parser.feed(`${JSON.stringify({
       type: "user",
       session_id: "team-session",
-      message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: { status: "ordinary_subagent" } }] },
+      tool_use_result: { tool_use_id: "agent-1", status: "ordinary_subagent" },
+      message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "teammate_spawned" }] },
     })}\n`);
     assert.equal(parser.state.compatibilitySurfaceDrift, true);
     assert.equal(parser.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
+    assert.deepEqual(witnesses.at(-1), {
+      type: "native_team_transport",
+      delegationMode: "claude_orchestrator",
+      teamTransportLiveValidated: false,
+    });
     assert.equal(classifyClaudeFailure({ status: "failed", compatibilitySurfaceDrift: true }).kind, "compatibility_surface_drift");
   });
 
@@ -232,13 +273,65 @@ describe("Claude headless adapter", () => {
     })}\n`);
     assert.equal(orchestrator.state.compatibilitySurfaceDrift, false);
     assert.equal(orchestrator.state.nativeTeamSurface.teamTransportLiveValidated, false);
-    assert.deepEqual(validateTurnCompletion(orchestrator.state, 0), { status: "unknown", warning: "No terminal result event received despite exit code 0" });
+    orchestrator.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "unproven" })}\n`);
+    assert.deepEqual(
+      validateTurnCompletion(orchestrator.state, 0),
+      { status: "failed", warning: "Claude native team transport was not validated." },
+    );
 
     const leaf = new StreamParser({ delegationMode: "leaf" });
     leaf.feed(`${JSON.stringify({ type: "system", subtype: "init" })}\n`);
     assert.equal(leaf.state.nativeTeamSurface.observed, false);
     assert.equal(leaf.state.nativeTeamSurface.denySetLiveValidated, false);
     assert.equal(leaf.state.compatibilitySurfaceDrift, false);
+  });
+
+  it("validates only a correlated production-shaped named teammate spawn", () => {
+    const initialize = () => {
+      const parser = new StreamParser({ delegationMode: "claude_orchestrator" });
+      parser.feed(`${JSON.stringify({
+        type: "system",
+        subtype: "init",
+        tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+        agents: ["haiku-scout", "sonnet", "opus"],
+      })}\n`);
+      parser.feed(`${JSON.stringify({
+        type: "assistant",
+        message: { content: [{
+          type: "tool_use",
+          id: "sanctioned-agent-1",
+          name: "Agent",
+          input: { name: "reviewer-1", subagent_type: "sonnet" },
+        }] },
+      })}\n`);
+      return parser;
+    };
+
+    const success = initialize();
+    success.feed(`${JSON.stringify({
+      type: "user",
+      tool_use_result: { tool_use_id: "sanctioned-agent-1", status: "teammate_spawned" },
+      message: { content: [{ type: "tool_result", content: "ordinary_subagent" }] },
+    })}\n`);
+    success.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "done" })}\n`);
+    assert.equal(success.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, true);
+    assert.deepEqual(validateTurnCompletion(success.state, 0), { status: "completed" });
+
+    const ordinary = initialize();
+    ordinary.feed(`${JSON.stringify({
+      type: "user",
+      tool_use_result: { tool_use_id: "sanctioned-agent-1", status: "ordinary_subagent" },
+    })}\n`);
+    ordinary.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "wrong" })}\n`);
+    assert.equal(ordinary.state.compatibilitySurfaceDrift, true);
+    assert.equal(validateTurnCompletion(ordinary.state, 0).status, "failed");
+
+    const missing = initialize();
+    missing.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "missing" })}\n`);
+    assert.deepEqual(
+      validateTurnCompletion(missing.state, 0),
+      { status: "failed", warning: "Claude native team transport result is missing." },
+    );
   });
 
   it("pins canonical model aliases, every explicit effort, and names only fresh sessions", () => {
