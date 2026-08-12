@@ -691,7 +691,9 @@ export class StreamParser {
           { tool, inputKeys },
           MAX_STREAM_PARSER_TOOL_USES
         );
-        this._recordNamedAgentToolUse(cb);
+        // This streaming block starts before Claude has finished encoding the
+        // tool input. It is progress/receipt evidence only; native-team
+        // admission waits for the complete top-level assistant tool_use.
         if (cb.name === "Write" || cb.name === "Edit") {
           const touchedPath = cb.input?.file_path ?? cb.input?.path ?? null;
           pushUniqueBoundedTail(

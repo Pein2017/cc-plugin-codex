@@ -317,6 +317,40 @@ describe("Claude headless adapter", () => {
     assert.equal(success.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, true);
     assert.deepEqual(validateTurnCompletion(success.state, 0), { status: "completed" });
 
+    const partial = new StreamParser({ delegationMode: "claude_orchestrator" });
+    partial.feed(`${JSON.stringify({
+      type: "system",
+      subtype: "init",
+      tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      agents: ["haiku-scout", "sonnet", "opus"],
+    })}\n`);
+    partial.feed(`${JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_start", content_block: { type: "tool_use", id: "partial-agent-1", name: "Agent", input: {} } },
+    })}\n`);
+    partial.feed(`${JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: '{"name":"scout-1","subagent_type":"haiku-scout"}' } },
+    })}\n`);
+    assert.deepEqual(partial.state.toolUses, [{ tool: "Agent", inputKeys: [] }]);
+    assert.equal(partial.state.compatibilitySurfaceDrift, false);
+    partial.feed(`${JSON.stringify({
+      type: "assistant",
+      message: { content: [{
+        type: "tool_use",
+        id: "partial-agent-1",
+        name: "Agent",
+        input: { name: "scout-1", subagent_type: "haiku-scout" },
+      }] },
+    })}\n`);
+    partial.feed(`${JSON.stringify({
+      type: "user",
+      tool_use_result: { status: "teammate_spawned" },
+      message: { content: [{ type: "tool_result", tool_use_id: "partial-agent-1", content: "rendered string" }] },
+    })}\n`);
+    partial.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "partial complete" })}\n`);
+    assert.deepEqual(validateTurnCompletion(partial.state, 0), { status: "completed" });
+
     const ordinary = initialize();
     ordinary.feed(`${JSON.stringify({
       type: "user",
