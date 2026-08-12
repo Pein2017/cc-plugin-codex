@@ -573,20 +573,6 @@ export class StreamParser {
     this._nativeTeamWitness({ type: "native_team_message", sameTeamRecipient: true });
   }
 
-  _recordNativeTeamSettle(event) {
-    if (this.delegationMode !== "claude_orchestrator") return;
-    const signal = {
-      teammate_idle: "idle",
-      teammate_completed: "completed",
-      teammate_failed: "failed",
-    }[event?.subtype];
-    if (!signal) return;
-    const memberName = [event?.teammate_name, event?.teammateName, event?.agent_name, event?.agentName]
-      .find((value) => typeof value === "string" && value.trim())?.trim();
-    if (!memberName || !this.nativeTeamMembers.has(memberName)) return;
-    this._nativeTeamWitness({ type: "native_team_settled", memberName, signal });
-  }
-
   /** Feed a raw stdout chunk. Returns parsed events. */
   feed(chunk) {
     if (chunk) this.state.lastByteAt = new Date().toISOString();
@@ -787,7 +773,6 @@ export class StreamParser {
   }
 
   _handleSystemEvent(event) {
-    this._recordNativeTeamSettle(event);
     if (event.subtype === "init") {
       this.state.runtimeReceipt = {
         claudeCodeVersion: event.claude_code_version ?? null,

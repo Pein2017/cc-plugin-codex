@@ -11,8 +11,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
 import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
-import { buildArgs } from "./claude-headless-adapter.mjs";
 import { createExecutionProfile } from "./execution-profile.mjs";
+import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "./version.mjs";
 
@@ -25,6 +25,7 @@ const NATIVE_TEAM_WITNESS_MEMORY_PREFIXES = Object.freeze([
 ]);
 const MAX_NATIVE_TEAM_WITNESS_EVENTS = 32;
 const MAX_NATIVE_TEAM_WITNESS_NAME_BYTES = 96;
+const MAX_NATIVE_TEAM_WITNESS_PATHS = 16_384;
 const SAFE_WITNESS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 function gitStatus(cwd) {
@@ -49,49 +50,75 @@ function initializeWitnessWorkspace() {
   return cwd;
 }
 
+function nativeMemoryPath(relative) {
+  const normalized = String(relative ?? "").replaceAll("\\", "/");
+  return normalized === ".claude/agent-memory-local" || normalized.startsWith(".claude/agent-memory-local/");
+}
+
 function snapshotWorkspacePaths(root, options = {}) {
   const snapshot = new Map();
+  let overflow = false;
+  const maxPaths = options.maxPaths ?? MAX_NATIVE_TEAM_WITNESS_PATHS;
   const visit = (relative) => {
+    if (snapshot.size >= maxPaths) {
+      overflow = true;
+      return;
+    }
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute);
-    const allowedMemory = options.allowMemory !== false && nativeMemoryPathAllowed(relative);
+    const underNativeMemory = nativeMemoryPath(relative);
     const metadata = {
       type: stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file",
       size: stat.size,
       mode: stat.mode,
     };
     if (!stat.isDirectory()) metadata.mtimeMs = stat.mtimeMs;
-    if (!allowedMemory && stat.isFile()) {
+    // Native Auto/teammate memory is Claude-owned. Never open a file anywhere
+    // in that subtree, including an unapproved third member; lstat/readdir
+    // metadata is sufficient for the witness mutation gate.
+    if (!underNativeMemory && stat.isFile()) {
       metadata.sha256 = createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
     }
     snapshot.set(relative || ".", metadata);
-    // The exception is local-memory-only: retain the root directory metadata
-    // but never enumerate or open its children.
-    if (!stat.isDirectory() || (options.allowMemory !== false && nativeMemoryRoot(relative))) return;
+    // Never follow a symlink; a changed in-tree symlink is rejected below.
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
     for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
       if (!relative && entry.name === ".git") continue;
       visit(relative ? path.join(relative, entry.name) : entry.name);
     }
   };
   visit("");
-  return snapshot;
+  return { paths: snapshot, overflow };
 }
 
 function changedSnapshotPaths(before, after) {
-  const paths = new Set([...before.keys(), ...after.keys()]);
-  return [...paths].filter((relative) => JSON.stringify(before.get(relative) ?? null) !== JSON.stringify(after.get(relative) ?? null)).sort();
+  const paths = new Set([...before.paths.keys(), ...after.paths.keys()]);
+  return [...paths].filter((relative) => JSON.stringify(before.paths.get(relative) ?? null) !== JSON.stringify(after.paths.get(relative) ?? null)).sort();
+}
+
+function changedMemoryMetadata(before, after, paths) {
+  return paths.map((relative) => Object.freeze({
+    path: relative,
+    before: before.paths.get(relative) ?? null,
+    after: after.paths.get(relative) ?? null,
+  }));
 }
 
 function nativeMemoryPathAllowed(relative) {
   const normalized = String(relative ?? "").replaceAll("\\", "/");
   return NATIVE_TEAM_WITNESS_MEMORY_PREFIXES.some((prefix) =>
-    normalized.startsWith(`${prefix}/`)
+    normalized === prefix || normalized.startsWith(`${prefix}/`)
   );
 }
 
-function nativeMemoryRoot(relative) {
-  const normalized = String(relative ?? "").replaceAll("\\", "/");
-  return NATIVE_TEAM_WITNESS_MEMORY_PREFIXES.includes(normalized);
+function unsafeAllowedMemorySymlink(snapshot, relative) {
+  return nativeMemoryPathAllowed(relative) && snapshot.paths.get(relative)?.type === "symlink";
+}
+
+function nativeMemorySnapshotHasSymlink(snapshot) {
+  return [...snapshot.paths].some(([relative, metadata]) =>
+    nativeMemoryPath(relative) && metadata.type === "symlink",
+  );
 }
 
 function assertWitnessMemoryRoots(cwd) {
@@ -131,10 +158,6 @@ function boundedWitnessEvent(fact) {
       return { type: fact.type, teamTransportLiveValidated: fact.teamTransportLiveValidated === true };
     case "native_team_message":
       return { type: fact.type, sameTeamRecipient: fact.sameTeamRecipient === true };
-    case "native_team_settled":
-      return safeWitnessName(fact.memberName) && ["idle", "completed", "failed"].includes(fact.signal)
-        ? { type: fact.type, memberName: safeWitnessName(fact.memberName), signal: fact.signal }
-        : null;
     case "native_team_parent_synthesis":
       return { type: fact.type };
     case "native_team_witness_overflow":
@@ -152,14 +175,13 @@ function boundedWitnessEvent(fact) {
 export async function runNativeTeamWitness(options = {}) {
   const sourceRoot = fs.realpathSync.native(options.sourceRoot ?? SOURCE_ROOT);
   const sourceBefore = gitStatus(sourceRoot);
-  // Both source and disposable snapshots deliberately omit memory file
-  // contents. Non-memory files retain hashes and metadata for dirty-source
-  // detection without treating local native memory as evidence.
-  const sourceSnapshotBefore = snapshotWorkspacePaths(sourceRoot);
+  // Snapshots recurse through all native-memory paths for path-level mutation
+  // evidence, but never open their contents.
+  const sourceSnapshotBefore = snapshotWorkspacePaths(sourceRoot, { maxPaths: options.maxSnapshotPaths });
   const cwd = initializeWitnessWorkspace();
   // Internal fixture hook for zero-Claude tests; it is not routed from MCP.
   if (typeof options.prepareWorkspace === "function") options.prepareWorkspace(cwd);
-  const before = snapshotWorkspacePaths(cwd);
+  const before = snapshotWorkspacePaths(cwd, { maxPaths: options.maxSnapshotPaths });
   let memoryRootsValid = true;
   try {
     assertWitnessMemoryRoots(cwd);
@@ -170,27 +192,38 @@ export async function runNativeTeamWitness(options = {}) {
   const requestedMembers = new Map();
   let requestedModelHaiku = null;
   let requestedModelSonnet = null;
-  const settledMembers = new Set();
+  let definitionSurface = false;
   let firstSpawnTransport = false;
   let sameTeamMessage = false;
   let parentSynthesis = false;
   let witnessOverflow = false;
   let turn;
+  let launchContext = null;
   const witnessRoute = {
     model: "claude-opus-5", effort: "low", write: false, delegationMode: "claude_orchestrator",
   };
   if (memoryRootsValid) try {
     const driver = options.driver ?? createClaudeCodeDriver();
-    const env = {
-      ...process.env,
-      ...(options.env ?? {}),
-      CLAUDE_CONFIG_DIR: options.env?.CLAUDE_CONFIG_DIR ?? path.join(cwd, ".claude-config"),
+    const environment = resolveRuntimeEnvironment({ cwd, env: options.env ?? process.env });
+    const env = environment.env;
+    const readiness = {
+      ...driver.preflight({ cwd, env }),
+      cwd,
+      claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? null,
+      sourceRoot,
     };
+    const unready = driver.describeUnreadiness?.(readiness);
+    if (unready) throw new Error(unready);
+    driver.validatePreparedPreflight(readiness, { cwd, env, sourceRoot });
+    launchContext = driver.revalidatePreparedPreflight(readiness, { cwd, env, sourceRoot });
+    if (!launchContext?.compatibility?.executable || !launchContext.compatibility.fingerprint) {
+      throw new Error("Native-team witness requires a revalidated Claude executable fingerprint.");
+    }
     const profile = createExecutionProfile({ ...witnessRoute, env, jobId: "native-team-witness" });
     try {
-      // Exercise the same production profile and adapter serialization that the
-      // Driver uses. This records requested definitions, never effective facts.
-      buildArgs("witness", { agents: profile.claudeOptions.agents });
+      // This is the same profile the production Driver constructs for the
+      // direct turn; it proves injected requested definitions, never effective
+      // teammate properties.
       const agents = profile.claudeOptions.agents;
       requestedModelHaiku = agents["haiku-scout"]?.model ?? null;
       requestedModelSonnet = agents.sonnet?.model ?? null;
@@ -204,12 +237,7 @@ export async function runNativeTeamWitness(options = {}) {
       prompt: "Use one Haiku scout with intended effort low and one Sonnet reviewer with intended effort low; return one parent synthesis.",
       route: witnessRoute,
       env,
-      launchContext: {
-        compatibility: {
-          fingerprint: "native-team-witness-fixture",
-          executable: options.executable ?? process.execPath,
-        },
-      },
+      launchContext,
       onNativeTeamWitness: (fact) => {
         const event = boundedWitnessEvent(fact);
         if (!event) return;
@@ -219,37 +247,44 @@ export async function runNativeTeamWitness(options = {}) {
         }
         events.push(event);
         if (event.type === "native_team_witness_overflow") witnessOverflow = true;
+        if (event.type === "native_team_surface") definitionSurface ||= event.observed;
         if (event.type === "native_team_member_requested") requestedMembers.set(event.memberType, event.memberName);
         if (event.type === "native_team_transport") firstSpawnTransport ||= event.teamTransportLiveValidated;
         if (event.type === "native_team_message") sameTeamMessage ||= event.sameTeamRecipient;
-        if (event.type === "native_team_settled") settledMembers.add(event.memberName);
         if (event.type === "native_team_parent_synthesis") parentSynthesis = true;
       },
-      ...(typeof options.runTurnSession === "function" ? { runTurnSession: options.runTurnSession } : {}),
     });
   } finally {
     // Take the immutable path-level snapshot before optional cleanup. This does
     // not open any native-memory file, including allowed paths.
   }
-  const after = snapshotWorkspacePaths(cwd);
+  const after = snapshotWorkspacePaths(cwd, { maxPaths: options.maxSnapshotPaths });
   const changedPaths = changedSnapshotPaths(before, after);
-  const unauthorizedPaths = changedPaths.filter((relative) => !nativeMemoryPathAllowed(relative));
+  const allowedMemoryChangedPaths = changedPaths.filter((relative) => nativeMemoryPathAllowed(relative));
+  const allowedMemoryMetadataChanges = changedMemoryMetadata(before, after, allowedMemoryChangedPaths);
+  const nativeMemorySymlink = nativeMemorySnapshotHasSymlink(before) || nativeMemorySnapshotHasSymlink(after);
+  const unauthorizedPaths = changedPaths.filter((relative) =>
+    !nativeMemoryPathAllowed(relative) || unsafeAllowedMemorySymlink(after, relative),
+  );
   const sourceAfter = gitStatus(sourceRoot);
-  const sourceSnapshotAfter = snapshotWorkspacePaths(sourceRoot);
+  const sourceSnapshotAfter = snapshotWorkspacePaths(sourceRoot, { maxPaths: options.maxSnapshotPaths });
   const sourceChangedPaths = changedSnapshotPaths(sourceSnapshotBefore, sourceSnapshotAfter);
-  const accountLimit = isClaudeSubscriptionLimit(`${turn?.failure?.reason ?? ""}\n${turn?.failure?.detail ?? ""}`);
+  const accountLimit = turn?.failure?.class === "usage_or_subscription_limit" ||
+    isClaudeSubscriptionLimit(`${turn?.failure?.reason ?? ""}\n${turn?.failure?.detail ?? ""}`);
   const requestedModels = { haikuScout: requestedModelHaiku, sonnet: requestedModelSonnet };
   const successfulTerminal = turn?.status === "completed" && turn?.failure?.class == null && turn?.exitStatus === 0;
   const missingEvidence = [
     ...(memoryRootsValid ? [] : ["memory_root_invalid"]),
     ...(witnessOverflow ? ["witness_event_overflow"] : []),
+    ...(nativeMemorySymlink ? ["native_memory_symlink"] : []),
+    ...(before.overflow || after.overflow ? ["disposable_snapshot_overflow"] : []),
+    ...(sourceSnapshotBefore.overflow || sourceSnapshotAfter.overflow ? ["source_snapshot_overflow"] : []),
     ...(successfulTerminal ? [] : ["successful_terminal"]),
+    ...(definitionSurface ? [] : ["native_team_definition_surface"]),
     ...(requestedMembers.has("haiku-scout") ? [] : ["requested_haiku_scout"]),
     ...(requestedMembers.has("sonnet") ? [] : ["requested_sonnet"]),
     ...(firstSpawnTransport ? [] : ["first_spawn_transport"]),
     ...(sameTeamMessage ? [] : ["current_team_message"]),
-    ...(settledMembers.has(requestedMembers.get("haiku-scout")) ? [] : ["settled_haiku_scout"]),
-    ...(settledMembers.has(requestedMembers.get("sonnet")) ? [] : ["settled_sonnet"]),
     ...(parentSynthesis ? [] : ["parent_synthesis"]),
   ];
   const status = accountLimit ? "account_limit_stopped" : (unauthorizedPaths.length || sourceBefore !== sourceAfter || sourceChangedPaths.length || missingEvidence.length ? "unverified" : "verified");
@@ -259,14 +294,29 @@ export async function runNativeTeamWitness(options = {}) {
     requestedModels,
     intendedEffort: { haikuScout: "low", sonnet: "low" },
     effectiveTeammate: { model: "unknown", effort: "unknown", cost: "unknown" },
+    definitionSurface,
+    launch: {
+      executable: launchContext?.compatibility?.executable ?? null,
+      fingerprint: launchContext?.compatibility?.fingerprint ?? null,
+    },
+    settleObservation: {
+      status: "unobservable",
+      executable: launchContext?.compatibility?.executable ?? null,
+    },
     firstSpawnTransport,
     missingEvidence,
     events,
     source: { unchanged: sourceBefore === sourceAfter && sourceChangedPaths.length === 0, statusBefore: sourceBefore, statusAfter: sourceAfter, changedPaths: sourceChangedPaths },
     disposable: {
       gitStatus: gitStatus(cwd),
-      snapshot: { beforePathCount: before.size, afterPathCount: after.size },
-      mutation: { changedPaths, unauthorizedPaths, allowedMemoryPrefixes: [...NATIVE_TEAM_WITNESS_MEMORY_PREFIXES] },
+      snapshot: { beforePathCount: before.paths.size, afterPathCount: after.paths.size, overflow: before.overflow || after.overflow },
+      mutation: {
+        changedPaths,
+        allowedMemoryChangedPaths,
+        allowedMemoryMetadataChanges,
+        unauthorizedPaths,
+        allowedMemoryPrefixes: [...NATIVE_TEAM_WITNESS_MEMORY_PREFIXES],
+      },
     },
   };
   if (options.keepWorkspace !== true) fs.rmSync(cwd, { recursive: true, force: true });
@@ -290,7 +340,13 @@ function callOptions(timeout) {
 
 export function isClaudeSubscriptionLimit(value) {
   const text = String(value instanceof Error ? value.message : value ?? "");
-  return /(?:usage|weekly|monthly|subscription|credit|quota)[\s\S]{0,80}(?:limit|exhaust|deplet)|(?:limit|exhaust)[\s\S]{0,80}(?:usage|weekly|monthly|subscription|credit|quota)/i.test(text);
+  // This is compatibility-only: the normalized Driver failure class is
+  // authoritative. Do not mistake a transient/request HTTP 429 for account
+  // exhaustion, but retain narrowly named subscription capacity diagnostics.
+  if (/\bHTTP\s*429\b/i.test(text) && !/\b(?:subscription|allowance|credits?|quota)\b/i.test(text)) return false;
+  const capacity = "(?:subscription|allowance|credits?|quota)";
+  const exhaustion = "(?:limit(?:ed)?|hit|reached|exceeded|exhausted|depleted|no remaining|insufficient)";
+  return new RegExp(`\\b${capacity}\\b[\\s\\S]{0,80}\\b${exhaustion}\\b|\\b${exhaustion}\\b[\\s\\S]{0,80}\\b${capacity}\\b`, "i").test(text);
 }
 
 function paidSmokeError(error) {

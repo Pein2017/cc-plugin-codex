@@ -167,12 +167,13 @@ topology-owned `Agent`/`Workflow` denials above. If progress requires a decision
 only the Codex lead or user can make, the Agent ends its turn with the exact
 question and supporting evidence so the same durable session can continue.
 
-An explicit Claude subscription, usage, weekly/monthly allowance, credit, or
-quota exhaustion ends subsequent real CC tests in that workflow. The runtime
-does not reconnect or substitute another model, while local code work and
-fake-Claude tests may continue. Generic transient HTTP 429 remains eligible for
-bounded exact-session recovery, and a caller-imposed maximum budget is not an
-account-limit signal.
+An authoritative Driver `usage_or_subscription_limit` failure ends subsequent
+real CC tests in that workflow. Compatibility text fallback is deliberately
+narrow: explicit subscription, allowance, credit, or quota exhaustion; generic
+HTTP 429 remains eligible for bounded exact-session recovery, and a
+caller-imposed maximum budget is not an account-limit signal. The runtime does
+not reconnect or substitute another model, while local code work and fake-Claude
+tests may continue.
 
 Each fresh Agent session receives its durable Agent name through Claude's
 `--name` option. This preserves a useful Claude-side label and avoids the
@@ -488,12 +489,26 @@ claiming to run a paid Codex model turn or touching production Agent state.
 
 Only separately authorized paid native-team acceptance may add one real Claude
 turn through the production Driver/profile/adapter seam in a disposable Git
-workspace, never the source checkout. It requests `claude-opus-5`, `low`, and
-`write: false`, requires Haiku scout/Sonnet reviewer definitions, first-spawn
-transport proof, one current-team message, both native settle signals, and one
-parent synthesis. It permits only the two corresponding local-memory prefixes
-and leaves missing structured evidence unverified; assistant prose cannot fill
-those gaps. No MCP field, IPC channel, or durable teammate state is added.
+workspace, never the source checkout. Run it explicitly with:
+
+```bash
+npm run smoke:release -- --native-team-witness
+```
+
+This is mutually exclusive with `--real-claude`, announces its paid
+`claude-opus-5`/`low`/`write:false` intent before launch, resolves the normal
+runtime environment, and performs Driver preflight plus prepared revalidation
+for the actual executable and fingerprint. It requires Haiku scout/Sonnet
+reviewer definitions, first-spawn transport proof, one current-team message,
+and one parent synthesis. Teammate settle is explicitly reported as
+unobservable for that executable: native mailbox/hook delivery is not a stable
+top-level stream event, so it is neither invented nor a verification
+requirement. It permits only the two corresponding local-memory prefixes,
+recursively records capped content-free path metadata there without opening any
+`.claude/agent-memory-local/**` file, and leaves missing structured evidence or
+snapshot overflow unverified. Any other disposable mutation or any source
+change fails acceptance. Assistant prose cannot fill those gaps. No MCP field,
+IPC channel, public receipt, or durable teammate state is added.
 
 The older explicit smoke flag remains one ordinary Claude acceptance turn:
 

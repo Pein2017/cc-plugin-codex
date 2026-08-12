@@ -43,6 +43,47 @@ function matchingSnapshot() {
   };
 }
 
+function completedWitnessTurn(overrides = {}) {
+  return {
+    status: "completed",
+    exitStatus: 0,
+    failure: { class: null, reason: null, detail: null },
+    ...overrides,
+  };
+}
+
+function fakeWitnessDriver(startTurn) {
+  const calls = [];
+  const compatibility = { executable: "/fake/claude", fingerprint: "fake-fingerprint" };
+  return {
+    calls,
+    preflight({ cwd, env }) {
+      calls.push({ method: "preflight", cwd, env });
+      return {
+        ready: true,
+        availability: { available: true },
+        compatibility: { staticCompatible: true, ...compatibility },
+        auth: { loggedIn: true },
+      };
+    },
+    validatePreparedPreflight(receipt, scope) {
+      calls.push({ method: "validate", receipt, scope });
+      assert.equal(receipt.cwd, scope.cwd);
+      assert.equal(receipt.claudeConfigDir, scope.env.CLAUDE_CONFIG_DIR);
+      return receipt;
+    },
+    revalidatePreparedPreflight(receipt, scope) {
+      calls.push({ method: "revalidate", receipt, scope });
+      assert.equal(receipt.cwd, scope.cwd);
+      return { availability: { available: true }, compatibility };
+    },
+    async startTurn(request) {
+      calls.push({ method: "start", request });
+      return startTurn(request);
+    },
+  };
+}
+
 describe("release smoke", () => {
   it("validates matching installed Skills and MCP evidence without paid usage by default", async () => {
     const fixture = matchingSnapshot();
@@ -129,8 +170,10 @@ describe("release smoke", () => {
     assert.deepEqual(report.paid, { requested: false, status: "skipped" });
   });
 
-  it("distinguishes subscription exhaustion from a generic HTTP 429", () => {
-    assert.equal(isClaudeSubscriptionLimit("You have reached your weekly usage limit"), true);
+  it("distinguishes bounded subscription compatibility fallbacks from a generic HTTP 429", () => {
+    assert.equal(isClaudeSubscriptionLimit("subscription allowance exhausted"), true);
+    assert.equal(isClaudeSubscriptionLimit("no remaining credits"), true);
+    assert.equal(isClaudeSubscriptionLimit("quota limit reached"), true);
     assert.equal(isClaudeSubscriptionLimit("HTTP 429 transient rate limit"), false);
   });
 
@@ -166,80 +209,73 @@ describe("release smoke", () => {
     ]);
   });
 
-  it("verifies a full fake Native Agent Team witness and pins its serialized production definition models", async () => {
+  it("binds the fake witness to a full Driver preflight/revalidation seam and preserves observable team facts", async () => {
+    const driver = fakeWitnessDriver(async (request) => {
+      assert.equal(request.launchContext.compatibility.executable, "/fake/claude");
+      assert.equal(request.launchContext.compatibility.fingerprint, "fake-fingerprint");
+      const parser = new StreamParser({
+        delegationMode: "claude_orchestrator",
+        onNativeTeamWitness: request.onNativeTeamWitness,
+      });
+      parser.feed(`${JSON.stringify({
+        type: "system", subtype: "init", session_id: "fake-parent",
+        tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+        agents: ["haiku-scout", "sonnet", "opus"],
+      })}\n`);
+      parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+        type: "tool_use", id: "fake-spawn", name: "Agent",
+        input: { name: "haiku-scout-1", subagent_type: "haiku-scout" },
+      }, {
+        type: "tool_use", id: "fake-sonnet", name: "Agent",
+        input: { name: "sonnet-1", subagent_type: "sonnet" },
+      }] } })}\n`);
+      parser.feed(`${JSON.stringify({
+        type: "user", tool_use_result: { status: "teammate_spawned" },
+        message: { content: [{ type: "tool_result", tool_use_id: "fake-spawn" }] },
+      })}\n`);
+      parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+        type: "tool_use", id: "fake-message", name: "SendMessage",
+        input: { recipient: "haiku-scout-1", content: "opaque fixture" },
+      }] } })}\n`);
+      parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_completed", teammate_name: "haiku-scout-1" })}\n`);
+      parser.feed(`${JSON.stringify({ type: "result", subtype: "success", is_error: false })}\n`);
+      fs.mkdirSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout"), { recursive: true });
+      fs.writeFileSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout", "metadata.json"), "fixture");
+      return completedWitnessTurn();
+    });
     const witness = await runNativeTeamWitness({
       sourceRoot: SOURCE_ROOT,
-      runTurnSession: async (request) => {
-        assert.equal(request.claudeOptions.model, "claude-opus-5");
-        assert.equal(request.claudeOptions.effort, "low");
-        assert.equal(request.claudeOptions.delegationMode, "claude_orchestrator");
-        assert.deepEqual(Object.keys(request.claudeOptions.agents), ["haiku-scout", "sonnet", "opus"]);
-        const parser = new StreamParser({
-          delegationMode: request.claudeOptions.delegationMode,
-          onNativeTeamWitness: request.claudeOptions.onNativeTeamWitness,
-        });
-        parser.feed(`${JSON.stringify({
-          type: "system", subtype: "init", session_id: "fake-parent",
-          tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
-          agents: ["haiku-scout", "sonnet", "opus"],
-        })}\n`);
-        parser.feed(`${JSON.stringify({
-          type: "assistant", session_id: "fake-parent", message: { content: [{
-            type: "tool_use", id: "fake-spawn", name: "Agent",
-            input: { name: "haiku-scout-1", subagent_type: "haiku-scout" },
-          }] },
-        })}\n`);
-        parser.feed(`${JSON.stringify({
-          type: "assistant", session_id: "fake-parent", message: { content: [{
-            type: "tool_use", id: "fake-sonnet", name: "Agent",
-            input: { name: "sonnet-1", subagent_type: "sonnet" },
-          }] },
-        })}\n`);
-        parser.feed(`${JSON.stringify({
-          type: "user", session_id: "fake-parent", tool_use_result: { status: "teammate_spawned" },
-          message: { content: [{ type: "tool_result", tool_use_id: "fake-spawn" }] },
-        })}\n`);
-        parser.feed(`${JSON.stringify({
-          type: "assistant", session_id: "fake-parent", message: { content: [{
-            type: "tool_use", id: "fake-message", name: "SendMessage",
-            input: { recipient: "haiku-scout-1", content: "opaque fixture" },
-          }] },
-        })}\n`);
-        parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_completed", teammate_name: "haiku-scout-1" })}\n`);
-        parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_idle", teammate_name: "sonnet-1" })}\n`);
-        parser.feed(`${JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: "fake-parent" })}\n`);
-        fs.mkdirSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout"), { recursive: true });
-        fs.writeFileSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout", "metadata.json"), "fixture");
-        return {
-          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "untrusted assistant prose",
-          failureClass: null, failureReason: null, resumable: false, recoveryAttempts: 0, attempts: [],
-          steering: { messages: [], latestAcknowledgedSequence: 0 },
-          runtimeReceipt: { nativeTeamSurface: parser.state.nativeTeamSurface }, toolUses: parser.state.toolUses, touchedFiles: [],
-        };
-      },
+      driver,
     });
-    assert.equal(witness.status, "verified");
+    assert.equal(witness.status, "verified", JSON.stringify(witness, null, 2));
     assert.equal(witness.liveVerified, true);
     assert.equal(witness.requestedModels.haikuScout, "claude-haiku-4-5");
     assert.equal(witness.requestedModels.sonnet, "claude-sonnet-5");
     assert.equal(witness.firstSpawnTransport, true);
+    assert.equal(witness.definitionSurface, true);
     assert.deepEqual(witness.intendedEffort, { haikuScout: "low", sonnet: "low" });
     assert.deepEqual(witness.effectiveTeammate, { model: "unknown", effort: "unknown", cost: "unknown" });
     assert.deepEqual(witness.disposable.mutation.unauthorizedPaths, []);
+    assert.deepEqual(witness.disposable.mutation.allowedMemoryChangedPaths, [
+      ".claude/agent-memory-local/haiku-scout/metadata.json",
+    ]);
+    assert.deepEqual(witness.disposable.mutation.allowedMemoryMetadataChanges.map((entry) => entry.path), [
+      ".claude/agent-memory-local/haiku-scout/metadata.json",
+    ]);
+    assert.equal(witness.disposable.mutation.allowedMemoryMetadataChanges[0].after.sha256, undefined);
     assert.equal(witness.source.unchanged, true);
     assert.deepEqual(witness.missingEvidence, []);
+    assert.deepEqual(witness.settleObservation, { status: "unobservable", executable: "/fake/claude" });
+    assert.deepEqual(driver.calls.map((call) => call.method), ["preflight", "validate", "revalidate", "start"]);
   });
 
   it("leaves the witness unverified when the bounded adapter reports a member overflow", async () => {
     const witness = await runNativeTeamWitness({
       sourceRoot: SOURCE_ROOT,
-      runTurnSession: async (request) => {
-        request.claudeOptions.onNativeTeamWitness({ type: "native_team_witness_overflow" });
-        return {
-          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "", failureClass: null, failureReason: null,
-          resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
-        };
-      },
+      driver: fakeWitnessDriver(async (request) => {
+        request.onNativeTeamWitness({ type: "native_team_witness_overflow" });
+        return completedWitnessTurn();
+      }),
     });
     assert.equal(witness.status, "unverified");
     assert.ok(witness.missingEvidence.includes("witness_event_overflow"));
@@ -257,10 +293,10 @@ describe("release smoke", () => {
         fs.rmSync(path.join(cwd, ".claude"), { recursive: true, force: true });
         fs.symlinkSync(outside, path.join(cwd, ".claude"));
       },
-      runTurnSession: async () => {
+      driver: fakeWitnessDriver(async () => {
         attempts += 1;
         throw new Error("memory ancestry must stop before launching a turn");
-      },
+      }),
     });
     assert.equal(attempts, 0);
     assert.equal(witness.status, "unverified");
@@ -270,19 +306,55 @@ describe("release smoke", () => {
   it("rejects ignored and non-ignored disposable writes outside the two memory prefixes", async () => {
     const witness = await runNativeTeamWitness({
       sourceRoot: SOURCE_ROOT,
-      runTurnSession: async (request) => {
+      driver: fakeWitnessDriver(async (request) => {
         fs.writeFileSync(path.join(request.cwd, ".gitignore"), "ignored-fixture.txt\n", "utf8");
         fs.writeFileSync(path.join(request.cwd, "ignored-fixture.txt"), "ignored", "utf8");
         fs.writeFileSync(path.join(request.cwd, "ordinary-fixture.txt"), "ordinary", "utf8");
-        return {
-          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "", failureClass: null, failureReason: null,
-          resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
-        };
-      },
+        return completedWitnessTurn();
+      }),
     });
     assert.equal(witness.status, "unverified");
     assert.ok(witness.disposable.mutation.unauthorizedPaths.includes("ignored-fixture.txt"));
     assert.ok(witness.disposable.mutation.unauthorizedPaths.includes("ordinary-fixture.txt"));
+  });
+
+  it("records allowed-memory metadata without opening any teammate memory content and rejects a third member path", async () => {
+    const originalReadFileSync = fs.readFileSync;
+    fs.readFileSync = function guardedReadFileSync(file, ...args) {
+      if (String(file).replaceAll("\\", "/").includes("/.claude/agent-memory-local/opus/")) {
+        throw new Error("witness must not read third-member memory content");
+      }
+      return originalReadFileSync.call(this, file, ...args);
+    };
+    try {
+      const witness = await runNativeTeamWitness({
+        sourceRoot: SOURCE_ROOT,
+        driver: fakeWitnessDriver(async (request) => {
+          const memory = path.join(request.cwd, ".claude", "agent-memory-local");
+          fs.writeFileSync(path.join(memory, "haiku-scout", "metadata.json"), "allowed", "utf8");
+          fs.mkdirSync(path.join(memory, "opus"), { recursive: true });
+          fs.writeFileSync(path.join(memory, "opus", "private.md"), "must stay unopened", "utf8");
+          return completedWitnessTurn();
+        }),
+      });
+      assert.equal(witness.status, "unverified");
+      assert.deepEqual(witness.disposable.mutation.allowedMemoryChangedPaths, [
+        ".claude/agent-memory-local/haiku-scout/metadata.json",
+      ]);
+      assert.ok(witness.disposable.mutation.unauthorizedPaths.includes(".claude/agent-memory-local/opus/private.md"));
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+    }
+  });
+
+  it("leaves the witness unverified when the capped memory metadata snapshot overflows", async () => {
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      maxSnapshotPaths: 4,
+      driver: fakeWitnessDriver(async () => completedWitnessTurn()),
+    });
+    assert.equal(witness.status, "unverified");
+    assert.ok(witness.missingEvidence.includes("disposable_snapshot_overflow"));
   });
 
   it("detects a pre-dirty source content mutation even when Git status text is unchanged", async () => {
@@ -292,13 +364,10 @@ describe("release smoke", () => {
     fs.writeFileSync(path.join(sourceRoot, "pre-dirty.txt"), "before", "utf8");
     const witness = await runNativeTeamWitness({
       sourceRoot,
-      runTurnSession: async () => {
+      driver: fakeWitnessDriver(async () => {
         fs.writeFileSync(path.join(sourceRoot, "pre-dirty.txt"), "after", "utf8");
-        return {
-          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "", failureClass: null, failureReason: null,
-          resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
-        };
-      },
+        return completedWitnessTurn();
+      }),
     });
     assert.equal(witness.status, "unverified");
     assert.equal(witness.source.statusBefore, witness.source.statusAfter);
@@ -310,15 +379,13 @@ describe("release smoke", () => {
     let attempts = 0;
     const witness = await runNativeTeamWitness({
       sourceRoot: SOURCE_ROOT,
-      runTurnSession: async () => {
+      driver: fakeWitnessDriver(async () => {
         attempts += 1;
-        return {
-          status: "failed", exitCode: 1, sessionId: null, finalMessage: "",
-          failureClass: "usage_limit", failureReason: "subscription usage limit reached", resumable: false,
-          recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 },
-          runtimeReceipt: {}, toolUses: [], touchedFiles: [],
-        };
-      },
+        return completedWitnessTurn({
+          status: "failed", exitStatus: 1,
+          failure: { class: "usage_or_subscription_limit", reason: "subscription usage limit reached", detail: null },
+        });
+      }),
     });
     assert.equal(attempts, 1);
     assert.equal(witness.status, "account_limit_stopped");
@@ -328,12 +395,23 @@ describe("release smoke", () => {
   it("does not verify a failed Driver terminal turn even when native events claim completion", async () => {
     const witness = await runNativeTeamWitness({
       sourceRoot: SOURCE_ROOT,
-      runTurnSession: async () => ({
-        status: "failed", exitCode: 1, sessionId: null, finalMessage: "", failureClass: "fatal", failureReason: "failed",
-        resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
-      }),
+      driver: fakeWitnessDriver(async () => completedWitnessTurn({
+        status: "failed", exitStatus: 1, failure: { class: "fatal", reason: "failed", detail: null },
+      })),
     });
     assert.equal(witness.liveVerified, false);
     assert.ok(witness.missingEvidence.includes("successful_terminal"));
+    assert.ok(witness.missingEvidence.includes("native_team_definition_surface"));
+  });
+
+  it("rejects mutually exclusive paid CLI modes before a model can launch", () => {
+    const result = spawnSync(process.execPath, [
+      path.join(SOURCE_ROOT, "scripts", "release-smoke.mjs"),
+      "--real-claude",
+      "--native-team-witness",
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /mutually exclusive paid smoke modes/i);
+    assert.doesNotMatch(result.stderr, /Starting explicit paid/i);
   });
 });
