@@ -135,6 +135,11 @@ describe("bounded native Claude team policy", () => {
     assert.match(resolved.prompt, /at most six teammate creations/i);
     assert.match(resolved.prompt, /behavioral.*not process-enforced/i);
     assert.match(resolved.prompt, /intended effort.*inherited or unknown effective effort/i);
+    assert.ok(
+      policy({ write: false }).prompt.includes(
+        "Only native local-memory maintenance under .claude/agent-memory-local/<member-type>/ is allowed.",
+      ),
+    );
   });
 
   it("allows read-only members only their type-scoped native local-memory maintenance", () => {
@@ -271,5 +276,15 @@ describe("bounded native Claude team policy", () => {
         /Malformed native definition inventory/,
       );
     }
+  });
+
+  it("fails closed when the native surface input is not a plain object", () => {
+    for (const input of ["surface", [], 7, new Date()]) {
+      assert.throws(
+        () => assessObservedNativeSurface(input),
+        /Malformed native surface input/,
+      );
+    }
+    assert.equal(assessObservedNativeSurface(undefined).observed, false);
   });
 });

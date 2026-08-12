@@ -152,7 +152,7 @@ function teammateDefinitions(write) {
 function leadPrompt(cohortLabel, write) {
   const authority = write
     ? "Task-scoped mutation is behavioral authority only; give each writing member a disjoint surface."
-    : "Read-only behavioral authority applies to the lead and every member; only native local-memory maintenance may occur.";
+    : "Read-only behavioral authority applies to the lead and every member. Only native local-memory maintenance under .claude/agent-memory-local/<member-type>/ is allowed.";
   return [
     "Lead one fresh experimental Native Agent Team for this turn.",
     `Use cohort label ${cohortLabel} only for the current team; do not resume or address an earlier team.`,
@@ -187,6 +187,12 @@ function validatedPresentNameInventory(input, property, description) {
 
 function isExtensionToolName(name) {
   return name.startsWith("mcp__");
+}
+
+function isPlainObject(value) {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 /** Derive a stable, non-reversible current-team label from a durable job ID. */
@@ -254,6 +260,10 @@ export function canonicalizeInitToolName(name) {
  * evidence, but must use this complete result to make admission decisions.
  */
 export function assessObservedNativeSurface(input = {}) {
+  if (input == null) input = {};
+  if (!isPlainObject(input)) {
+    throw new Error("Malformed native surface input.");
+  }
   const delegationMode = normalizeMode(input.delegationMode);
   const toolNames = validatedPresentNameInventory(input, "toolNames", "tool");
   const definitionInputNames = validatedPresentNameInventory(
