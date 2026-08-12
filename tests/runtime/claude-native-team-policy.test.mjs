@@ -126,6 +126,8 @@ describe("bounded native Claude team policy", () => {
       assert.match(definition.prompt, /omit call-level model and isolation overrides/i);
       assert.match(definition.prompt, /remote, worktree, or fork/i);
       assert.match(definition.prompt, /do not delegate or use Agent\/Workflow/i);
+      assert.match(definition.prompt, /current-team shared tasks and SendMessage only for bounded evidence or blockers/i);
+      assert.match(definition.prompt, /do not use cross-session recipients or peer-driven resume of completed teammates/i);
     }
     assert.match(resolved.teammateDefinitions[0].prompt, /must not mutate task, workspace, repository, or external state/i);
     assert.match(resolved.prompt, /experimental Native Agent Team/i);
@@ -133,6 +135,26 @@ describe("bounded native Claude team policy", () => {
     assert.match(resolved.prompt, /at most six teammate creations/i);
     assert.match(resolved.prompt, /behavioral.*not process-enforced/i);
     assert.match(resolved.prompt, /intended effort.*inherited or unknown effective effort/i);
+  });
+
+  it("allows read-only members only their type-scoped native local-memory maintenance", () => {
+    const readOnly = policy({ write: false });
+    for (const definition of readOnly.teammateDefinitions) {
+      assert.ok(
+        definition.prompt.includes(
+          `Only native local-memory maintenance under .claude/agent-memory-local/${definition.name}/ is allowed.`,
+        ),
+      );
+      assert.match(definition.prompt, /must not mutate task, workspace, repository, or external state/i);
+    }
+
+    const writingTeamHaiku = policy({ write: true }).teammateDefinitions[0];
+    assert.ok(
+      writingTeamHaiku.prompt.includes(
+        "Only native local-memory maintenance under .claude/agent-memory-local/haiku-scout/ is allowed.",
+      ),
+    );
+    assert.match(writingTeamHaiku.prompt, /must not mutate task, workspace, repository, or external state/i);
   });
 
   it("keeps its complete deterministic result free of process and persistence controls", () => {
@@ -234,5 +256,20 @@ describe("bounded native Claude team policy", () => {
     assert.deepEqual(missing.missingDefinitions, ["opus", "sonnet"]);
     assert.deepEqual(missing.missingNecessaryCoordinationTools, ["TaskGet", "TaskList", "TaskUpdate"]);
     assert.equal(missing.denySetLiveValidated, true);
+  });
+
+  it("fails closed when a present native inventory is malformed", () => {
+    for (const toolNames of [[null], [""], "Task"]) {
+      assert.throws(
+        () => assessObservedNativeSurface({ delegationMode: "leaf", toolNames }),
+        /Malformed native tool inventory/,
+      );
+    }
+    for (const definitionNames of [[null], ["  "], "haiku-scout"]) {
+      assert.throws(
+        () => assessObservedNativeSurface({ delegationMode: "leaf", definitionNames }),
+        /Malformed native definition inventory/,
+      );
+    }
   });
 });

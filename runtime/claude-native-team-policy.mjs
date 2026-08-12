@@ -114,12 +114,13 @@ function normalizeModel(value) {
 }
 
 function memberAuthority(name, write) {
+  const localMemory = `Only native local-memory maintenance under .claude/agent-memory-local/${name}/ is allowed.`;
   if (name === "haiku-scout") {
-    return "You are a read-only scout: you must not mutate task, workspace, repository, or external state.";
+    return `You are a read-only scout: you must not mutate task, workspace, repository, or external state. ${localMemory}`;
   }
   return write
     ? "Mutation is behavioral authority only: change only the lead-assigned non-overlapping write surface."
-    : "Read-only behavioral authority: do not mutate task, workspace, repository, or external state.";
+    : `Read-only behavioral authority: you must not mutate task, workspace, repository, or external state. ${localMemory}`;
 }
 
 function memberPrompt(name, model, write) {
@@ -128,6 +129,7 @@ function memberPrompt(name, model, write) {
     memberAuthority(name, write),
     "Use the current Native Agent Team only. Omit call-level model and isolation overrides; do not use remote, worktree, or fork inputs.",
     "Do not delegate or use Agent/Workflow. You may use current-team shared tasks and SendMessage only for bounded evidence or blockers.",
+    "Do not use cross-session recipients or peer-driven resume of completed teammates.",
     "Your brief must state intended effort, role, authority, write surface, acceptance evidence, and stop boundary; effective effort is inherited from the lead or unknown.",
     "Return bounded evidence or the exact blocker to the lead; do not claim final acceptance.",
   ].join(" ");
@@ -169,6 +171,18 @@ function uniqueSortedNames(values, canonicalize = (value) => value) {
     .map(canonicalize)
     .filter((value) => typeof value === "string" && value.length > 0))]
     .sort((left, right) => left.localeCompare(right));
+}
+
+function validatedPresentNameInventory(input, property, description) {
+  if (!Object.hasOwn(input, property)) return null;
+  const values = input[property];
+  if (
+    !Array.isArray(values) ||
+    values.some((value) => typeof value !== "string" || !value.trim())
+  ) {
+    throw new Error(`Malformed native ${description} inventory.`);
+  }
+  return values;
 }
 
 function isExtensionToolName(name) {
@@ -241,10 +255,16 @@ export function canonicalizeInitToolName(name) {
  */
 export function assessObservedNativeSurface(input = {}) {
   const delegationMode = normalizeMode(input.delegationMode);
-  const observed = Array.isArray(input.toolNames);
-  const canonicalToolNames = uniqueSortedNames(input.toolNames, canonicalizeInitToolName)
+  const toolNames = validatedPresentNameInventory(input, "toolNames", "tool");
+  const definitionInputNames = validatedPresentNameInventory(
+    input,
+    "definitionNames",
+    "definition",
+  );
+  const observed = toolNames !== null;
+  const canonicalToolNames = uniqueSortedNames(toolNames, canonicalizeInitToolName)
     .filter((name) => !isExtensionToolName(name));
-  const definitionNames = uniqueSortedNames(input.definitionNames);
+  const definitionNames = uniqueSortedNames(definitionInputNames);
   const deniedToolNames = delegationMode === LEAF
     ? LEAF_DENIED_TOOL_NAMES
     : COMMON_DENIED_TOOL_NAMES;
