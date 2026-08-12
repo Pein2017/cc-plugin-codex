@@ -16,6 +16,7 @@ import {
   patchJob,
   readJobFile,
   reserveSessionLease,
+  resolveStateDir,
   resolveJobFile,
   transitionJob,
   writeJobFile,
@@ -48,6 +49,19 @@ function setup() {
 }
 
 describe("job store and mailbox", () => {
+  it("persists compatibility observations through an owner-only atomic config replacement", async () => {
+    const { workspace } = setup();
+    const { recordNativeTeamCompatibilityObservation } = await import("../../runtime/claude-version-compatibility.mjs");
+    recordNativeTeamCompatibilityObservation(workspace, { fingerprint: "atomic-fingerprint" }, "leaf", {
+      canonicalToolNames: ["Read"],
+      definitionNames: [],
+    });
+    const configFile = path.join(resolveStateDir(workspace), "config.json");
+    assert.equal(fs.statSync(configFile).mode & 0o077, 0);
+    assert.equal(fs.existsSync(`${configFile}.tmp`), false);
+    assert.match(fs.readFileSync(configFile, "utf8"), /atomic-fingerprint/);
+  });
+
   it("persists ordered steering before acknowledgement", () => {
     const { workspace } = setup();
     const first = enqueueSteeringMessage(workspace, "cc-1", "first");

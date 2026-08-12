@@ -15,7 +15,10 @@ import {
   resolveClaudeExecutable,
 } from "./claude-headless-adapter.mjs";
 import { observeClaudeCredentialState } from "./claude-credential-state.mjs";
-import { diagnoseClaudeCompatibility } from "./claude-version-compatibility.mjs";
+import {
+  diagnoseClaudeCompatibility,
+  inspectNativeTeamCompatibility,
+} from "./claude-version-compatibility.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import {
   inspectCompatibilityShells,
@@ -359,6 +362,65 @@ function failedCheck(id, error, recovery = null) {
   return makeCheck(id, "fail", bounded(error instanceof Error ? error.message : error, 800), null, recovery);
 }
 
+/**
+ * Read-only projection of bounded native-team receipts.  These labels are
+ * deliberately scoped: an observed clean deny set does not establish broader
+ * containment, and tool names do not prove the first native spawn transport.
+ */
+export function diagnoseNativeTeamCompatibility(cwd, fingerprint = null) {
+  const evidence = inspectNativeTeamCompatibility(cwd, fingerprint);
+  const modes = ["leaf", "claude_orchestrator"].map((delegationMode) => {
+    const observation = evidence.observations
+      .filter((entry) => entry.delegationMode === delegationMode)
+      .at(-1);
+    if (!observation) {
+      return {
+        delegationMode,
+        observedAt: null,
+        policyRevision: null,
+        denySetLiveValidated: false,
+        teamTransportLiveValidated: false,
+        missingDefinitions: [],
+        missingNecessaryCoordinationTools: [],
+        forbiddenTools: [],
+        unknownNativeTools: [],
+        status: "live-unverified",
+        summary: "No production inventory is retained; reviewed deny-set validation and first-spawn transport proof are live-unverified.",
+      };
+    }
+    const classification = observation.classification;
+    const definitionsMissing = classification.missingDefinitions.length > 0 ||
+      classification.missingNecessaryCoordinationTools.length > 0;
+    const forbidden = classification.forbiddenTools.length > 0;
+    const unknown = classification.unknownNativeTools.length > 0;
+    const status = forbidden || definitionsMissing
+      ? "incompatible"
+      : unknown || (delegationMode === "claude_orchestrator" && !classification.teamTransportLiveValidated)
+        ? "warn"
+        : classification.denySetLiveValidated
+          ? "observed"
+          : "live-unverified";
+    return {
+      delegationMode,
+      observedAt: observation.observedAt,
+      policyRevision: observation.policyRevision,
+      denySetLiveValidated: classification.denySetLiveValidated,
+      teamTransportLiveValidated: classification.teamTransportLiveValidated,
+      missingDefinitions: classification.missingDefinitions,
+      missingNecessaryCoordinationTools: classification.missingNecessaryCoordinationTools,
+      forbiddenTools: classification.forbiddenTools,
+      unknownNativeTools: classification.unknownNativeTools,
+      status,
+      summary: `Reviewed deny-set validation is ${classification.denySetLiveValidated ? "observed clean" : "not live-validated"}; first-spawn transport proof is ${classification.teamTransportLiveValidated ? "observed" : "live-unverified"}.`,
+    };
+  });
+  return {
+    fingerprint,
+    legacyObservationCount: evidence.legacyObservationCount,
+    modes,
+  };
+}
+
 function fixedEnvironment(cwd, options = {}) {
   const envFile = path.join(SOURCE_ROOT, "config", "runtime.env");
   const resolved = resolveRuntimeEnvironment({ cwd, envFile, env: options.env ?? process.env });
@@ -505,6 +567,7 @@ export async function runDoctor(options = {}) {
       env: environment.env,
       spawnSyncImpl: options.spawnSyncImpl,
     });
+    const nativeTeam = diagnoseNativeTeamCompatibility(cwd, compatibility.fingerprint);
     checks.push(makeCheck(
       "claude-cli",
       availability.available && compatibility.staticCompatible ? "pass" : "fail",
@@ -517,6 +580,7 @@ export async function runDoctor(options = {}) {
         staticCompatible: compatibility.staticCompatible,
         missingSurface: compatibility.missingSurface,
         failureCode: compatibility.failureCode,
+        nativeTeam,
       },
       availability.available && compatibility.staticCompatible ? null : "Update or repair the fixed Claude CLI, then rerun doctor.",
     ));

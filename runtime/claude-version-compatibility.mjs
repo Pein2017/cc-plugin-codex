@@ -10,6 +10,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import { resolveClaudeExecutable } from "./claude-headless-adapter.mjs";
+import {
+  assessObservedNativeSurface,
+  NATIVE_TEAM_POLICY_REVISION,
+} from "./claude-native-team-policy.mjs";
 import { getConfig, mutateConfig, nowIso } from "./job-store.mjs";
 
 export const CLAUDE_CLI_SURFACE_REVISION = "cc-agent-v2";
@@ -46,6 +50,12 @@ export const REQUIRED_CLAUDE_VALUES = Object.freeze([
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_MISSING_SURFACE = 64;
+export const MAX_NATIVE_TEAM_OBSERVATIONS = 16;
+const MAX_NATIVE_TEAM_DISPLAY_NAMES = 64;
+const NATIVE_TEAM_OBSERVATION_SCHEMA_VERSION = 1;
+const NATIVE_TEAM_MODES = new Set(["leaf", "claude_orchestrator"]);
+const SAFE_NATIVE_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
+const SAFE_NATIVE_FINGERPRINT = /^[A-Za-z0-9_-]{1,256}$/;
 
 function boundedText(value, maxChars = 200) {
   const text = String(value ?? "").trim();
@@ -285,6 +295,219 @@ function persistedSuccessfulObservation(observation) {
   };
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireNativeFingerprint(value) {
+  const fingerprint = typeof value === "string" ? value.trim() : "";
+  if (!SAFE_NATIVE_FINGERPRINT.test(fingerprint)) {
+    throw new Error("Native team observation has an invalid executable fingerprint.");
+  }
+  return fingerprint;
+}
+
+function requireNativeMode(value) {
+  if (!NATIVE_TEAM_MODES.has(value)) {
+    throw new Error("Native team observation has an invalid delegation mode.");
+  }
+  return value;
+}
+
+function sanitizeNativeNames(value, label) {
+  if (!Array.isArray(value) || value.some((name) => typeof name !== "string" || !SAFE_NATIVE_NAME.test(name))) {
+    throw new Error(`Native team observation has malformed ${label}.`);
+  }
+  return [...new Set(value)].sort((left, right) => left.localeCompare(right));
+}
+
+function boundedNativeNames(names) {
+  return names.slice(0, MAX_NATIVE_TEAM_DISPLAY_NAMES);
+}
+
+function sanitizedNativeClassification(surface, delegationMode) {
+  if (!isPlainObject(surface)) {
+    throw new Error("Native team observation has malformed surface evidence.");
+  }
+  const observed = surface.observed !== false;
+  const toolNames = observed
+    ? sanitizeNativeNames(surface.canonicalToolNames, "tool names")
+    : undefined;
+  const definitionNames = sanitizeNativeNames(surface.definitionNames ?? [], "definition names");
+  // Re-classify the complete normalized inventory before applying the display
+  // cap.  Do not trust a receipt's booleans or pre-truncated classifications.
+  const assessed = assessObservedNativeSurface({
+    delegationMode,
+    ...(toolNames === undefined ? {} : { toolNames }),
+    definitionNames,
+  });
+  const teamTransportLiveValidated = delegationMode === "claude_orchestrator" &&
+    surface.teamTransportLiveValidated === true;
+  return {
+    observed: assessed.observed,
+    definitionNames: boundedNativeNames(assessed.definitionNames),
+    canonicalToolNames: boundedNativeNames(assessed.canonicalToolNames),
+    canonicalToolNameCount: assessed.canonicalToolNames.length,
+    missingDefinitions: boundedNativeNames(assessed.missingDefinitions),
+    missingNecessaryCoordinationTools: boundedNativeNames(assessed.missingNecessaryCoordinationTools),
+    forbiddenTools: boundedNativeNames(assessed.forbiddenTools),
+    unknownNativeTools: boundedNativeNames(assessed.unknownNativeTools),
+    denySetLiveValidated: assessed.denySetLiveValidated,
+    teamTransportLiveValidated,
+  };
+}
+
+function sanitizedStoredNativeObservation(value) {
+  if (!isPlainObject(value) || value.schemaVersion !== NATIVE_TEAM_OBSERVATION_SCHEMA_VERSION) return null;
+  try {
+    const fingerprint = requireNativeFingerprint(value.fingerprint);
+    const delegationMode = requireNativeMode(value.delegationMode);
+    const policyRevision = value.policyRevision === NATIVE_TEAM_POLICY_REVISION
+      ? value.policyRevision
+      : null;
+    const classification = value.classification;
+    if (!policyRevision || !isPlainObject(classification) || typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt))) {
+      return null;
+    }
+    const observed = classification.observed === true;
+    const normalized = {
+      observed,
+      definitionNames: boundedNativeNames(sanitizeNativeNames(classification.definitionNames, "definition names")),
+      canonicalToolNames: boundedNativeNames(sanitizeNativeNames(classification.canonicalToolNames, "tool names")),
+      canonicalToolNameCount: Number.isSafeInteger(classification.canonicalToolNameCount) &&
+        classification.canonicalToolNameCount >= classification.canonicalToolNames.length
+        ? classification.canonicalToolNameCount
+        : classification.canonicalToolNames.length,
+      missingDefinitions: boundedNativeNames(sanitizeNativeNames(classification.missingDefinitions, "missing definitions")),
+      missingNecessaryCoordinationTools: boundedNativeNames(sanitizeNativeNames(
+        classification.missingNecessaryCoordinationTools,
+        "missing coordination tools",
+      )),
+      forbiddenTools: boundedNativeNames(sanitizeNativeNames(classification.forbiddenTools, "forbidden tools")),
+      unknownNativeTools: boundedNativeNames(sanitizeNativeNames(classification.unknownNativeTools, "unknown tools")),
+      denySetLiveValidated: false,
+      teamTransportLiveValidated: delegationMode === "claude_orchestrator" &&
+        classification.teamTransportLiveValidated === true,
+    };
+    normalized.denySetLiveValidated = observed && normalized.forbiddenTools.length === 0;
+    // A persisted record must be internally consistent. A legacy or manually
+    // edited live-validation flag is advisory data, never proof.  Preserve
+    // decision-bearing classifications even if their full inventory was capped.
+    if (classification.denySetLiveValidated !== normalized.denySetLiveValidated ||
+      classification.teamTransportLiveValidated !== normalized.teamTransportLiveValidated) return null;
+    return {
+      schemaVersion: NATIVE_TEAM_OBSERVATION_SCHEMA_VERSION,
+      fingerprint,
+      delegationMode,
+      policyRevision,
+      classification: normalized,
+      observedAt: new Date(value.observedAt).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readNativeTeamObservations(state) {
+  const raw = Array.isArray(state?.nativeTeamObservations) ? state.nativeTeamObservations : [];
+  const observations = [];
+  let legacyObservationCount = 0;
+  for (const value of raw) {
+    const sanitized = sanitizedStoredNativeObservation(value);
+    if (sanitized) observations.push(sanitized);
+    else legacyObservationCount += 1;
+  }
+  return { observations, legacyObservationCount };
+}
+
+function orderNativeObservations(observations) {
+  return observations.map((observation, index) => ({ observation, index })).sort((left, right) => {
+    const time = Date.parse(left.observation.observedAt) - Date.parse(right.observation.observedAt);
+    if (time !== 0) return time;
+    const fingerprint = left.observation.fingerprint.localeCompare(right.observation.fingerprint);
+    if (fingerprint !== 0) return fingerprint;
+    const mode = left.observation.delegationMode.localeCompare(right.observation.delegationMode);
+    return mode !== 0 ? mode : left.index - right.index;
+  });
+}
+
+function retainBoundedNativeObservations(observations, currentFingerprint) {
+  const bounded = [...observations];
+  while (bounded.length > MAX_NATIVE_TEAM_OBSERVATIONS) {
+    const newestCurrentByMode = new Map();
+    for (const { observation } of orderNativeObservations(bounded).reverse()) {
+      const key = `${observation.fingerprint}\0${observation.delegationMode}`;
+      if (observation.fingerprint === currentFingerprint && !newestCurrentByMode.has(key)) {
+        newestCurrentByMode.set(key, observation);
+      }
+    }
+    const removable = orderNativeObservations(bounded).find(({ observation }) => {
+      const protectedCurrent = newestCurrentByMode.get(
+        `${observation.fingerprint}\0${observation.delegationMode}`,
+      ) === observation;
+      return !protectedCurrent && observation.fingerprint !== currentFingerprint;
+    }) ?? orderNativeObservations(bounded).find(({ observation }) =>
+      newestCurrentByMode.get(`${observation.fingerprint}\0${observation.delegationMode}`) !== observation
+    ) ?? orderNativeObservations(bounded)[0];
+    bounded.splice(removable.index, 1);
+  }
+  return orderNativeObservations(bounded).map(({ observation }) => observation);
+}
+
+/**
+ * Persist one already-observed native initialization/transport receipt.  This
+ * deliberately accepts only the prepared fingerprint, mode, and bounded
+ * runtime receipt; callers must not pass prompts, events, or transcript data.
+ */
+export function recordNativeTeamCompatibilityObservation(
+  cwd,
+  prepared,
+  delegationMode,
+  nativeTeamSurface,
+  options = {},
+) {
+  const fingerprint = requireNativeFingerprint(prepared?.fingerprint);
+  const mode = requireNativeMode(delegationMode);
+  const observedAt = options.observedAt == null ? nowIso() : new Date(options.observedAt).toISOString();
+  if (!Number.isFinite(Date.parse(observedAt))) {
+    throw new Error("Native team observation has an invalid timestamp.");
+  }
+  const observation = {
+    schemaVersion: NATIVE_TEAM_OBSERVATION_SCHEMA_VERSION,
+    fingerprint,
+    delegationMode: mode,
+    policyRevision: NATIVE_TEAM_POLICY_REVISION,
+    classification: sanitizedNativeClassification(nativeTeamSurface, mode),
+    observedAt,
+  };
+  return mutateConfig(cwd, (config) => {
+    const state = sanitizedCompatibilityState(config.claudeCliCompatibility) ?? {};
+    const existing = readNativeTeamObservations(state).observations;
+    return {
+      ...config,
+      claudeCliCompatibility: {
+        schemaVersion: 1,
+        ...state,
+        nativeTeamObservations: retainBoundedNativeObservations([...existing, observation], fingerprint),
+        legacyNativeTeamObservationCount: readNativeTeamObservations(config.claudeCliCompatibility).legacyObservationCount,
+      },
+    };
+  }).claudeCliCompatibility;
+}
+
+/** Read only the sanitized evidence; malformed/legacy entries never validate. */
+export function inspectNativeTeamCompatibility(cwd, fingerprint = null) {
+  const state = getConfig(cwd).claudeCliCompatibility;
+  const evidence = readNativeTeamObservations(state);
+  const selected = fingerprint == null
+    ? evidence.observations
+    : evidence.observations.filter((observation) => observation.fingerprint === fingerprint);
+  return {
+    observations: orderNativeObservations(selected).map(({ observation }) => observation),
+    legacyObservationCount: evidence.legacyObservationCount + Number(state?.legacyNativeTeamObservationCount ?? 0),
+  };
+}
+
 function sanitizedCompatibilityState(state) {
   if (!state) return null;
   const current = state.current
@@ -293,11 +516,14 @@ function sanitizedCompatibilityState(state) {
   const lastStaticallyCompatible = state.lastStaticallyCompatible
     ? persistedStaticObservation(state.lastStaticallyCompatible, state.lastStaticallyCompatible)
     : null;
+  const nativeEvidence = readNativeTeamObservations(state);
   return {
     schemaVersion: 1,
     current,
     lastStaticallyCompatible,
     lastSuccessfulTurn: persistedSuccessfulObservation(state.lastSuccessfulTurn),
+    nativeTeamObservations: nativeEvidence.observations,
+    legacyNativeTeamObservationCount: nativeEvidence.legacyObservationCount + Number(state?.legacyNativeTeamObservationCount ?? 0),
   };
 }
 

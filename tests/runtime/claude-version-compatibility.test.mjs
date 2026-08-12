@@ -8,6 +8,8 @@ import {
   assertPreparedClaudeCompatibility,
   diagnoseClaudeCompatibility,
   inspectClaudeCompatibility,
+  inspectNativeTeamCompatibility,
+  recordNativeTeamCompatibilityObservation,
   recordSuccessfulClaudeTurn,
   REQUIRED_CLAUDE_OPTIONS,
   REQUIRED_CLAUDE_VALUES,
@@ -102,6 +104,78 @@ esac
 }
 
 describe("Claude Code version compatibility", () => {
+  it("retains only bounded sanitized native-team observations and evicts oldest non-current evidence", () => {
+    const { workspace } = setup();
+    for (let index = 0; index < 17; index += 1) {
+      recordNativeTeamCompatibilityObservation(workspace, {
+        fingerprint: `fingerprint-${String(index).padStart(2, "0")}`,
+      }, "claude_orchestrator", {
+        canonicalToolNames: ["Agent", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+        definitionNames: ["haiku-scout", "sonnet", "opus"],
+        prompt: "prompt-sentinel",
+        toolInput: "tool-input-sentinel",
+        output: "output-sentinel",
+        sessionId: "session-sentinel",
+        roster: ["roster-sentinel"],
+        modelMessage: "model-message-sentinel",
+        memory: "memory-sentinel",
+      }, {
+        observedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const stored = inspectNativeTeamCompatibility(workspace);
+    assert.equal(stored.observations.length, 16);
+    assert.equal(stored.observations.some((entry) => entry.fingerprint === "fingerprint-00"), false);
+    assert.equal(stored.observations.some((entry) => entry.fingerprint === "fingerprint-16"), true);
+    const serialized = JSON.stringify(getConfig(workspace).claudeCliCompatibility);
+    for (const sentinel of [
+      "prompt-sentinel",
+      "tool-input-sentinel",
+      "output-sentinel",
+      "session-sentinel",
+      "roster-sentinel",
+      "model-message-sentinel",
+      "memory-sentinel",
+    ]) assert.doesNotMatch(serialized, new RegExp(sentinel));
+  });
+
+  it("fails closed for legacy native-team records instead of promoting them to live validation", async () => {
+    const { workspace } = setup();
+    const current = getConfig(workspace);
+    const { mutateConfig } = await import("../../runtime/job-store.mjs");
+    mutateConfig(workspace, (config) => ({
+      ...current,
+      ...config,
+      claudeCliCompatibility: {
+        nativeTeamObservations: [{
+          fingerprint: "legacy-fingerprint",
+          delegationMode: "claude_orchestrator",
+          denySetLiveValidated: true,
+          prompt: "legacy-prompt-sentinel",
+        }],
+      },
+    }));
+
+    const stored = inspectNativeTeamCompatibility(workspace, "legacy-fingerprint");
+    assert.deepEqual(stored.observations, []);
+    assert.equal(stored.legacyObservationCount, 1);
+  });
+
+  it("classifies a forbidden name before truncating the retained inventory", () => {
+    const { workspace } = setup();
+    const toolNames = Array.from({ length: 70 }, (_, index) => `FutureTool${String(index).padStart(2, "0")}`);
+    toolNames.push("ListAgents");
+    recordNativeTeamCompatibilityObservation(workspace, { fingerprint: "capped-fingerprint" }, "claude_orchestrator", {
+      canonicalToolNames: toolNames,
+      definitionNames: ["haiku-scout", "sonnet", "opus"],
+    });
+    const [observation] = inspectNativeTeamCompatibility(workspace).observations;
+    assert.equal(observation.classification.canonicalToolNames.length, 64);
+    assert.deepEqual(observation.classification.forbiddenTools, ["ListAgents"]);
+    assert.equal(observation.classification.denySetLiveValidated, false);
+  });
+
   it("diagnoses the required surface without persisting readiness state", () => {
     const { workspace, executable } = setup();
     const fake = fakeCommands();

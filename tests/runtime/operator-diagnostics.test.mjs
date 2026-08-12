@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  diagnoseNativeTeamCompatibility,
   inspectOperatorStorage,
   runDoctor,
 } from "../../runtime/operator-diagnostics.mjs";
@@ -109,6 +110,41 @@ describe("operator storage diagnosis", () => {
 });
 
 describe("operator doctor", () => {
+  it("projects scoped native-team evidence without universal-containment or content leakage", async () => {
+    const root = temporaryDirectory("cc-doctor-native-surface-");
+    const workspace = path.join(root, "workspace");
+    fs.mkdirSync(workspace);
+    const previous = process.env.CC_RUNTIME_HOME;
+    process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+    try {
+      const { recordNativeTeamCompatibilityObservation } = await import("../../runtime/claude-version-compatibility.mjs");
+      recordNativeTeamCompatibilityObservation(workspace, { fingerprint: "doctor-fingerprint" }, "claude_orchestrator", {
+        canonicalToolNames: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "FutureNativeTool"],
+        definitionNames: ["haiku-scout", "sonnet"],
+        teamTransportLiveValidated: false,
+        prompt: "doctor-prompt-sentinel",
+        memory: "doctor-memory-sentinel",
+      });
+      const report = diagnoseNativeTeamCompatibility(workspace, "doctor-fingerprint");
+      const lead = report.modes.find((mode) => mode.delegationMode === "claude_orchestrator");
+      assert.equal(lead.denySetLiveValidated, true);
+      assert.equal(lead.teamTransportLiveValidated, false);
+      assert.deepEqual(lead.missingDefinitions, ["opus"]);
+      assert.deepEqual(lead.missingNecessaryCoordinationTools, []);
+      assert.deepEqual(lead.forbiddenTools, []);
+      assert.deepEqual(lead.unknownNativeTools, ["FutureNativeTool"]);
+      assert.match(lead.summary, /reviewed deny-set validation/i);
+      assert.match(lead.summary, /first-spawn transport proof/i);
+      assert.doesNotMatch(JSON.stringify(report), /universal containment|doctor-prompt-sentinel|doctor-memory-sentinel/i);
+
+      const noObservation = diagnoseNativeTeamCompatibility(workspace, "other-fingerprint");
+      assert.equal(noObservation.modes.every((mode) => mode.denySetLiveValidated === false), true);
+    } finally {
+      if (previous == null) delete process.env.CC_RUNTIME_HOME;
+      else process.env.CC_RUNTIME_HOME = previous;
+    }
+  });
+
   it("returns redacted health across a matching synthetic installation", async () => {
     const codexHome = temporaryDirectory("cc-doctor-codex-home-");
     const pluginRoot = path.join(SOURCE_ROOT, "plugins", "cc-for-pein");
@@ -151,7 +187,7 @@ describe("operator doctor", () => {
             "-p", "--output-format", "--verbose", "--include-partial-messages",
             "--input-format", "--replay-user-messages", "--include-hook-events", "--name",
             "--model", "--effort", "--resume", "--allowedTools", "--disallowedTools",
-            "--append-system-prompt", "--settings",
+            "--append-system-prompt", "--agents", "--settings",
             "--permission-mode", "--dangerously-skip-permissions", "stream-json",
             "low", "medium", "high", "xhigh", "max", "dontAsk", "bypassPermissions",
           ].join(" "),
@@ -229,7 +265,7 @@ describe("operator doctor", () => {
             "-p", "--output-format", "--verbose", "--include-partial-messages",
             "--input-format", "--replay-user-messages", "--include-hook-events", "--name",
             "--model", "--effort", "--resume", "--allowedTools", "--disallowedTools",
-            "--append-system-prompt", "--settings", "--permission-mode",
+            "--append-system-prompt", "--agents", "--settings", "--permission-mode",
             "--dangerously-skip-permissions", "stream-json", "low", "medium", "high",
             "xhigh", "max", "dontAsk", "bypassPermissions",
           ].join(" "),
