@@ -46,11 +46,11 @@
 ## 7. Explicit Paid Acceptance
 
 - [ ] 7.1 After explicit paid-test authorization, snapshot source-checkout status, create/snapshot a disposable Git witness workspace, and run exactly one real `claude-opus-5`/`low`, `write:false` Native Agent Team witness there through the production Driver/profile/adapter seam with one Haiku scout, one Sonnet reviewer, explicit intended efforts, one current-team message, one successful parent synthesis, and an explicit unobservable-settle boundary for the exact CLI.
-- [ ] 7.2 Verify injected requested model definitions and production structured team events; record effective teammate model/effort/cost as unknown unless authoritative native facts exist, and leave acceptance unverified rather than trust assistant prose when required facts are absent.
+- [x] 7.2 Verify injected requested model definitions and production structured team events; record effective teammate model/effort/cost as unknown unless authoritative native facts exist, and leave acceptance unverified rather than trust assistant prose when required facts are absent.
 - [x] 7.3 Allow only `.claude/agent-memory-local/haiku-scout/**` and `.claude/agent-memory-local/sonnet/**` metadata changes without reading contents; fail acceptance on any other workspace/task/repository mutation.
-- [ ] 7.4 If the witness reports a subscription, allowance, credit, or quota limit, stop all remaining paid Claude tests and leave live acceptance incomplete without classifying model quality.
+- [x] 7.4 If the witness reports a subscription, allowance, credit, or quota limit, stop all remaining paid Claude tests and leave live acceptance incomplete without classifying model quality.
 
 ## 8. Acceptance and Later Lifecycle
 
-- [ ] 8.1 Run `openspec-verify-change`, reconcile implementation against every scenario, and leave any unverified or intentionally deferred item unchecked with an explicit disposition.
+- [x] 8.1 Run `openspec-verify-change`, reconcile implementation against every scenario, and leave any unverified or intentionally deferred item unchecked with an explicit disposition.
 - [ ] 8.2 Do not install, merge, archive, version, release, or publish this change until the user separately authorizes that lifecycle step after reviewing verified evidence.
