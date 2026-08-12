@@ -12,7 +12,10 @@ import {
   runPaidSmoke,
   runReleaseSmoke,
 } from "../../runtime/release-smoke.mjs";
+import { createClaudeCodeDriver } from "../../runtime/claude-code-driver.mjs";
 import { StreamParser } from "../../runtime/claude-headless-adapter.mjs";
+import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
+import { runClaudeTaskSession } from "../../runtime/job-supervisor.mjs";
 import { SOURCE_ROOT } from "../../runtime/version.mjs";
 import { runReleaseSmokeCli } from "../../scripts/release-smoke.mjs";
 
@@ -81,6 +84,40 @@ function fakeWitnessDriver(startTurn) {
     async startTurn(request) {
       calls.push({ method: "start", request });
       return startTurn(request);
+    },
+  };
+}
+
+function productionWitnessDriver(runAttempt) {
+  const driver = createClaudeCodeDriver();
+  const compatibility = { executable: "/fake/claude", fingerprint: "fake-fingerprint" };
+  return {
+    ...driver,
+    preflight() {
+      return {
+        ready: true,
+        availability: { available: true },
+        compatibility: { staticCompatible: true, ...compatibility },
+        auth: { loggedIn: true },
+      };
+    },
+    validatePreparedPreflight(receipt, scope) {
+      assert.equal(receipt.cwd, scope.cwd);
+      assert.equal(receipt.claudeConfigDir, scope.env.CLAUDE_CONFIG_DIR);
+      return receipt;
+    },
+    revalidatePreparedPreflight(receipt, scope) {
+      assert.equal(receipt.cwd, scope.cwd);
+      return { availability: { available: true }, compatibility };
+    },
+    startTurn(request) {
+      return driver.startTurn({
+        ...request,
+        runTurnSession: (supervisorRequest) => runClaudeTaskSession({
+          ...supervisorRequest,
+          runAttempt,
+        }),
+      });
     },
   };
 }
@@ -267,6 +304,86 @@ describe("release smoke", () => {
     assert.deepEqual(witness.missingEvidence, []);
     assert.deepEqual(witness.settleObservation, { status: "unobservable", executable: "/fake/claude" });
     assert.deepEqual(driver.calls.map((call) => call.method), ["preflight", "validate", "revalidate", "start"]);
+  });
+
+  it("creates the disposable running supervisor job before the real Driver reaches its adapter seam", async () => {
+    let workspace;
+    let observedJob;
+    let observedOptions;
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      keepWorkspace: true,
+      prepareWorkspace(cwd) {
+        workspace = cwd;
+      },
+      driver: productionWitnessDriver(async (cwd, _prompt, options) => {
+        observedJob = readJobFile(cwd, "native-team-witness");
+        observedOptions = options;
+        return {
+          status: "failed",
+          exitCode: 1,
+          sessionId: null,
+          finalMessage: "",
+          stderr: "zero-paid adapter seam fixture",
+          failureClass: "fixture_failure",
+          failureReason: "fixture failure",
+          toolUses: [],
+          touchedFiles: [],
+          terminalEvents: [],
+        };
+      }),
+    });
+    try {
+      assert.equal(witness.status, "unverified");
+      assert.equal(observedJob?.id, "native-team-witness");
+      assert.equal(observedJob?.status, "running");
+      assert.equal(observedJob?.workspaceRoot, workspace);
+      assert.equal(observedOptions?.claudeBin, "/fake/claude");
+      assert.equal(observedOptions?.delegationMode, "claude_orchestrator");
+      assert.equal(fs.existsSync(resolveJobFile(workspace, "native-team-witness")), false);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans the disposable job and workspace when preflight or turn start fails", async () => {
+    let preflightWorkspace;
+    await assert.rejects(
+      runNativeTeamWitness({
+        sourceRoot: SOURCE_ROOT,
+        prepareWorkspace(cwd) {
+          preflightWorkspace = cwd;
+        },
+        driver: {
+          preflight() {
+            throw new Error("fixture preflight failure");
+          },
+        },
+      }),
+      /fixture preflight failure/,
+    );
+    assert.equal(fs.existsSync(preflightWorkspace), false);
+
+    let startWorkspace;
+    await assert.rejects(
+      runNativeTeamWitness({
+        sourceRoot: SOURCE_ROOT,
+        keepWorkspace: true,
+        prepareWorkspace(cwd) {
+          startWorkspace = cwd;
+        },
+        driver: fakeWitnessDriver(async (request) => {
+          assert.equal(readJobFile(request.cwd, "native-team-witness")?.status, "running");
+          throw new Error("fixture turn-start failure");
+        }),
+      }),
+      /fixture turn-start failure/,
+    );
+    try {
+      assert.equal(fs.existsSync(resolveJobFile(startWorkspace, "native-team-witness")), false);
+    } finally {
+      fs.rmSync(startWorkspace, { recursive: true, force: true });
+    }
   });
 
   it("leaves the witness unverified when the bounded adapter reports a member overflow", async () => {

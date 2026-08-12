@@ -13,6 +13,7 @@ import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
 import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
 import { createExecutionProfile } from "./execution-profile.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
+import { resolveJobFile, resolveJobLogFile, writeJobFile } from "./job-store.mjs";
 import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "./version.mjs";
 
@@ -27,6 +28,7 @@ const MAX_NATIVE_TEAM_WITNESS_EVENTS = 32;
 const MAX_NATIVE_TEAM_WITNESS_NAME_BYTES = 96;
 const MAX_NATIVE_TEAM_WITNESS_PATHS = 16_384;
 const SAFE_WITNESS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const NATIVE_TEAM_WITNESS_JOB_ID = "native-team-witness";
 
 function gitStatus(cwd) {
   const result = spawnSync("git", ["-C", cwd, "status", "--porcelain", "--untracked-files=all"], {
@@ -48,6 +50,30 @@ function initializeWitnessWorkspace() {
     fs.mkdirSync(path.join(cwd, prefix), { recursive: true });
   }
   return cwd;
+}
+
+function createWitnessSupervisorJob(workspaceRoot) {
+  writeJobFile(workspaceRoot, NATIVE_TEAM_WITNESS_JOB_ID, {
+    id: NATIVE_TEAM_WITNESS_JOB_ID,
+    kind: "native_team_witness",
+    kindLabel: "release-smoke",
+    jobClass: "witness",
+    title: "Native team witness",
+    workspaceRoot,
+    write: false,
+    status: "running",
+    phase: "starting_attempt",
+    acceptingSteering: true,
+  });
+}
+
+function removeWitnessSupervisorJob(workspaceRoot) {
+  for (const target of [
+    resolveJobFile(workspaceRoot, NATIVE_TEAM_WITNESS_JOB_ID),
+    resolveJobLogFile(workspaceRoot, NATIVE_TEAM_WITNESS_JOB_ID),
+  ]) {
+    try { fs.rmSync(target, { force: true }); } catch {}
+  }
 }
 
 function nativeMemoryPath(relative) {
@@ -179,6 +205,9 @@ export async function runNativeTeamWitness(options = {}) {
   // evidence, but never open their contents.
   const sourceSnapshotBefore = snapshotWorkspacePaths(sourceRoot, { maxPaths: options.maxSnapshotPaths });
   const cwd = initializeWitnessWorkspace();
+  let witnessSupervisorJobCreated = false;
+  try {
+    return await (async () => {
   // Internal fixture hook for zero-Claude tests; it is not routed from MCP.
   if (typeof options.prepareWorkspace === "function") options.prepareWorkspace(cwd);
   const before = snapshotWorkspacePaths(cwd, { maxPaths: options.maxSnapshotPaths });
@@ -230,10 +259,15 @@ export async function runNativeTeamWitness(options = {}) {
     } finally {
       profile.cleanup();
     }
+    // The production supervisor patches the running job before it invokes the
+    // adapter. This witness-only record is isolated to the disposable root and
+    // removed in this function's finally block.
+    createWitnessSupervisorJob(cwd);
+    witnessSupervisorJobCreated = true;
     turn = await driver.startTurn({
       workspaceRoot: cwd,
       cwd,
-      jobId: "native-team-witness",
+      jobId: NATIVE_TEAM_WITNESS_JOB_ID,
       prompt: "Use one Haiku scout with intended effort low and one Sonnet reviewer with intended effort low; return one parent synthesis.",
       route: witnessRoute,
       env,
@@ -319,8 +353,12 @@ export async function runNativeTeamWitness(options = {}) {
       },
     },
   };
-  if (options.keepWorkspace !== true) fs.rmSync(cwd, { recursive: true, force: true });
   return report;
+    })();
+  } finally {
+    if (witnessSupervisorJobCreated) removeWitnessSupervisorJob(cwd);
+    if (options.keepWorkspace !== true) fs.rmSync(cwd, { recursive: true, force: true });
+  }
 }
 
 function exactTools(tools) {
