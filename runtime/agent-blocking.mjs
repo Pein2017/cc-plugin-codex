@@ -48,6 +48,7 @@ const SAME_AGENT_CONTINUATION_MODES = new Set(["exact_session", "safe_fresh"]);
  */
 const DRIVER_CLASS_REASONS = Object.freeze({
   auth_or_permission: "auth_required",
+  compatibility_surface_drift: "harness_incompatible",
   usage_or_subscription_limit: "account_limit",
   context_or_request_invalid: "route_unsupported",
   transport_closed_resumable: "transport_exhausted",

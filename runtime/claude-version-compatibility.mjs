@@ -28,6 +28,7 @@ export const REQUIRED_CLAUDE_OPTIONS = Object.freeze([
   "--allowedTools",
   "--disallowedTools",
   "--append-system-prompt",
+  "--agents",
   "--settings",
   "--permission-mode",
   "--dangerously-skip-permissions",

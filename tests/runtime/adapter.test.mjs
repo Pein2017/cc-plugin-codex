@@ -11,6 +11,7 @@ import {
   encodeStreamUserMessage,
   getClaudeAvailability,
   runClaudeTurn,
+  validateTurnCompletion,
 } from "../../runtime/claude-headless-adapter.mjs";
 
 const temporaryRoots = [];
@@ -134,6 +135,110 @@ describe("Claude headless adapter", () => {
     assert.equal(args[args.indexOf("--append-system-prompt") + 1], "bounded delegated lane");
     assert.equal(args[args.indexOf("--disallowedTools") + 1], "Agent");
     assert.equal(args.includes("--system-prompt"), false);
+  });
+
+  it("serializes exactly one canonical closed native-team definition argument", () => {
+    const agents = {
+      opus: {
+        prompt: "opus member",
+        disallowedTools: ["Agent", "Workflow"],
+        memory: "local",
+        model: "claude-opus-5",
+      },
+      "haiku-scout": {
+        model: "claude-haiku-4-5",
+        memory: "local",
+        disallowedTools: ["Agent", "Workflow"],
+        prompt: "haiku member",
+      },
+      sonnet: {
+        memory: "local",
+        prompt: "sonnet member",
+        model: "claude-sonnet-5",
+        disallowedTools: ["Agent", "Workflow"],
+      },
+    };
+    const args = buildArgs("ignored", { agents });
+    assert.equal(args.filter((value) => value === "--agents").length, 1);
+    assert.equal(
+      args[args.indexOf("--agents") + 1],
+      '{"haiku-scout":{"disallowedTools":["Agent","Workflow"],"memory":"local","model":"claude-haiku-4-5","prompt":"haiku member"},"opus":{"disallowedTools":["Agent","Workflow"],"memory":"local","model":"claude-opus-5","prompt":"opus member"},"sonnet":{"disallowedTools":["Agent","Workflow"],"memory":"local","model":"claude-sonnet-5","prompt":"sonnet member"}}',
+    );
+    assert.throws(
+      () => buildArgs("ignored", { agents: { ...agents, extra: agents.opus } }),
+      /exactly haiku-scout, opus, and sonnet/,
+    );
+    assert.throws(
+      () => buildArgs("ignored", { agents: { opus: agents.opus } }),
+      /exactly haiku-scout, opus, and sonnet/,
+    );
+    assert.throws(
+      () => buildArgs("ignored", { agents: { ...agents, opus: { ...agents.opus, effort: "high" } } }),
+      /unsupported field effort/,
+    );
+  });
+
+  it("retains only sanitized init surface evidence and detects native-team transport drift", () => {
+    const parser = new StreamParser({ delegationMode: "claude_orchestrator" });
+    parser.feed(`${JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: "team-session",
+      tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "mcp__private__tool", "FutureNativeTool"],
+      agents: [{ name: "sonnet", prompt: "secret prompt" }, { name: "haiku-scout" }, { name: "opus" }],
+      transcript: "private transcript",
+    })}\n`);
+    assert.deepEqual(parser.state.runtimeReceipt.nativeTeamSurface, {
+      observed: true,
+      delegationMode: "claude_orchestrator",
+      definitionNames: ["haiku-scout", "opus", "sonnet"],
+      canonicalToolNames: ["Agent", "FutureNativeTool", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      missingDefinitions: [],
+      missingNecessaryCoordinationTools: [],
+      forbiddenTools: [],
+      unknownNativeTools: ["FutureNativeTool"],
+      denySetLiveValidated: true,
+      teamTransportLiveValidated: false,
+    });
+    assert.doesNotMatch(JSON.stringify(parser.state.runtimeReceipt.nativeTeamSurface), /secret|transcript|mcp__/);
+    assert.match(parser.state.nativeTeamWarning, /unreviewed native tool/i);
+
+    parser.feed(`${JSON.stringify({
+      type: "stream_event",
+      session_id: "team-session",
+      event: { type: "content_block_start", content_block: { type: "tool_use", id: "agent-1", name: "Agent", input: {} } },
+    })}\n`);
+    assert.deepEqual(
+      validateTurnCompletion(parser.state, 0),
+      { status: "failed", warning: "Claude native team transport result is missing." },
+    );
+    parser.feed(`${JSON.stringify({
+      type: "user",
+      session_id: "team-session",
+      message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: { status: "ordinary_subagent" } }] },
+    })}\n`);
+    assert.equal(parser.state.compatibilitySurfaceDrift, true);
+    assert.equal(parser.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
+    assert.equal(classifyClaudeFailure({ status: "failed", compatibilitySurfaceDrift: true }).kind, "compatibility_surface_drift");
+  });
+
+  it("admits a clean orchestrator inventory without mistaking it for team transport and leaves absent leaf inventory unvalidated", () => {
+    const orchestrator = new StreamParser({ delegationMode: "claude_orchestrator" });
+    orchestrator.feed(`${JSON.stringify({
+      type: "system",
+      subtype: "init",
+      tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      agents: ["haiku-scout", "sonnet", "opus"],
+    })}\n`);
+    assert.equal(orchestrator.state.compatibilitySurfaceDrift, false);
+    assert.equal(orchestrator.state.nativeTeamSurface.teamTransportLiveValidated, false);
+    assert.deepEqual(validateTurnCompletion(orchestrator.state, 0), { status: "unknown", warning: "No terminal result event received despite exit code 0" });
+
+    const leaf = new StreamParser({ delegationMode: "leaf" });
+    leaf.feed(`${JSON.stringify({ type: "system", subtype: "init" })}\n`);
+    assert.equal(leaf.state.nativeTeamSurface.observed, false);
+    assert.equal(leaf.state.nativeTeamSurface.denySetLiveValidated, false);
+    assert.equal(leaf.state.compatibilitySurfaceDrift, false);
   });
 
   it("pins canonical model aliases, every explicit effort, and names only fresh sessions", () => {

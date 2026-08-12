@@ -21,6 +21,7 @@
 
 export const HARNESS_TURN_FAILURE_SCOPES = Object.freeze({
   auth_or_permission: "harness",
+  compatibility_surface_drift: "harness",
   usage_or_subscription_limit: "harness",
   context_or_request_invalid: "agent",
   transport_closed_resumable: "agent",

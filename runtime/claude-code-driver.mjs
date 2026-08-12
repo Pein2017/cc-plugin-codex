@@ -332,6 +332,9 @@ export function createClaudeCodeDriver(_options = {}) {
       resumeSessionId,
       onProgress,
       onSpawn,
+      // Internal test seam for bounded native-team observations. Public jobs
+      // never provide this callback and no observation is persisted here.
+      onNativeTeamWitness,
       // Kept internal to this Driver so parity fixtures can capture the exact
       // native envelope without launching Claude. No public or ambient input
       // reaches it.
@@ -341,7 +344,7 @@ export function createClaudeCodeDriver(_options = {}) {
       if (!launchCompatibility?.executable) {
         throw new Error("Claude Code Driver requires a revalidated launch context.");
       }
-      const profile = createExecutionProfile({ ...route, env });
+      const profile = createExecutionProfile({ ...route, env, jobId });
       const processEvidence = { spawnAccepted: false, identityProven: false };
       try {
         const result = await runTurnSession({
@@ -353,6 +356,8 @@ export function createClaudeCodeDriver(_options = {}) {
           claudeOptions: {
             ...profile.claudeOptions,
             claudeBin: launchCompatibility.executable,
+            delegationMode: route.delegationMode,
+            ...(onNativeTeamWitness ? { onNativeTeamWitness } : {}),
             sessionName: sessionName ?? undefined,
             resumeSessionId: resumeSessionId ?? undefined,
           },

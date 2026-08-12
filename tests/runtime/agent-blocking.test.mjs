@@ -38,6 +38,13 @@ describe("Agent blocking projection", () => {
     assert.equal(AGENT_BLOCKING_REASONS.harness_incompatible, "harness");
   });
 
+  it("maps observed native surface drift to the existing Harness-incompatible public reason", () => {
+    assert.deepEqual(
+      blocking("compatibility_surface_drift", null),
+      { reason: "harness_incompatible", scope: "harness", retry: "operator_required" },
+    );
+  });
+
   it("presence: completed and gracefully interrupted are null; failed and unflushed interrupted are not", () => {
     assert.equal(deriveAgentBlocking({
       terminalStatus: "completed",

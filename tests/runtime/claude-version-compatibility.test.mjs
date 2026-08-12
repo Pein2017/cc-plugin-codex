@@ -206,6 +206,7 @@ describe("Claude Code version compatibility", () => {
     assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--session-id"), false);
     assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--append-system-prompt"), true);
     assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--disallowedTools"), true);
+    assert.equal(REQUIRED_CLAUDE_OPTIONS.includes("--agents"), true);
 
     replaceExecutable(executable, "repaired-v1");
     const v1 = fakeCommands({ version: "2.1.221" });

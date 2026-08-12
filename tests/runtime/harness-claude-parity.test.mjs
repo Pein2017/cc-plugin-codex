@@ -46,6 +46,7 @@ async function captureTurn(route, options = {}) {
     },
     sessionName: options.sessionName,
     resumeSessionId: options.resumeSessionId,
+    onNativeTeamWitness: options.onNativeTeamWitness,
     runTurnSession: async (request) => {
       captured = request;
       return options.turn ?? {
@@ -107,13 +108,15 @@ describe("claude-code Driver preserves established Claude execution semantics", 
         assert.equal(driver.validateRoute({ model: canonical, effort, write: false }).effort, effort);
       }
     }
-    assert.equal(
-      driver.validateRoute({ model: "fable", delegationMode: "claude_orchestrator", write: false }).delegationMode,
-      "claude_orchestrator",
-    );
+    for (const model of ["claude-opus-5", "claude-fable-5"]) {
+      assert.equal(
+        driver.validateRoute({ model, delegationMode: "claude_orchestrator", write: false }).delegationMode,
+        "claude_orchestrator",
+      );
+    }
     assert.throws(
       () => driver.validateRoute({ model: "opus", delegationMode: "claude_orchestrator", write: false }),
-      /claude_orchestrator delegation requires exact model claude-fable-5/,
+      /claude_orchestrator delegation requires exact model claude-opus-5 or claude-fable-5/,
     );
     assert.throws(() => driver.validateRoute({ model: "claude-opus-4-7", write: false }), /Unsupported Claude model/);
     assert.throws(() => driver.validateRoute({ model: "opus", effort: "turbo", write: false }), /Unsupported effort/);
@@ -135,7 +138,11 @@ describe("claude-code Driver preserves established Claude execution semantics", 
     assert.equal(options.resumeSessionId, undefined);
     assert.equal(options.settingsFile, undefined);
     assert.equal(options.permissionMode, undefined);
-    assert.deepEqual(options.disallowedTools, ["Agent", "Workflow"]);
+    assert.deepEqual(options.disallowedTools, [
+      "Workflow", "ListAgents", "ListPeers", "ScheduleWakeup", "CronCreate", "CronDelete",
+      "CronList", "CronUpdate", "RemoteTrigger", "PushNotification", "SendUserMessage",
+      "SendUserFile", "SendFile", "EnterWorktree", "ExitWorktree", "Agent", "SendMessage",
+    ]);
     assert.match(options.appendSystemPrompt, /Act as a leaf: do not delegate or use Agent\/Workflow\./);
     assert.match(options.appendSystemPrompt, /Read\/review only/);
     assert.equal(captured.write, false);
@@ -153,18 +160,16 @@ describe("claude-code Driver preserves established Claude execution semantics", 
     assert.equal(captured.write, true);
   });
 
-  it("keeps one bounded native Agent generation for the Fable orchestrator", async () => {
+  it("threads a native-surface witness only through the internal Driver start-turn seam", async () => {
+    const witness = () => {};
     const { captured } = await captureTurn({
       model: "claude-fable-5",
       write: false,
       delegationMode: "claude_orchestrator",
-    });
-    assert.deepEqual(captured.claudeOptions.disallowedTools, ["Workflow"]);
-    assert.match(
-      captured.claudeOptions.appendSystemPrompt,
-      /You may use Agent for one child generation; never use Workflow\./,
-    );
-    assert.match(captured.claudeOptions.appendSystemPrompt, /Join every child and synthesize them/);
+    }, { onNativeTeamWitness: witness });
+    assert.equal(captured.claudeOptions.delegationMode, "claude_orchestrator");
+    assert.equal(captured.claudeOptions.onNativeTeamWitness, witness);
+    assert.deepEqual(Object.keys(captured.claudeOptions.agents), ["haiku-scout", "sonnet", "opus"]);
   });
 
   it("resumes only the exact captured session and drops the fresh session name", async () => {
