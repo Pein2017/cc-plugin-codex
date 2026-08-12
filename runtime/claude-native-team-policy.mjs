@@ -137,11 +137,12 @@ function memberPrompt(name, model, write) {
 
 function teammateDefinitions(write) {
   return [
-    ["haiku-scout", "claude-haiku-4-5"],
-    ["sonnet", "claude-sonnet-5"],
-    ["opus", "claude-opus-5"],
-  ].map(([name, model]) => ({
+    ["haiku-scout", "claude-haiku-4-5", "Read-only bounded reconnaissance for the current Native Agent Team."],
+    ["sonnet", "claude-sonnet-5", "Bounded implementation, investigation, or review for the current Native Agent Team."],
+    ["opus", "claude-opus-5", "Bounded implementation, investigation, or verification for the current Native Agent Team."],
+  ].map(([name, model, description]) => ({
     name,
+    description,
     model,
     memory: "local",
     disallowedTools: [...TEAMMATE_DENIED_TOOL_NAMES],

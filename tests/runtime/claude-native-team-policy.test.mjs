@@ -109,7 +109,16 @@ describe("bounded native Claude team policy", () => {
       resolved.teammateDefinitions.map((definition) => definition.model),
       ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"],
     );
+    assert.deepEqual(
+      resolved.teammateDefinitions.map((definition) => definition.description),
+      [
+        "Read-only bounded reconnaissance for the current Native Agent Team.",
+        "Bounded implementation, investigation, or review for the current Native Agent Team.",
+        "Bounded implementation, investigation, or verification for the current Native Agent Team.",
+      ],
+    );
     for (const definition of resolved.teammateDefinitions) {
+      assert.ok(definition.description.trim());
       assert.equal(definition.memory, "local");
       assert.deepEqual(definition.disallowedTools, [...COMMON_DENIED_TOOLS, "Agent"]);
       for (const forbiddenOverride of [
