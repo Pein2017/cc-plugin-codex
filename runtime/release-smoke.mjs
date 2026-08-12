@@ -65,7 +65,9 @@ function snapshotWorkspacePaths(root, options = {}) {
       metadata.sha256 = createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
     }
     snapshot.set(relative || ".", metadata);
-    if (!stat.isDirectory()) return;
+    // The exception is local-memory-only: retain the root directory metadata
+    // but never enumerate or open its children.
+    if (!stat.isDirectory() || (options.allowMemory !== false && nativeMemoryRoot(relative))) return;
     for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
       if (!relative && entry.name === ".git") continue;
       visit(relative ? path.join(relative, entry.name) : entry.name);
@@ -87,11 +89,25 @@ function nativeMemoryPathAllowed(relative) {
   );
 }
 
+function nativeMemoryRoot(relative) {
+  const normalized = String(relative ?? "").replaceAll("\\", "/");
+  return NATIVE_TEAM_WITNESS_MEMORY_PREFIXES.includes(normalized);
+}
+
 function assertWitnessMemoryRoots(cwd) {
   for (const prefix of NATIVE_TEAM_WITNESS_MEMORY_PREFIXES) {
-    const stat = fs.lstatSync(path.join(cwd, prefix));
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error("Native-team witness memory root must be an in-workspace directory.");
+    let ancestor = cwd;
+    for (const segment of prefix.split("/")) {
+      ancestor = path.join(ancestor, segment);
+      let stat;
+      try {
+        stat = fs.lstatSync(ancestor);
+      } catch {
+        throw new Error("Native-team witness memory ancestor must be an in-workspace directory.");
+      }
+      if (!stat.isDirectory() || stat.isSymbolicLink() || path.relative(cwd, ancestor).startsWith("..")) {
+        throw new Error("Native-team witness memory ancestor must be an in-workspace directory.");
+      }
     }
   }
 }
@@ -121,6 +137,8 @@ function boundedWitnessEvent(fact) {
         : null;
     case "native_team_parent_synthesis":
       return { type: fact.type };
+    case "native_team_witness_overflow":
+      return { type: fact.type };
     default:
       return null;
   }
@@ -134,10 +152,20 @@ function boundedWitnessEvent(fact) {
 export async function runNativeTeamWitness(options = {}) {
   const sourceRoot = fs.realpathSync.native(options.sourceRoot ?? SOURCE_ROOT);
   const sourceBefore = gitStatus(sourceRoot);
-  const sourceSnapshotBefore = snapshotWorkspacePaths(sourceRoot, { allowMemory: false });
+  // Both source and disposable snapshots deliberately omit memory file
+  // contents. Non-memory files retain hashes and metadata for dirty-source
+  // detection without treating local native memory as evidence.
+  const sourceSnapshotBefore = snapshotWorkspacePaths(sourceRoot);
   const cwd = initializeWitnessWorkspace();
+  // Internal fixture hook for zero-Claude tests; it is not routed from MCP.
+  if (typeof options.prepareWorkspace === "function") options.prepareWorkspace(cwd);
   const before = snapshotWorkspacePaths(cwd);
-  assertWitnessMemoryRoots(cwd);
+  let memoryRootsValid = true;
+  try {
+    assertWitnessMemoryRoots(cwd);
+  } catch {
+    memoryRootsValid = false;
+  }
   const events = [];
   const requestedMembers = new Map();
   let requestedModelHaiku = null;
@@ -146,11 +174,12 @@ export async function runNativeTeamWitness(options = {}) {
   let firstSpawnTransport = false;
   let sameTeamMessage = false;
   let parentSynthesis = false;
+  let witnessOverflow = false;
   let turn;
   const witnessRoute = {
     model: "claude-opus-5", effort: "low", write: false, delegationMode: "claude_orchestrator",
   };
-  try {
+  if (memoryRootsValid) try {
     const driver = options.driver ?? createClaudeCodeDriver();
     const env = {
       ...process.env,
@@ -184,8 +213,12 @@ export async function runNativeTeamWitness(options = {}) {
       onNativeTeamWitness: (fact) => {
         const event = boundedWitnessEvent(fact);
         if (!event) return;
-        if (events.length >= MAX_NATIVE_TEAM_WITNESS_EVENTS) return;
+        if (events.length >= MAX_NATIVE_TEAM_WITNESS_EVENTS) {
+          witnessOverflow = true;
+          return;
+        }
         events.push(event);
+        if (event.type === "native_team_witness_overflow") witnessOverflow = true;
         if (event.type === "native_team_member_requested") requestedMembers.set(event.memberType, event.memberName);
         if (event.type === "native_team_transport") firstSpawnTransport ||= event.teamTransportLiveValidated;
         if (event.type === "native_team_message") sameTeamMessage ||= event.sameTeamRecipient;
@@ -202,12 +235,14 @@ export async function runNativeTeamWitness(options = {}) {
   const changedPaths = changedSnapshotPaths(before, after);
   const unauthorizedPaths = changedPaths.filter((relative) => !nativeMemoryPathAllowed(relative));
   const sourceAfter = gitStatus(sourceRoot);
-  const sourceSnapshotAfter = snapshotWorkspacePaths(sourceRoot, { allowMemory: false });
+  const sourceSnapshotAfter = snapshotWorkspacePaths(sourceRoot);
   const sourceChangedPaths = changedSnapshotPaths(sourceSnapshotBefore, sourceSnapshotAfter);
   const accountLimit = isClaudeSubscriptionLimit(`${turn?.failure?.reason ?? ""}\n${turn?.failure?.detail ?? ""}`);
   const requestedModels = { haikuScout: requestedModelHaiku, sonnet: requestedModelSonnet };
   const successfulTerminal = turn?.status === "completed" && turn?.failure?.class == null && turn?.exitStatus === 0;
   const missingEvidence = [
+    ...(memoryRootsValid ? [] : ["memory_root_invalid"]),
+    ...(witnessOverflow ? ["witness_event_overflow"] : []),
     ...(successfulTerminal ? [] : ["successful_terminal"]),
     ...(requestedMembers.has("haiku-scout") ? [] : ["requested_haiku_scout"]),
     ...(requestedMembers.has("sonnet") ? [] : ["requested_sonnet"]),

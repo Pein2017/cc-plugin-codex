@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -165,7 +166,7 @@ describe("release smoke", () => {
     ]);
   });
 
-  it("runs the fake Native Agent Team witness through production Driver/profile/adapter seams", async () => {
+  it("verifies a full fake Native Agent Team witness and pins its serialized production definition models", async () => {
     const witness = await runNativeTeamWitness({
       sourceRoot: SOURCE_ROOT,
       runTurnSession: async (request) => {
@@ -198,6 +199,15 @@ describe("release smoke", () => {
           type: "user", session_id: "fake-parent", tool_use_result: { status: "teammate_spawned" },
           message: { content: [{ type: "tool_result", tool_use_id: "fake-spawn" }] },
         })}\n`);
+        parser.feed(`${JSON.stringify({
+          type: "assistant", session_id: "fake-parent", message: { content: [{
+            type: "tool_use", id: "fake-message", name: "SendMessage",
+            input: { recipient: "haiku-scout-1", content: "opaque fixture" },
+          }] },
+        })}\n`);
+        parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_completed", teammate_name: "haiku-scout-1" })}\n`);
+        parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_idle", teammate_name: "sonnet-1" })}\n`);
+        parser.feed(`${JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: "fake-parent" })}\n`);
         fs.mkdirSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout"), { recursive: true });
         fs.writeFileSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout", "metadata.json"), "fixture");
         return {
@@ -208,14 +218,92 @@ describe("release smoke", () => {
         };
       },
     });
-    assert.equal(witness.status, "unverified");
+    assert.equal(witness.status, "verified");
+    assert.equal(witness.liveVerified, true);
     assert.equal(witness.requestedModels.haikuScout, "claude-haiku-4-5");
     assert.equal(witness.requestedModels.sonnet, "claude-sonnet-5");
     assert.equal(witness.firstSpawnTransport, true);
+    assert.deepEqual(witness.intendedEffort, { haikuScout: "low", sonnet: "low" });
     assert.deepEqual(witness.effectiveTeammate, { model: "unknown", effort: "unknown", cost: "unknown" });
     assert.deepEqual(witness.disposable.mutation.unauthorizedPaths, []);
     assert.equal(witness.source.unchanged, true);
-    assert.deepEqual(witness.missingEvidence.sort(), ["current_team_message", "parent_synthesis", "settled_haiku_scout", "settled_sonnet"]);
+    assert.deepEqual(witness.missingEvidence, []);
+  });
+
+  it("leaves the witness unverified when the bounded adapter reports a member overflow", async () => {
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      runTurnSession: async (request) => {
+        request.claudeOptions.onNativeTeamWitness({ type: "native_team_witness_overflow" });
+        return {
+          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "", failureClass: null, failureReason: null,
+          resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
+        };
+      },
+    });
+    assert.equal(witness.status, "unverified");
+    assert.ok(witness.missingEvidence.includes("witness_event_overflow"));
+  });
+
+  it("rejects a symlinked native-memory ancestor before a fake turn can start", async () => {
+    let attempts = 0;
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cc-native-team-outside-"));
+    temporaryDirectories.push(outside);
+    fs.mkdirSync(path.join(outside, "agent-memory-local", "haiku-scout"), { recursive: true });
+    fs.mkdirSync(path.join(outside, "agent-memory-local", "sonnet"), { recursive: true });
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      prepareWorkspace(cwd) {
+        fs.rmSync(path.join(cwd, ".claude"), { recursive: true, force: true });
+        fs.symlinkSync(outside, path.join(cwd, ".claude"));
+      },
+      runTurnSession: async () => {
+        attempts += 1;
+        throw new Error("memory ancestry must stop before launching a turn");
+      },
+    });
+    assert.equal(attempts, 0);
+    assert.equal(witness.status, "unverified");
+    assert.ok(witness.missingEvidence.includes("memory_root_invalid"));
+  });
+
+  it("rejects ignored and non-ignored disposable writes outside the two memory prefixes", async () => {
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      runTurnSession: async (request) => {
+        fs.writeFileSync(path.join(request.cwd, ".gitignore"), "ignored-fixture.txt\n", "utf8");
+        fs.writeFileSync(path.join(request.cwd, "ignored-fixture.txt"), "ignored", "utf8");
+        fs.writeFileSync(path.join(request.cwd, "ordinary-fixture.txt"), "ordinary", "utf8");
+        return {
+          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "", failureClass: null, failureReason: null,
+          resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
+        };
+      },
+    });
+    assert.equal(witness.status, "unverified");
+    assert.ok(witness.disposable.mutation.unauthorizedPaths.includes("ignored-fixture.txt"));
+    assert.ok(witness.disposable.mutation.unauthorizedPaths.includes("ordinary-fixture.txt"));
+  });
+
+  it("detects a pre-dirty source content mutation even when Git status text is unchanged", async () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-native-team-source-"));
+    temporaryDirectories.push(sourceRoot);
+    assert.equal(spawnSync("git", ["-C", sourceRoot, "init", "--quiet"]).status, 0);
+    fs.writeFileSync(path.join(sourceRoot, "pre-dirty.txt"), "before", "utf8");
+    const witness = await runNativeTeamWitness({
+      sourceRoot,
+      runTurnSession: async () => {
+        fs.writeFileSync(path.join(sourceRoot, "pre-dirty.txt"), "after", "utf8");
+        return {
+          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "", failureClass: null, failureReason: null,
+          resumable: false, recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 }, runtimeReceipt: {}, toolUses: [], touchedFiles: [],
+        };
+      },
+    });
+    assert.equal(witness.status, "unverified");
+    assert.equal(witness.source.statusBefore, witness.source.statusAfter);
+    assert.equal(witness.source.unchanged, false);
+    assert.ok(witness.source.changedPaths.includes("pre-dirty.txt"));
   });
 
   it("stops the native witness on an account limit without a second paid attempt", async () => {

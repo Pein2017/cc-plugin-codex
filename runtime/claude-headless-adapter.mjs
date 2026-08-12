@@ -118,6 +118,11 @@ export const MAX_STREAM_PARSER_TOUCHED_FILES = 256;
 export const MAX_STREAM_PARSER_TERMINAL_EVENTS = 16;
 export const MAX_STREAM_PARSER_HOOK_RECEIPTS = 64;
 export const MAX_STDERR_BYTES = 64 * 1024;
+// The native-team witness is intentionally process-local, but it still ingests
+// provider-supplied identities. Bound those identities before they can enter
+// the member map or reach the optional callback.
+const MAX_NATIVE_TEAM_WITNESS_MEMBERS = 16;
+const MAX_NATIVE_TEAM_WITNESS_MEMBER_NAME_BYTES = 96;
 export const SANDBOX_TEMP_DIR = normalizePathSlashes(path.resolve(os.tmpdir()));
 
 const NATIVE_TEAM_DEFINITION_EXPECTATIONS = Object.freeze(Object.fromEntries(
@@ -191,6 +196,16 @@ function appendTextTail(existing, chunk, maxBytes) {
 }
 
 const SAFE_PROTOCOL_LABEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
+const SAFE_NATIVE_TEAM_WITNESS_MEMBER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+function safeNativeTeamWitnessMemberName(value) {
+  const name = typeof value === "string" ? value.trim() : "";
+  return name
+    && Buffer.byteLength(name, "utf8") <= MAX_NATIVE_TEAM_WITNESS_MEMBER_NAME_BYTES
+    && SAFE_NATIVE_TEAM_WITNESS_MEMBER_NAME.test(name)
+    ? name
+    : null;
+}
 
 /**
  * Keep protocol drift labels useful for diagnosis without allowing an event
@@ -427,6 +442,7 @@ export class StreamParser {
     // Witness-only, process-local member names. They are never copied to the
     // parser state, runtime receipt, job, or public MCP result.
     this.nativeTeamMembers = new Map();
+    this.nativeTeamWitnessOverflow = false;
   }
 
   _nativeTeamWitness(fact) {
@@ -436,6 +452,12 @@ export class StreamParser {
     } catch {
       // A test-only in-process observer cannot change native turn semantics.
     }
+  }
+
+  _recordNativeTeamWitnessOverflow() {
+    if (this.nativeTeamWitnessOverflow) return;
+    this.nativeTeamWitnessOverflow = true;
+    this._nativeTeamWitness({ type: "native_team_witness_overflow" });
   }
 
   _recordNativeTeamSurface(event) {
@@ -509,15 +531,21 @@ export class StreamParser {
       canonicalizeInitToolName(toolUse?.name) !== "Agent"
     ) return;
     const input = toolUse.input;
-    const memberName = typeof input?.name === "string" ? input.name.trim() : "";
+    const memberName = safeNativeTeamWitnessMemberName(input?.name);
     const memberType = typeof input?.subagent_type === "string" ? input.subagent_type.trim() : "";
     if (!memberName || !Object.hasOwn(NATIVE_TEAM_DEFINITION_EXPECTATIONS, memberType)) {
+      if (!memberName) this._recordNativeTeamWitnessOverflow();
       if (this.state.nativeTeamFirstAgentObserved !== true) {
         this.state.compatibilitySurfaceDrift = true;
       }
       return;
     }
     if (!this.nativeTeamMembers.has(memberName)) {
+      if (this.nativeTeamMembers.size >= MAX_NATIVE_TEAM_WITNESS_MEMBERS) {
+        this._recordNativeTeamWitnessOverflow();
+        this.state.compatibilitySurfaceDrift = true;
+        return;
+      }
       this.nativeTeamMembers.set(memberName, memberType);
       this._nativeTeamWitness({ type: "native_team_member_requested", memberName, memberType });
     }

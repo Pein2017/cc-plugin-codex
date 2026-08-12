@@ -312,6 +312,37 @@ describe("Claude headless adapter", () => {
     assert.equal(witnesses.some((fact) => fact.type === "native_team_parent_synthesis"), false);
   });
 
+  it("bounds and sanitizes native member identities before witness callbacks", () => {
+    const witnesses = [];
+    const parser = new StreamParser({ delegationMode: "claude_orchestrator", onNativeTeamWitness: (fact) => witnesses.push(fact) });
+    for (let index = 0; index < 17; index += 1) {
+      parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+        type: "tool_use", id: `member-${index}`, name: "Agent",
+        input: { name: `sonnet-${index}`, subagent_type: "sonnet" },
+      }] } })}\n`);
+    }
+    parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+      type: "tool_use", id: "long", name: "Agent",
+      input: { name: "x".repeat(97), subagent_type: "sonnet" },
+    }] } })}\n`);
+    assert.equal(witnesses.filter((fact) => fact.type === "native_team_member_requested").length, 16);
+    assert.deepEqual(witnesses.at(-1), { type: "native_team_witness_overflow" });
+    assert.doesNotMatch(JSON.stringify(witnesses), /x{20}/);
+
+    const unsafeWitnesses = [];
+    const unsafeParser = new StreamParser({
+      delegationMode: "claude_orchestrator",
+      onNativeTeamWitness: (fact) => unsafeWitnesses.push(fact),
+    });
+    unsafeParser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+      type: "tool_use", id: "unsafe-first", name: "Agent",
+      input: { name: "x".repeat(97), subagent_type: "sonnet" },
+    }] } })}\n`);
+    assert.deepEqual(unsafeWitnesses, [{ type: "native_team_witness_overflow" }]);
+    assert.equal(unsafeParser.nativeTeamMembers.size, 0);
+    assert.equal(unsafeParser.state.nativeTeamTransportPending, false);
+  });
+
   it("admits a clean orchestrator inventory without mistaking it for team transport and leaves absent leaf inventory unvalidated", () => {
     const orchestrator = new StreamParser({ delegationMode: "claude_orchestrator" });
     orchestrator.feed(`${JSON.stringify({
