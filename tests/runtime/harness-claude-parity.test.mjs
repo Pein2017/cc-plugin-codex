@@ -10,6 +10,7 @@ import {
   CLAUDE_CODE_HARNESS_ID,
   createClaudeCodeDriver,
 } from "../../runtime/claude-code-driver.mjs";
+import { getConfig } from "../../runtime/job-store.mjs";
 
 const roots = [];
 after(() => {
@@ -242,6 +243,102 @@ describe("claude-code Driver preserves established Claude execution semantics", 
       assert.equal(result.driverReceipt.driverVersion, CLAUDE_CODE_DRIVER_VERSION);
     } finally {
       delete process.env.CC_RUNTIME_HOME;
+    }
+  });
+
+  it("persists sanitized native-team compatibility evidence for clean and drift turns only", async () => {
+    const root = scratch("native-team-observations");
+    const priorRuntimeHome = process.env.CC_RUNTIME_HOME;
+    const claudeConfigDir = path.join(root, ".claude");
+    fs.mkdirSync(claudeConfigDir);
+    process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+    const nativeTeamSurface = {
+      observed: true,
+      delegationMode: "claude_orchestrator",
+      canonicalToolNames: ["Agent", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      definitionNames: ["haiku-scout", "sonnet", "opus"],
+      missingDefinitions: [],
+      missingNecessaryCoordinationTools: [],
+      forbiddenTools: [],
+      unknownNativeTools: [],
+      denySetLiveValidated: true,
+      teamTransportLiveValidated: true,
+      prompt: "prompt-sentinel",
+      sessionId: "session-sentinel",
+      roster: "roster-sentinel",
+      memory: "memory-sentinel",
+    };
+    try {
+      const clean = await captureTurn(
+        { model: "claude-opus-5", write: false, delegationMode: "claude_orchestrator" },
+        {
+          cwd: root,
+          claudeConfigDir,
+          turn: {
+            status: "completed",
+            exitCode: 0,
+            sessionId: "clean-session",
+            finalMessage: "done",
+            failureClass: null,
+            failureReason: null,
+            resumable: false,
+            recoveryAttempts: 0,
+            attempts: [],
+            steering: { messages: [], latestAcknowledgedSequence: 0 },
+            runtimeReceipt: { nativeTeamSurface },
+            toolUses: [],
+            touchedFiles: [],
+          },
+        },
+      );
+      const drift = await captureTurn(
+        { model: "claude-opus-5", write: false, delegationMode: "claude_orchestrator" },
+        {
+          cwd: root,
+          claudeConfigDir,
+          turn: {
+            status: "failed",
+            exitCode: 1,
+            sessionId: "drift-session",
+            finalMessage: "",
+            failureClass: "compatibility_surface_drift",
+            failureReason: "native team transport drift",
+            resumable: false,
+            recoveryAttempts: 0,
+            attempts: [],
+            steering: { messages: [], latestAcknowledgedSequence: 0 },
+            runtimeReceipt: {
+              nativeTeamSurface: { ...nativeTeamSurface, teamTransportLiveValidated: false },
+            },
+            toolUses: [],
+            touchedFiles: [],
+          },
+        },
+      );
+      assert.deepEqual(clean.result.runtime.nativeTeamCompatibilityObservation, {
+        recorded: true,
+        reason: null,
+      });
+      assert.deepEqual(drift.result.runtime.nativeTeamCompatibilityObservation, {
+        recorded: true,
+        reason: null,
+      });
+      const config = getConfig(root);
+      assert.equal(config.claudeCliCompatibility.nativeTeamObservations.length, 2);
+      assert.doesNotMatch(JSON.stringify(config), /prompt-sentinel|session-sentinel|roster-sentinel|memory-sentinel/);
+
+      const absent = await captureTurn(
+        { model: "opus", write: false, delegationMode: "leaf" },
+        {
+          cwd: root,
+          claudeConfigDir,
+        },
+      );
+      assert.equal(absent.result.runtime.nativeTeamCompatibilityObservation, null);
+      assert.equal(getConfig(root).claudeCliCompatibility.nativeTeamObservations.length, 2);
+    } finally {
+      if (priorRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
+      else process.env.CC_RUNTIME_HOME = priorRuntimeHome;
     }
   });
 

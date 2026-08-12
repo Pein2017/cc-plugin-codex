@@ -27,6 +27,7 @@ import {
   assertPreparedClaudeCompatibility,
   formatClaudeCompatibilityError,
   inspectClaudeCompatibility,
+  recordNativeTeamCompatibilityObservation,
   recordSuccessfulClaudeTurn,
 } from "./claude-version-compatibility.mjs";
 import {
@@ -108,7 +109,31 @@ function unknownEventSummary(result) {
  * supervisor consumes only the normalized fields; `nativeReceipt` remains
  * optional Driver-local diagnostics and is never generic lifecycle evidence.
  */
-function normalizeTurnResult({ env, result, profileReceipt, processEvidence, compatibility }) {
+function recordNativeTeamObservation(cwd, launchCompatibility, delegationMode, nativeTeamSurface) {
+  if (nativeTeamSurface == null) return null;
+  try {
+    recordNativeTeamCompatibilityObservation(
+      cwd,
+      launchCompatibility,
+      delegationMode,
+      nativeTeamSurface,
+    );
+    return { recorded: true, reason: null };
+  } catch {
+    // Compatibility evidence is useful only when durably recorded. Keep the
+    // failure receipt path-free and content-free rather than reporting success.
+    return { recorded: false, reason: "native_team_observation_record_failed" };
+  }
+}
+
+function normalizeTurnResult({
+  env,
+  result,
+  profileReceipt,
+  processEvidence,
+  compatibility,
+  nativeTeamCompatibilityObservation,
+}) {
   const rawOutput = String(result.finalMessage ?? "");
   const session = nativeSessionRef(env, result.sessionId ?? null);
   const unknownEvents = unknownEventSummary(result);
@@ -171,6 +196,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
       claudeCompatibility: compatibility.compatibility,
       compatibilityObservationRecorded: compatibility.recorded,
       compatibilityObservationReason: compatibility.reason ?? null,
+      nativeTeamCompatibilityObservation,
     },
     // Bounded Claude-owned evidence. The supervisor persists it as the turn's
     // native receipt and never reads it as generic proof of ownership,
@@ -195,6 +221,7 @@ function normalizeTurnResult({ env, result, profileReceipt, processEvidence, com
         claudeCompatibility: compatibility.compatibility,
         compatibilityObservationRecorded: compatibility.recorded,
         compatibilityObservationReason: compatibility.reason ?? null,
+        nativeTeamCompatibilityObservation,
       },
       lastByteAt: result.lastByteAt ?? null,
       manualResumeCommand: result.manualResumeCommand ?? null,
@@ -382,6 +409,12 @@ export function createClaudeCodeDriver(_options = {}) {
             return accepted;
           },
         });
+        const nativeTeamCompatibilityObservation = recordNativeTeamObservation(
+          cwd,
+          launchCompatibility,
+          route.delegationMode,
+          result.runtimeReceipt?.nativeTeamSurface,
+        );
         const compatibility = result.status === "completed"
           ? recordSuccessfulClaudeTurn(
               cwd,
@@ -400,6 +433,7 @@ export function createClaudeCodeDriver(_options = {}) {
           profileReceipt: profile.receipt,
           processEvidence,
           compatibility,
+          nativeTeamCompatibilityObservation,
         });
         normalized.nativeReceipt.steering ??= getSteeringSnapshot(cwd, jobId);
         normalized.receipts.steering ??= normalized.nativeReceipt.steering;
