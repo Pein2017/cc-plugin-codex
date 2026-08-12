@@ -39,9 +39,9 @@
 
 ## 6. Zero-Cost Verification
 
-- [ ] 6.1 Run focused policy/profile, environment, adapter, failure mapping, Driver/recovery, compatibility, diagnostics, plugin-contract, integration, and fake-release-smoke tests while iterating and retain exact commands/results.
-- [ ] 6.2 Run `openspec validate enable-bounded-native-claude-teams --strict`, `git diff --check`, and `npm run check`; inspect the final diff for public API, process recovery, permission, memory, and hot-refresh regressions.
-- [ ] 6.3 Obtain independent fixed-diff reviews focused separately on Claude-native Agent Teams feasibility/tool semantics and OpenSpec/architecture/test coherence; resolve every P0/P1 before paid validation.
+- [x] 6.1 Run focused policy/profile, environment, adapter, failure mapping, Driver/recovery, compatibility, diagnostics, plugin-contract, integration, and fake-release-smoke tests while iterating and retain exact commands/results.
+- [x] 6.2 Run `openspec validate enable-bounded-native-claude-teams --strict`, `git diff --check`, and `npm run check`; inspect the final diff for public API, process recovery, permission, memory, and hot-refresh regressions.
+- [x] 6.3 Obtain independent fixed-diff reviews focused separately on Claude-native Agent Teams feasibility/tool semantics and OpenSpec/architecture/test coherence; resolve every P0/P1 before paid validation.
 
 ## 7. Explicit Paid Acceptance
 
