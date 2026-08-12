@@ -369,7 +369,8 @@ function sanitizedStoredNativeObservation(value) {
     if (!policyRevision || !isPlainObject(classification) || typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt))) {
       return null;
     }
-    const observed = classification.observed === true;
+    if (typeof classification.observed !== "boolean") return null;
+    const observed = classification.observed;
     const normalized = {
       observed,
       definitionNames: boundedNativeNames(sanitizeNativeNames(classification.definitionNames, "definition names")),
@@ -390,11 +391,31 @@ function sanitizedStoredNativeObservation(value) {
         classification.teamTransportLiveValidated === true,
     };
     normalized.denySetLiveValidated = observed && normalized.forbiddenTools.length === 0;
-    // A persisted record must be internally consistent. A legacy or manually
-    // edited live-validation flag is advisory data, never proof.  Preserve
-    // decision-bearing classifications even if their full inventory was capped.
-    if (classification.denySetLiveValidated !== normalized.denySetLiveValidated ||
-      classification.teamTransportLiveValidated !== normalized.teamTransportLiveValidated) return null;
+    const recomputed = assessObservedNativeSurface({
+      delegationMode,
+      ...(observed ? { toolNames: normalized.canonicalToolNames } : {}),
+      definitionNames: normalized.definitionNames,
+    });
+    const completeInventory = normalized.canonicalToolNameCount === normalized.canonicalToolNames.length;
+    const hasEvery = (needles, haystack) => needles.every((name) => haystack.includes(name));
+    // A persisted record must be internally consistent.  For a full retained
+    // inventory we recompute all decision-bearing facts.  For a capped
+    // inventory, names omitted from the diagnostic display may themselves be
+    // decision-bearing (e.g. ListAgents sorted after 64 unknown names), so
+    // require that any retained evidence is reflected while preserving the
+    // complete-inventory decision that was made before the cap.
+    if (classification.teamTransportLiveValidated !== normalized.teamTransportLiveValidated ||
+      JSON.stringify(normalized.missingDefinitions) !== JSON.stringify(recomputed.missingDefinitions) ||
+      !hasEvery(recomputed.forbiddenTools, normalized.forbiddenTools) ||
+      !hasEvery(recomputed.unknownNativeTools, normalized.unknownNativeTools) ||
+      (normalized.denySetLiveValidated && recomputed.forbiddenTools.length > 0) ||
+      (completeInventory && (
+        classification.denySetLiveValidated !== normalized.denySetLiveValidated ||
+        JSON.stringify(normalized.missingNecessaryCoordinationTools) !==
+          JSON.stringify(recomputed.missingNecessaryCoordinationTools) ||
+        JSON.stringify(normalized.forbiddenTools) !== JSON.stringify(recomputed.forbiddenTools) ||
+        JSON.stringify(normalized.unknownNativeTools) !== JSON.stringify(recomputed.unknownNativeTools)
+      ))) return null;
     return {
       schemaVersion: NATIVE_TEAM_OBSERVATION_SCHEMA_VERSION,
       fingerprint,
@@ -500,7 +521,7 @@ export function inspectNativeTeamCompatibility(cwd, fingerprint = null) {
   const state = getConfig(cwd).claudeCliCompatibility;
   const evidence = readNativeTeamObservations(state);
   const selected = fingerprint == null
-    ? evidence.observations
+    ? []
     : evidence.observations.filter((observation) => observation.fingerprint === fingerprint);
   return {
     observations: orderNativeObservations(selected).map(({ observation }) => observation),

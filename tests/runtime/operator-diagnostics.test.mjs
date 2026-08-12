@@ -129,6 +129,11 @@ describe("operator doctor", () => {
       const lead = report.modes.find((mode) => mode.delegationMode === "claude_orchestrator");
       assert.equal(lead.denySetLiveValidated, true);
       assert.equal(lead.teamTransportLiveValidated, false);
+      assert.equal(lead.observed, true);
+      assert.deepEqual(lead.canonicalToolNames, ["Agent", "FutureNativeTool", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"]);
+      assert.equal(lead.canonicalToolNameCount, 7);
+      assert.deepEqual(lead.definitionNames, ["haiku-scout", "sonnet"]);
+      assert.ok(lead.reviewedForbiddenToolNames.includes("ListAgents"));
       assert.deepEqual(lead.missingDefinitions, ["opus"]);
       assert.deepEqual(lead.missingNecessaryCoordinationTools, []);
       assert.deepEqual(lead.forbiddenTools, []);
@@ -139,6 +144,9 @@ describe("operator doctor", () => {
 
       const noObservation = diagnoseNativeTeamCompatibility(workspace, "other-fingerprint");
       assert.equal(noObservation.modes.every((mode) => mode.denySetLiveValidated === false), true);
+      const noCurrentFingerprint = diagnoseNativeTeamCompatibility(workspace, null);
+      assert.equal(noCurrentFingerprint.modes.every((mode) => mode.observed === false), true);
+      assert.equal(noCurrentFingerprint.modes.every((mode) => mode.canonicalToolNames.length === 0), true);
     } finally {
       if (previous == null) delete process.env.CC_RUNTIME_HOME;
       else process.env.CC_RUNTIME_HOME = previous;

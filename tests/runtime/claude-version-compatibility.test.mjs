@@ -124,10 +124,10 @@ describe("Claude Code version compatibility", () => {
       });
     }
 
-    const stored = inspectNativeTeamCompatibility(workspace);
-    assert.equal(stored.observations.length, 16);
-    assert.equal(stored.observations.some((entry) => entry.fingerprint === "fingerprint-00"), false);
-    assert.equal(stored.observations.some((entry) => entry.fingerprint === "fingerprint-16"), true);
+    const stored = getConfig(workspace).claudeCliCompatibility.nativeTeamObservations;
+    assert.equal(stored.length, 16);
+    assert.equal(stored.some((entry) => entry.fingerprint === "fingerprint-00"), false);
+    assert.equal(stored.some((entry) => entry.fingerprint === "fingerprint-16"), true);
     const serialized = JSON.stringify(getConfig(workspace).claudeCliCompatibility);
     for (const sentinel of [
       "prompt-sentinel",
@@ -162,6 +162,59 @@ describe("Claude Code version compatibility", () => {
     assert.equal(stored.legacyObservationCount, 1);
   });
 
+  it("rejects a forged stored leaf classification that omits its observed Agent denial", async () => {
+    const { workspace } = setup();
+    recordNativeTeamCompatibilityObservation(workspace, { fingerprint: "forged-fingerprint" }, "leaf", {
+      canonicalToolNames: ["Read"],
+      definitionNames: [],
+    });
+    const { mutateConfig } = await import("../../runtime/job-store.mjs");
+    mutateConfig(workspace, (config) => ({
+      ...config,
+      claudeCliCompatibility: {
+        ...config.claudeCliCompatibility,
+        nativeTeamObservations: config.claudeCliCompatibility.nativeTeamObservations.map((observation) => ({
+          ...observation,
+          classification: {
+            ...observation.classification,
+            canonicalToolNames: ["Agent"],
+            canonicalToolNameCount: 1,
+            forbiddenTools: [],
+            denySetLiveValidated: true,
+          },
+        })),
+      },
+    }));
+
+    const stored = inspectNativeTeamCompatibility(workspace, "forged-fingerprint");
+    assert.deepEqual(stored.observations, []);
+    assert.equal(stored.legacyObservationCount, 1);
+  });
+
+  it("rejects a stored non-boolean observed flag instead of treating it as inventory evidence", async () => {
+    const { workspace } = setup();
+    recordNativeTeamCompatibilityObservation(workspace, { fingerprint: "observed-flag-fingerprint" }, "leaf", {
+      canonicalToolNames: ["Read"],
+      definitionNames: [],
+    });
+    const { mutateConfig } = await import("../../runtime/job-store.mjs");
+    mutateConfig(workspace, (config) => ({
+      ...config,
+      claudeCliCompatibility: {
+        ...config.claudeCliCompatibility,
+        nativeTeamObservations: config.claudeCliCompatibility.nativeTeamObservations.map((observation) => ({
+          ...observation,
+          classification: { ...observation.classification, observed: "false" },
+        })),
+      },
+    }));
+
+    assert.deepEqual(
+      inspectNativeTeamCompatibility(workspace, "observed-flag-fingerprint").observations,
+      [],
+    );
+  });
+
   it("classifies a forbidden name before truncating the retained inventory", () => {
     const { workspace } = setup();
     const toolNames = Array.from({ length: 70 }, (_, index) => `FutureTool${String(index).padStart(2, "0")}`);
@@ -170,7 +223,7 @@ describe("Claude Code version compatibility", () => {
       canonicalToolNames: toolNames,
       definitionNames: ["haiku-scout", "sonnet", "opus"],
     });
-    const [observation] = inspectNativeTeamCompatibility(workspace).observations;
+    const [observation] = inspectNativeTeamCompatibility(workspace, "capped-fingerprint").observations;
     assert.equal(observation.classification.canonicalToolNames.length, 64);
     assert.deepEqual(observation.classification.forbiddenTools, ["ListAgents"]);
     assert.equal(observation.classification.denySetLiveValidated, false);

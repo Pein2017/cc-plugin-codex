@@ -19,6 +19,7 @@ import {
   diagnoseClaudeCompatibility,
   inspectNativeTeamCompatibility,
 } from "./claude-version-compatibility.mjs";
+import { resolveNativeTeamPolicy } from "./claude-native-team-policy.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import {
   inspectCompatibilityShells,
@@ -370,6 +371,12 @@ function failedCheck(id, error, recovery = null) {
 export function diagnoseNativeTeamCompatibility(cwd, fingerprint = null) {
   const evidence = inspectNativeTeamCompatibility(cwd, fingerprint);
   const modes = ["leaf", "claude_orchestrator"].map((delegationMode) => {
+    const reviewedForbiddenToolNames = resolveNativeTeamPolicy({
+      model: delegationMode === "leaf" ? "claude-sonnet-5" : "claude-opus-5",
+      delegationMode,
+      write: false,
+      ...(delegationMode === "claude_orchestrator" ? { jobId: "doctor-native-team-policy" } : {}),
+    }).deniedToolNames;
     const observation = evidence.observations
       .filter((entry) => entry.delegationMode === delegationMode)
       .at(-1);
@@ -378,6 +385,11 @@ export function diagnoseNativeTeamCompatibility(cwd, fingerprint = null) {
         delegationMode,
         observedAt: null,
         policyRevision: null,
+        observed: false,
+        canonicalToolNames: [],
+        canonicalToolNameCount: 0,
+        definitionNames: [],
+        reviewedForbiddenToolNames,
         denySetLiveValidated: false,
         teamTransportLiveValidated: false,
         missingDefinitions: [],
@@ -404,6 +416,11 @@ export function diagnoseNativeTeamCompatibility(cwd, fingerprint = null) {
       delegationMode,
       observedAt: observation.observedAt,
       policyRevision: observation.policyRevision,
+      observed: classification.observed,
+      canonicalToolNames: classification.canonicalToolNames,
+      canonicalToolNameCount: classification.canonicalToolNameCount,
+      definitionNames: classification.definitionNames,
+      reviewedForbiddenToolNames,
       denySetLiveValidated: classification.denySetLiveValidated,
       teamTransportLiveValidated: classification.teamTransportLiveValidated,
       missingDefinitions: classification.missingDefinitions,
