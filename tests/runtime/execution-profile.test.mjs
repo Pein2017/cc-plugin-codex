@@ -206,7 +206,7 @@ describe("execution profiles", () => {
     assert.equal(fs.existsSync(profile.claudeOptions.settingsFile), false);
   });
 
-  it("enforces leaf depth and permits only explicit Fable orchestration", () => {
+  it("composes the bounded native-team profile only for exact durable Opus or Fable leads", () => {
     const leaf = createExecutionProfile({
       profile: "terminal-parity",
       model: "opus",
@@ -218,7 +218,9 @@ describe("execution profiles", () => {
     assert.match(leaf.claudeOptions.appendSystemPrompt, /read\/review only/i);
     assert.match(leaf.claudeOptions.appendSystemPrompt, /full CLI access avoids prompts/i);
     assert.match(leaf.claudeOptions.appendSystemPrompt, /blocked on a lead\/user decision/i);
-    assert.deepEqual(leaf.claudeOptions.disallowedTools, ["Agent", "Workflow"]);
+    assert.ok(leaf.claudeOptions.disallowedTools.includes("Agent"));
+    assert.ok(leaf.claudeOptions.disallowedTools.includes("SendMessage"));
+    assert.ok(leaf.claudeOptions.disallowedTools.includes("Workflow"));
 
     const writingLeaf = createExecutionProfile({
       profile: "terminal-parity",
@@ -228,7 +230,26 @@ describe("execution profiles", () => {
     });
     assert.match(writingLeaf.claudeOptions.appendSystemPrompt, /task-scoped workspace mutation/i);
     assert.doesNotMatch(writingLeaf.claudeOptions.appendSystemPrompt, /read\/review only/i);
-    assert.deepEqual(writingLeaf.claudeOptions.disallowedTools, ["Agent", "Workflow"]);
+    assert.ok(writingLeaf.claudeOptions.disallowedTools.includes("Agent"));
+    assert.ok(writingLeaf.claudeOptions.disallowedTools.includes("SendMessage"));
+    assert.ok(writingLeaf.claudeOptions.disallowedTools.includes("Workflow"));
+
+    const haikuLeaf = createExecutionProfile({
+      profile: "terminal-parity",
+      model: "claude-haiku-4-5",
+      write: false,
+      env: {},
+    });
+    assert.equal(haikuLeaf.claudeOptions.model, "claude-haiku-4-5");
+    assert.throws(
+      () => createExecutionProfile({
+        profile: "terminal-parity",
+        model: "claude-haiku-4-5",
+        write: true,
+        env: {},
+      }),
+      /Haiku is valid only as a write:false leaf scout/,
+    );
 
     for (const tool of ["Agent", "Agent(explore)", "Agent(plan, explore)"]) {
       assert.throws(
@@ -241,18 +262,58 @@ describe("execution profiles", () => {
         model: "opus",
         delegationMode: "claude_orchestrator",
       }),
-      /requires exact model claude-fable-5/,
+      /requires exact model claude-opus-5 or claude-fable-5/,
+    );
+
+    for (const model of ["claude-opus-5", "claude-fable-5"]) {
+      assert.throws(
+        () => createExecutionProfile({
+          profile: "terminal-parity",
+          model,
+          delegationMode: "claude_orchestrator",
+          env: {},
+        }),
+        /durable jobId/,
+      );
+    }
+    assert.throws(
+      () => createExecutionProfile({
+        profile: "terminal-parity",
+        model: "claude-sonnet-5",
+        delegationMode: "claude_orchestrator",
+        jobId: "job-invalid-sonnet-lead",
+        env: {},
+      }),
+      /requires exact model claude-opus-5 or claude-fable-5/,
     );
 
     const orchestrator = createExecutionProfile({
       profile: "terminal-parity",
-      model: "fable",
+      model: "claude-opus-5",
       delegationMode: "claude_orchestrator",
-      env: {},
+      jobId: "job-opus-native-team",
+      env: { CLAUDE_CODE_SUBAGENT_MODEL: "claude-fable-5" },
     });
-    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /one child generation/i);
-    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /join every child/i);
+    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /fresh experimental Native Agent Team/i);
+    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /behavioral cost and coordination budgets/i);
+    assert.match(orchestrator.claudeOptions.appendSystemPrompt, /residual guard.*ordinary-subagent/i);
     assert.match(orchestrator.claudeOptions.appendSystemPrompt, /never use Workflow/i);
-    assert.deepEqual(orchestrator.claudeOptions.disallowedTools, ["Workflow"]);
+    assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "1");
+    assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "1");
+    assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, "3");
+    assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
+    assert.deepEqual(Object.keys(orchestrator.claudeOptions.agents), ["haiku-scout", "sonnet", "opus"]);
+    const scout = orchestrator.claudeOptions.agents["haiku-scout"];
+    assert.deepEqual(Object.keys(scout), ["model", "memory", "disallowedTools", "prompt"]);
+    assert.equal(scout.model, "claude-haiku-4-5");
+    assert.equal(scout.memory, "local");
+    assert.ok(scout.disallowedTools.includes("Agent"));
+    assert.match(scout.prompt, /pinned model claude-haiku-4-5/i);
+    assert.equal(orchestrator.claudeOptions.agents.sonnet.model, "claude-sonnet-5");
+    assert.equal(orchestrator.claudeOptions.agents.opus.model, "claude-opus-5");
+    assert.equal("effort" in orchestrator.claudeOptions.agents.opus, false);
+    assert.equal("isolation" in orchestrator.claudeOptions.agents.opus, false);
+    assert.ok(orchestrator.claudeOptions.disallowedTools.includes("Workflow"));
+    assert.equal(orchestrator.claudeOptions.model, "claude-opus-5");
   });
 });

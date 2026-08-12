@@ -14,6 +14,7 @@ import {
   resolveEffort,
   resolveModel,
 } from "./claude-headless-adapter.mjs";
+import { resolveNativeTeamPolicy } from "./claude-native-team-policy.mjs";
 
 export const EXECUTION_PROFILES = new Set(["safe", "terminal-parity"]);
 export const DELEGATION_MODES = new Set(["leaf", "claude_orchestrator"]);
@@ -39,12 +40,6 @@ const LEAF_DELEGATION_PROMPT = [
   "Act as a leaf: do not delegate or use Agent/Workflow.",
 ].join(" ");
 
-const CLAUDE_ORCHESTRATOR_PROMPT = [
-  COMMON_DELEGATION_PROMPT,
-  "You may use Agent for one child generation; never use Workflow.",
-  "Join every child and synthesize them in your final response.",
-].join(" ");
-
 export function normalizeDelegationMode(value) {
   const mode = String(value ?? "leaf").trim().toLowerCase();
   if (!DELEGATION_MODES.has(mode)) {
@@ -57,11 +52,31 @@ function isNativeAgentTool(value) {
   return /^Agent(?:\(|$)/.test(String(value ?? "").trim());
 }
 
-function delegationPrompt(mode, write) {
-  const rolePrompt = mode === "claude_orchestrator"
-    ? CLAUDE_ORCHESTRATOR_PROMPT
+function delegationPrompt(policy, write) {
+  const rolePrompt = policy.role === "native_team_lead"
+    ? [
+        COMMON_DELEGATION_PROMPT,
+        policy.prompt,
+        "Never use Workflow.",
+        "The one-layer spawn depth is a hard topology boundary; the concurrency value is only a residual guard for a forbidden ordinary-subagent path.",
+      ].join(" ")
     : LEAF_DELEGATION_PROMPT;
   return [rolePrompt, write ? WRITE_AUTHORITY_PROMPT : READ_ONLY_AUTHORITY_PROMPT].join(" ");
+}
+
+function deterministicAgents(definitions) {
+  return Object.fromEntries(definitions.map(({ name, ...definition }) => [name, definition]));
+}
+
+function applyNativeTeamProfile(claudeOptions, inheritedEnv, policy) {
+  if (policy.role !== "native_team_lead") return;
+  const env = { ...inheritedEnv };
+  env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+  env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH = String(policy.limits.maxSpawnDepth);
+  env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS = String(policy.limits.maxConcurrentTeammates);
+  delete env.CLAUDE_CODE_SUBAGENT_MODEL;
+  claudeOptions.env = env;
+  claudeOptions.agents = deterministicAgents(policy.teammateDefinitions);
 }
 
 export function normalizeProfileName(value) {
@@ -89,9 +104,21 @@ export function validateExecutionProfileOptions(options = {}) {
   }
   const model = resolveModel(requestedModel);
   const delegationMode = normalizeDelegationMode(options.delegationMode);
-  if (delegationMode === "claude_orchestrator" && model !== "claude-fable-5") {
-    throw new Error("claude_orchestrator delegation requires exact model claude-fable-5.");
+  if (delegationMode === "claude_orchestrator" && requestedModel !== model) {
+    throw new Error(
+      "claude_orchestrator delegation requires exact model claude-opus-5 or claude-fable-5."
+    );
   }
+  resolveNativeTeamPolicy({
+    model,
+    delegationMode,
+    write: Boolean(options.write),
+    // Route validation runs before a durable job ID is allocated. Profile
+    // creation below re-resolves the policy with the real durable identity.
+    jobId: delegationMode === "claude_orchestrator"
+      ? (options.jobId ?? "profile-route-validation")
+      : undefined,
+  });
   if (
     delegationMode === "leaf" &&
     Array.isArray(options.allowedTools) &&
@@ -121,6 +148,12 @@ export function validateExecutionProfileOptions(options = {}) {
 export function createExecutionProfile(options = {}) {
   const validated = validateExecutionProfileOptions(options);
   const { name, model, effort, delegationMode } = validated;
+  const policy = resolveNativeTeamPolicy({
+    model,
+    delegationMode,
+    write: Boolean(options.write),
+    jobId: options.jobId,
+  });
   const inheritedEnv = options.env ?? process.env;
 
   if (name === "terminal-parity") {
@@ -128,11 +161,10 @@ export function createExecutionProfile(options = {}) {
     const claudeOptions = {
       env,
       model,
-      appendSystemPrompt: delegationPrompt(delegationMode, Boolean(options.write)),
+      appendSystemPrompt: delegationPrompt(policy, Boolean(options.write)),
     };
-    claudeOptions.disallowedTools = delegationMode === "leaf"
-      ? ["Agent", "Workflow"]
-      : ["Workflow"];
+    claudeOptions.disallowedTools = policy.deniedToolNames;
+    applyNativeTeamProfile(claudeOptions, env, policy);
     claudeOptions.dangerouslySkipPermissions = true;
     if (effort) claudeOptions.effort = effort;
     return {
@@ -155,15 +187,14 @@ export function createExecutionProfile(options = {}) {
     env,
     model,
     effort,
-    appendSystemPrompt: delegationPrompt(delegationMode, Boolean(options.write)),
+    appendSystemPrompt: delegationPrompt(policy, Boolean(options.write)),
     settingsFile,
     permissionMode: options.permissionMode ?? (options.write
       ? runningAsRoot ? undefined : "bypassPermissions"
       : "dontAsk"),
   };
-  claudeOptions.disallowedTools = delegationMode === "leaf"
-    ? ["Agent", "Workflow"]
-    : ["Workflow"];
+  claudeOptions.disallowedTools = policy.deniedToolNames;
+  applyNativeTeamProfile(claudeOptions, env, policy);
   if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
     claudeOptions.allowedTools = options.allowedTools;
   } else if (!options.write) {

@@ -55,6 +55,27 @@ describe("runtime environment", () => {
     assert.equal(result.env.CUSTOM_FLAG, "kept");
   });
 
+  it("forces native Auto Memory on after the selected env file", () => {
+    const { root, codexHome } = fixture();
+    const omitted = path.join(root, "omitted.env");
+    const disabled = path.join(root, "disabled.env");
+    fs.writeFileSync(omitted, "CLAUDE_CONFIG_DIR=/selected\n");
+    fs.writeFileSync(disabled, "CLAUDE_CONFIG_DIR=/selected\nCLAUDE_CODE_DISABLE_AUTO_MEMORY=1\n");
+
+    for (const envFile of [omitted, disabled]) {
+      const result = resolveRuntimeEnvironment({
+        cwd: root,
+        envFile,
+        env: {
+          CODEX_HOME: codexHome,
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+        },
+      });
+      assert.equal(result.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "0");
+      assert.equal(JSON.stringify(result.receipt).includes("AUTO_MEMORY"), false);
+    }
+  });
+
   it("normalizes native Claude config precedence and ignores empty overrides", () => {
     const { root, codexHome } = fixture();
     const configured = path.join(root, "configured-claude");

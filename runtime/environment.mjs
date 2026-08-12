@@ -103,6 +103,9 @@ export function resolveRuntimeEnvironment(options = {}) {
     ?? nonEmpty(env.CLAUDE_CONFIG_DIR)
     ?? DEFAULT_CLAUDE_CONFIG_DIR;
   env.CLAUDE_CONFIG_DIR = path.resolve(effectiveClaudeConfigDir);
+  // This assignment intentionally follows the single selected-file merge so
+  // neither an inherited value nor that file can disable native Auto Memory.
+  env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "0";
   if (selectedEnv) env.CC_RUNTIME_ENV_FILE = selectedEnv;
 
   return {

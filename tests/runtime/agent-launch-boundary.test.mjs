@@ -100,14 +100,24 @@ describe("Agent durable launch boundary", () => {
         error: /does not support execution_profile/,
       },
       {
-        name: "non fable orchestrator",
+        name: "sonnet orchestrator",
         input: { delegation_mode: "claude_orchestrator" },
-        error: /requires exact model claude-fable-5/,
+        error: /requires exact model claude-opus-5 or claude-fable-5/,
+      },
+      {
+        name: "haiku write",
+        input: { model: "claude-haiku-4-5", write: true },
+        error: /Haiku is valid only as a write:false leaf scout/,
+      },
+      {
+        name: "haiku orchestrator",
+        input: { model: "claude-haiku-4-5", delegation_mode: "claude_orchestrator" },
+        error: /requires exact model claude-opus-5 or claude-fable-5/,
       },
       {
         name: "fable alias orchestrator",
         input: { model: "fable", delegation_mode: "claude_orchestrator" },
-        error: /requires exact model claude-fable-5/,
+        error: /requires exact model claude-opus-5 or claude-fable-5/,
       },
       {
         name: "retired tool allowlist",
