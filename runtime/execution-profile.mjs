@@ -28,7 +28,6 @@ const COMMON_DELEGATION_PROMPT = [
 
 const READ_ONLY_AUTHORITY_PROMPT = [
   "Read/review only: full CLI access avoids prompts but grants no mutation authority.",
-  "Do not change files, repository state, or external systems.",
 ].join(" ");
 
 const WRITE_AUTHORITY_PROMPT = [
@@ -61,7 +60,18 @@ function delegationPrompt(policy, write) {
         "The one-layer spawn depth is a hard topology boundary; the concurrency value is only a residual guard for a forbidden ordinary-subagent path.",
       ].join(" ")
     : LEAF_DELEGATION_PROMPT;
-  return [rolePrompt, write ? WRITE_AUTHORITY_PROMPT : READ_ONLY_AUTHORITY_PROMPT].join(" ");
+  const readAuthority = policy.role === "native_team_lead"
+    ? [
+        READ_ONLY_AUTHORITY_PROMPT,
+        "Do not mutate task, workspace, repository, or external state except Claude native local-memory maintenance under .claude/agent-memory-local/<member-type>/.",
+        "This is behavioral authority, not a filesystem sandbox.",
+      ].join(" ")
+    : [
+        READ_ONLY_AUTHORITY_PROMPT,
+        "Do not mutate task, workspace, repository, or external state except Claude native Auto Memory or local-memory maintenance.",
+        "This is behavioral authority, not a filesystem sandbox.",
+      ].join(" ");
+  return [rolePrompt, write ? WRITE_AUTHORITY_PROMPT : readAuthority].join(" ");
 }
 
 function deterministicAgents(definitions) {

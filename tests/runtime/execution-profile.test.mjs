@@ -298,6 +298,10 @@ describe("execution profiles", () => {
     assert.match(orchestrator.claudeOptions.appendSystemPrompt, /behavioral cost and coordination budgets/i);
     assert.match(orchestrator.claudeOptions.appendSystemPrompt, /residual guard.*ordinary-subagent/i);
     assert.match(orchestrator.claudeOptions.appendSystemPrompt, /never use Workflow/i);
+    assert.match(
+      orchestrator.claudeOptions.appendSystemPrompt,
+      /do not mutate task, workspace, repository, or external state except Claude native local-memory maintenance under \.claude\/agent-memory-local\/<member-type>\//i,
+    );
     assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "1");
     assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "1");
     assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, "3");
