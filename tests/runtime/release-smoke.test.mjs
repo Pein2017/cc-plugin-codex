@@ -14,6 +14,7 @@ import {
 } from "../../runtime/release-smoke.mjs";
 import { StreamParser } from "../../runtime/claude-headless-adapter.mjs";
 import { SOURCE_ROOT } from "../../runtime/version.mjs";
+import { runReleaseSmokeCli } from "../../scripts/release-smoke.mjs";
 
 const temporaryDirectories = [];
 
@@ -237,7 +238,6 @@ describe("release smoke", () => {
         type: "tool_use", id: "fake-message", name: "SendMessage",
         input: { recipient: "haiku-scout-1", content: "opaque fixture" },
       }] } })}\n`);
-      parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_completed", teammate_name: "haiku-scout-1" })}\n`);
       parser.feed(`${JSON.stringify({ type: "result", subtype: "success", is_error: false })}\n`);
       fs.mkdirSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout"), { recursive: true });
       fs.writeFileSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout", "metadata.json"), "fixture");
@@ -413,5 +413,54 @@ describe("release smoke", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /mutually exclusive paid smoke modes/i);
     assert.doesNotMatch(result.stderr, /Starting explicit paid/i);
+  });
+
+  it("prints an unverified native-team report before returning a nonzero CLI outcome without launching a model", async () => {
+    const stdout = [];
+    const stderr = [];
+    const exitCode = await runReleaseSmokeCli(["--native-team-witness"], {
+      assertCheckoutDependencies() {},
+      async runNativeTeamWitness() {
+        return { status: "account_limit_stopped", liveVerified: false, missingEvidence: ["successful_terminal"] };
+      },
+      writeStdout(value) { stdout.push(value); },
+      writeStderr(value) { stderr.push(value); },
+    });
+    assert.equal(exitCode, 1);
+    assert.deepEqual(JSON.parse(stdout.join("")), {
+      status: "account_limit_stopped", liveVerified: false, missingEvidence: ["successful_terminal"],
+    });
+    assert.match(stderr.join(""), /Starting explicit paid native-team witness/i);
+    assert.doesNotMatch(stderr.join(""), /model quality/i);
+  });
+
+  it("returns zero only for a live-verified native-team CLI report without launching a model", async () => {
+    const stdout = [];
+    const exitCode = await runReleaseSmokeCli(["--native-team-witness"], {
+      assertCheckoutDependencies() {},
+      async runNativeTeamWitness() {
+        return { status: "verified", liveVerified: true };
+      },
+      writeStdout(value) { stdout.push(value); },
+      writeStderr() {},
+    });
+    assert.equal(exitCode, 0);
+    assert.deepEqual(JSON.parse(stdout.join("")), { status: "verified", liveVerified: true });
+  });
+
+  it("converts a native-team witness exception into a structured unverified CLI report", async () => {
+    const stdout = [];
+    const exitCode = await runReleaseSmokeCli(["--native-team-witness"], {
+      assertCheckoutDependencies() {},
+      async runNativeTeamWitness() {
+        throw new Error("fixture preflight failed");
+      },
+      writeStdout(value) { stdout.push(value); },
+      writeStderr() {},
+    });
+    assert.equal(exitCode, 1);
+    assert.deepEqual(JSON.parse(stdout.join("")), {
+      status: "unverified", liveVerified: false, reason: "native_team_witness_error",
+    });
   });
 });

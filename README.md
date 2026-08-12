@@ -509,6 +509,9 @@ recursively records capped content-free path metadata there without opening any
 snapshot overflow unverified. Any other disposable mutation or any source
 change fails acceptance. Assistant prose cannot fill those gaps. No MCP field,
 IPC channel, public receipt, or durable teammate state is added.
+The command always prints its structured witness report; it exits nonzero unless
+that report has `liveVerified: true`. An `account_limit_stopped` report remains
+structured unverified evidence, not a model-quality conclusion.
 
 The older explicit smoke flag remains one ordinary Claude acceptance turn:
 

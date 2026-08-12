@@ -35,28 +35,43 @@ function parseArguments(argv) {
   return { json, realClaude, nativeTeamWitness, workspace };
 }
 
-try {
-  const options = parseArguments(process.argv.slice(2));
-  assertCheckoutDependencies(sourceRoot);
-  const { runNativeTeamWitness, runReleaseSmoke } = await import("../runtime/release-smoke.mjs");
-  const report = options.nativeTeamWitness
-    ? await (() => {
-      process.stderr.write(
-        "Starting explicit paid native-team witness: claude-opus-5, effort=low, write=false.\n",
-      );
-      return runNativeTeamWitness({ sourceRoot });
-    })()
-    : await runReleaseSmoke({
-      workspace: options.workspace,
-      realClaude: options.realClaude,
-      onPaidStart(receipt) {
-        process.stderr.write(
-          `Starting explicit paid smoke: ${receipt.model}, effort=${receipt.reasoningEffort}, write=${receipt.write}.\n`,
-        );
-      },
-    });
-  process.stdout.write(`${JSON.stringify(report, null, options.json ? 2 : 2)}\n`);
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
+export async function runReleaseSmokeCli(argv, dependencies = {}) {
+  const writeStdout = dependencies.writeStdout ?? ((value) => process.stdout.write(value));
+  const writeStderr = dependencies.writeStderr ?? ((value) => process.stderr.write(value));
+  try {
+    const options = parseArguments(argv);
+    (dependencies.assertCheckoutDependencies ?? assertCheckoutDependencies)(sourceRoot);
+    let report;
+    if (options.nativeTeamWitness) {
+      writeStderr("Starting explicit paid native-team witness: claude-opus-5, effort=low, write=false.\n");
+      const runNativeTeamWitness = dependencies.runNativeTeamWitness
+        ?? (await import("../runtime/release-smoke.mjs")).runNativeTeamWitness;
+      try {
+        report = await runNativeTeamWitness({ sourceRoot });
+      } catch {
+        report = { status: "unverified", liveVerified: false, reason: "native_team_witness_error" };
+      }
+    } else {
+      const runReleaseSmoke = dependencies.runReleaseSmoke
+        ?? (await import("../runtime/release-smoke.mjs")).runReleaseSmoke;
+      report = await runReleaseSmoke({
+        workspace: options.workspace,
+        realClaude: options.realClaude,
+        onPaidStart(receipt) {
+          writeStderr(
+            `Starting explicit paid smoke: ${receipt.model}, effort=${receipt.reasoningEffort}, write=${receipt.write}.\n`,
+          );
+        },
+      });
+    }
+    writeStdout(`${JSON.stringify(report, null, options.json ? 2 : 2)}\n`);
+    return options.nativeTeamWitness && report?.liveVerified !== true ? 1 : 0;
+  } catch (error) {
+    writeStderr(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = await runReleaseSmokeCli(process.argv.slice(2));
 }
