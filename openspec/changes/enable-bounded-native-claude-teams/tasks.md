@@ -9,7 +9,7 @@
 
 ## 2. Native Team Policy and Profile
 
-- [ ] 2.1 Add `runtime/claude-native-team-policy.mjs` as the pure owner of role admission, teammate definitions/prompts, semantic limits, reviewed deny/baseline names, `Task` alias canonicalization, and complete-inventory classification without emitting CLI arguments or environment keys.
+- [x] 2.1 Add `runtime/claude-native-team-policy.mjs` as the pure owner of role admission, teammate definitions/prompts, semantic limits, reviewed deny/baseline names, `Task` alias canonicalization, and complete-inventory classification without emitting CLI arguments or environment keys.
 - [ ] 2.2 Update `runtime/execution-profile.mjs` to remain the sole owner mapping policy into `--agents`, `--append-system-prompt`, `--disallowedTools`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, one-layer depth, and the concurrency value used only as a residual ordinary-subagent guard.
 - [ ] 2.3 Remove inherited `CLAUDE_CODE_SUBAGENT_MODEL` only for orchestrators, keep exact requested models in definitions, and require teammate prompts to omit call-level model/isolation/fork overrides while stating intended effort and inherited/unknown effective effort.
 - [ ] 2.4 Derive a fresh opaque cohort label from each durable orchestrator job ID without adding a persisted field; prove each explicit follow-up receives a new label and native team while the durable parent Agent/session remains stable.
