@@ -205,6 +205,7 @@ export function deriveNativeCohortLabel(jobId) {
 /**
  * Admit only semantically valid roles and describe their bounded team policy.
  * This is deliberately independent of command-line and child-process details.
+ * @param {{ model?: unknown, delegationMode?: unknown, write?: unknown, jobId?: unknown }} [options]
  */
 export function resolveNativeTeamPolicy({ model, delegationMode, write, jobId } = {}) {
   const exactModel = normalizeModel(model);
