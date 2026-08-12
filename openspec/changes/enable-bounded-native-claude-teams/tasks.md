@@ -21,13 +21,13 @@
 - [x] 3.2 Add admitted Harness class `compatibility_surface_drift`, map it to `harness_incompatible`, and terminate an orchestrator on forbidden tool leakage, missing definition/necessary tool, or a first named Agent result other than structured `status: teammate_spawned`, using native evidence only.
 - [x] 3.3 Bump `CLAUDE_CODE_DRIVER_VERSION` to `claude-code@2`; thread job identity and native-team policy through Driver/job launch while keeping `runtime/index.mjs` and the public seven-operation topology unchanged.
 - [x] 3.4 Preserve leaf transport recovery but set orchestrator automatic reconnect attempts to zero; retain exact parent continuation evidence so a later explicit follow-up starts a fresh team instead of pretending in-process teammates resumed.
-- [ ] 3.5 Preserve native Auto Memory and teammate `memory: local` without reading, locking, merging, redirecting, cleaning, or exposing `.claude/agent-memory-local/**` contents.
+- [x] 3.5 Preserve native Auto Memory and teammate `memory: local` without reading, locking, merging, redirecting, cleaning, or exposing `.claude/agent-memory-local/**` contents.
 
 ## 4. Compatibility and Operator Evidence
 
 - [x] 4.1 Add `--agents` to the zero-model CLI surface revision while keeping version admission fingerprint-based, exact-parent-model, no-Plugin-fallback, and statically live-unverified.
-- [ ] 4.2 Persist at most sixteen latest bounded observation records across executable fingerprint and delegation mode with deterministic eviction, classification-before-cap, owner-only atomic writes, and no prompt/input/output/session/roster/memory content.
-- [ ] 4.3 Extend doctor to report `denySetLiveValidated`, `teamTransportLiveValidated`, missing teammate definitions/necessary tools, forbidden leakage, unknown native drift, and no-observation state without launching Claude or making a universal containment claim.
+- [x] 4.2 Persist at most sixteen latest bounded observation records across executable fingerprint and delegation mode with deterministic eviction, classification-before-cap, owner-only atomic writes, and no prompt/input/output/session/roster/memory content.
+- [x] 4.3 Extend doctor to report `denySetLiveValidated`, `teamTransportLiveValidated`, missing teammate definitions/necessary tools, forbidden leakage, unknown native drift, and no-observation state without launching Claude or making a universal containment claim.
 - [x] 4.4 Add migration/reconciliation coverage proving older records remain readable, cannot become false validation, and prepared jobs cannot cross the `claude-code@1`/`@2` boundary in either direction.
 
 ## 5. Skills, MCP Guidance, and Documentation
