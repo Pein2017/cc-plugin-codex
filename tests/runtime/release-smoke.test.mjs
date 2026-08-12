@@ -251,6 +251,11 @@ describe("release smoke", () => {
     const driver = fakeWitnessDriver(async (request) => {
       assert.equal(request.launchContext.compatibility.executable, "/fake/claude");
       assert.equal(request.launchContext.compatibility.fingerprint, "fake-fingerprint");
+      assert.match(request.prompt, /run_in_background:\s*true/);
+      assert.match(request.prompt, /scout-fixture/);
+      assert.match(request.prompt, /reviewer-fixture/);
+      assert.match(request.prompt, /SendMessage/);
+      assert.match(request.prompt, /Do not use synchronous ordinary subagents/);
       const parser = new StreamParser({
         delegationMode: "claude_orchestrator",
         onNativeTeamWitness: request.onNativeTeamWitness,
