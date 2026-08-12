@@ -1,9 +1,9 @@
 ## 1. Contract-First Test Coverage
 
-- [ ] 1.1 Add failing route/pre-publication cases to `tests/runtime/agent-launch-boundary.test.mjs` for Haiku read-only leaf, Sonnet leaf-only, exact Opus/Fable orchestrators, and invalid combinations producing no readiness or durable state.
+- [x] 1.1 Add failing route/pre-publication cases to `tests/runtime/agent-launch-boundary.test.mjs` for Haiku read-only leaf, Sonnet leaf-only, exact Opus/Fable orchestrators, and invalid combinations producing no readiness or durable state.
 - [x] 1.2 Add failing pure-policy/profile cases for the lead/leaf/teammate role matrix, semantic limits, Agent Teams env mapping, exact stable definitions, `memory: local`, omitted definition effort/background/isolation, definition-owned model, subagent-model override removal, behavioral authority, and reviewed deny sets.
 - [x] 1.3 Add failing adapter/integration cases for deterministic one-value `--agents` JSON, init `Task`→`Agent` canonicalization, required definition/necessary-tool admission, first named `status: teammate_spawned` transport proof, rejection of ordinary-subagent results, forbidden/unknown/absent inventories, complete-inventory classification before display caps, and witness-only structured events.
-- [ ] 1.4 Add failing Driver/recovery cases for `claude-code@2`, old/new prepared-job hot-refresh and rollback rejection, unchanged leaf reconnect, orchestrator zero automatic reconnect, and explicit follow-up forming a fresh team.
+- [x] 1.4 Add failing Driver/recovery cases for `claude-code@2`, old/new prepared-job hot-refresh and rollback rejection, unchanged leaf reconnect, orchestrator zero automatic reconnect, and explicit follow-up forming a fresh team.
 - [x] 1.5 Add failing environment/memory cases proving `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` wins after any selected env file and that read-only acceptance distinguishes exact native-memory paths from task-state mutation.
 - [ ] 1.6 Extend plugin-contract and fake release-smoke tests for the unchanged seven-tool API, model-visible Opus/Fable team-lead guidance, production-shaped native events, missing-evidence behavior, and account-limit stop.
 
@@ -12,15 +12,15 @@
 - [x] 2.1 Add `runtime/claude-native-team-policy.mjs` as the pure owner of role admission, teammate definitions/prompts, semantic limits, reviewed deny/baseline names, `Task` alias canonicalization, and complete-inventory classification without emitting CLI arguments or environment keys.
 - [x] 2.2 Update `runtime/execution-profile.mjs` to remain the sole owner mapping policy into `--agents`, `--append-system-prompt`, `--disallowedTools`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, one-layer depth, and the concurrency value used only as a residual ordinary-subagent guard.
 - [x] 2.3 Remove inherited `CLAUDE_CODE_SUBAGENT_MODEL` only for orchestrators, keep exact requested models in definitions, and require teammate prompts to omit call-level model/isolation/fork overrides while stating intended effort and inherited/unknown effective effort.
-- [ ] 2.4 Derive a fresh opaque cohort label from each durable orchestrator job ID without adding a persisted field; prove each explicit follow-up receives a new label and native team while the durable parent Agent/session remains stable.
+- [x] 2.4 Derive a fresh opaque cohort label from each durable orchestrator job ID without adding a persisted field; prove each explicit follow-up receives a new label and native team while the durable parent Agent/session remains stable.
 - [x] 2.5 Force `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` after one-file environment resolution for every model-facing turn without exposing the value in public receipts.
 
 ## 3. Claude CLI, Driver, and Failure Integration
 
 - [x] 3.1 Extend `runtime/claude-headless-adapter.mjs` to validate and deterministically serialize the three definitions through one `--agents` argument, and to emit bounded structured init/tool/team witness events through an optional in-process callback without retaining raw inputs or contents.
 - [x] 3.2 Add admitted Harness class `compatibility_surface_drift`, map it to `harness_incompatible`, and terminate an orchestrator on forbidden tool leakage, missing definition/necessary tool, or a first named Agent result other than structured `status: teammate_spawned`, using native evidence only.
-- [ ] 3.3 Bump `CLAUDE_CODE_DRIVER_VERSION` to `claude-code@2`; thread job identity and native-team policy through Driver/job launch while keeping `runtime/index.mjs` and the public seven-operation topology unchanged.
-- [ ] 3.4 Preserve leaf transport recovery but set orchestrator automatic reconnect attempts to zero; retain exact parent continuation evidence so a later explicit follow-up starts a fresh team instead of pretending in-process teammates resumed.
+- [x] 3.3 Bump `CLAUDE_CODE_DRIVER_VERSION` to `claude-code@2`; thread job identity and native-team policy through Driver/job launch while keeping `runtime/index.mjs` and the public seven-operation topology unchanged.
+- [x] 3.4 Preserve leaf transport recovery but set orchestrator automatic reconnect attempts to zero; retain exact parent continuation evidence so a later explicit follow-up starts a fresh team instead of pretending in-process teammates resumed.
 - [ ] 3.5 Preserve native Auto Memory and teammate `memory: local` without reading, locking, merging, redirecting, cleaning, or exposing `.claude/agent-memory-local/**` contents.
 
 ## 4. Compatibility and Operator Evidence
@@ -28,7 +28,7 @@
 - [x] 4.1 Add `--agents` to the zero-model CLI surface revision while keeping version admission fingerprint-based, exact-parent-model, no-Plugin-fallback, and statically live-unverified.
 - [ ] 4.2 Persist at most sixteen latest bounded observation records across executable fingerprint and delegation mode with deterministic eviction, classification-before-cap, owner-only atomic writes, and no prompt/input/output/session/roster/memory content.
 - [ ] 4.3 Extend doctor to report `denySetLiveValidated`, `teamTransportLiveValidated`, missing teammate definitions/necessary tools, forbidden leakage, unknown native drift, and no-observation state without launching Claude or making a universal containment claim.
-- [ ] 4.4 Add migration/reconciliation coverage proving older records remain readable, cannot become false validation, and prepared jobs cannot cross the `claude-code@1`/`@2` boundary in either direction.
+- [x] 4.4 Add migration/reconciliation coverage proving older records remain readable, cannot become false validation, and prepared jobs cannot cross the `claude-code@1`/`@2` boundary in either direction.
 
 ## 5. Skills, MCP Guidance, and Documentation
 
