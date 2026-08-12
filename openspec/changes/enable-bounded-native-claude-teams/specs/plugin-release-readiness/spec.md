@@ -9,11 +9,15 @@ Driver/profile/adapter seam used by public Agents directly, not the public MCP
 or detached-worker lifecycle, and SHALL claim only that narrower path. The
 witness SHALL require one Haiku scout and one
 Sonnet reviewer with explicit intended efforts, one current-team message,
-native settle/idle evidence for both teammates, and one parent synthesis. A
+and one successful parent synthesis. For Claude 2.1.227, teammate settle/idle
+SHALL be reported as unobservable because native delivery is mailbox- and
+optional-hook-based rather than a stable top-level stream event; the witness
+SHALL NOT invent `system/teammate_*` events or claim the parent terminal proves
+each teammate settled. A
 witness-only in-process callback SHALL read only structured top-level
 initialization/tool/team events needed to count the requested definitions,
 teammate types/names, first `teammate_spawned` proof, current-team message, and
-settle signals; it SHALL not
+successful parent terminal synthesis; it SHALL not
 persist prompts, message text, child transcripts, session IDs, or memory
 content. It SHALL verify pinned requested models from the injected definitions
 and SHALL report effective teammate models, effort, and cost as unknown unless
@@ -21,9 +25,9 @@ Claude emits an authoritative structured fact. The mutation gate SHALL permit
 only `.claude/agent-memory-local/haiku-scout/**` and
 `.claude/agent-memory-local/sonnet/**` native-memory maintenance and SHALL fail
 on any other disposable-workspace mutation, including ignored paths. The source
-checkout SHALL remain unchanged. If
-the production stream cannot expose a required settle/message fact, the witness
-SHALL remain unverified rather than trust assistant prose. A subscription,
+checkout SHALL remain unchanged. If the production stream cannot expose a
+required definition/spawn/message/terminal fact, the witness SHALL remain
+unverified rather than trust assistant prose. A subscription,
 allowance, credit, or quota-limit response SHALL stop all subsequent paid
 Claude tests and SHALL leave the capability unverified rather than failed on
 model quality.
@@ -40,9 +44,9 @@ model quality.
 - **WHEN** Claude creates or updates only an approved teammate memory directory during the witness
 - **THEN** the witness records bounded path-level mutation evidence without reading contents and does not misclassify it as task-state mutation
 
-#### Scenario: Required native settle evidence is absent
-- **WHEN** the parent finishes but structured production evidence cannot prove both teammates settled
-- **THEN** release acceptance remains live-unverified even if the parent final message says the team completed
+#### Scenario: Native settle evidence is not a top-level stream fact
+- **WHEN** the exact executable exposes teammate idle/completion only through native mailbox delivery or optional hooks
+- **THEN** the witness reports settle as unobservable, does not invent a fake event, and scopes acceptance to the narrower observable path without claiming each teammate settled
 
 #### Scenario: Claude account limit stops the witness
 - **WHEN** the witness reports an explicit subscription or quota limit
@@ -50,7 +54,7 @@ model quality.
 
 ### Requirement: Native-team paid loop is regression tested without Claude usage
 The repository SHALL test the native-team paid witness control flow with a fake
-Claude transport and the same witness-only in-process callback, including model definitions, cohort messages, joins, final
+Claude transport and the same witness-only in-process callback, including model definitions, cohort messages, the explicit unobservable-settle boundary, final
 synthesis, ignored and non-ignored mutation checks, absent-evidence behavior,
 and account-limit stop behavior, without consuming Claude quota. The fake
 transport SHALL emit the same bounded structured event shape consumed from the

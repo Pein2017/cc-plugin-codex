@@ -28,6 +28,10 @@ init inventories. Official current behavior is important:
   transport proof.
 - Agent Teams have no hard teammate-count limit. The ordinary-subagent
   concurrency env is inert on the native teammate path.
+- Teammate idle/completion is delivered to the lead through the native mailbox.
+  `TeammateIdle` and `TaskCompleted` are hook lifecycle events, but the exact CLI
+  does not emit a stable top-level `system/teammate_*` stream event. Hooks are
+  operator configuration and are not injected merely to make release evidence.
 
 References: [Agent Teams](https://code.claude.com/docs/en/agent-teams),
 [Subagents](https://code.claude.com/docs/en/sub-agents), and
@@ -267,18 +271,20 @@ reconnect, team, and compatibility semantics are materially different.
 Fake-Claude tests own deterministic profile/argument/recovery/tool-drift and
 paid-loop control-flow coverage. Before release, one explicit Opus 5/low,
 `write:false` witness requires one Haiku scout and one Sonnet reviewer, one
-current-team message, native settle evidence for both, and one parent
-synthesis.
+current-team message, a successful parent synthesis, and an explicit
+`settleObservation: unobservable` boundary for Claude 2.1.227. The witness does
+not claim that parent success independently proves each teammate settled.
 
 The witness invokes the real production Driver/profile/adapter directly rather
 than the public MCP/detached-worker path. A witness-only in-process callback
 receives the same bounded structured init/tool/team events emitted by the
-adapter. It may count requested definition/type/name,
-message recipient, and settle events but persists no prompt/message content,
+adapter. It may count requested definition/type/name, first-spawn transport,
+same-team message recipient, and successful terminal synthesis, but persists no prompt/message content,
 session ID, transcript, or memory contents. Requested models are proven by the
 injected definitions; effective teammate model, effort, and cost remain unknown
 unless an authoritative structured fact exists. Assistant prose cannot replace
-a missing event.
+a missing event. Invented `system/teammate_idle`, `teammate_completed`, or
+`teammate_failed` events are forbidden in the fake transport.
 
 This avoids a second cross-process IPC or durable event ledger. Zero-cost
 public API/integration tests continue to validate the MCP and detached-worker
@@ -289,8 +295,10 @@ The smoke script creates a dedicated disposable Git witness workspace containing
 only fixed non-secret fixtures, snapshots every path there, and never uses the
 source checkout as Claude's cwd. The mutation gate permits only the two expected
 local-memory prefixes and fails on any other disposable-workspace mutation. It
-also verifies the source checkout stayed unchanged and records memory-path
-metadata without reading content.
+also verifies the source checkout stayed unchanged and records bounded
+memory-path metadata without opening file contents. The explicit witness command
+uses the normal environment owner plus Driver preflight/revalidation, never a
+fixture executable or fingerprint.
 If Claude reports a subscription/quota limit, no later paid call starts and the
 capability remains unverified. Real Claude never runs in `npm run check`.
 
@@ -318,8 +326,10 @@ capability remains unverified. Real Claude never runs in `npm run check`.
 - **Init inventories may drift and do not prove the team gate** -> canonical
   aliases, necessary preconditions, first-spawn proof, scoped validation,
   unknown-native warning, bounded history.
-- **Structured production stream may omit witness settle facts** -> paid
-  acceptance remains unverified rather than trusting assistant prose.
+- **Structured production stream omits stable teammate settle facts** -> record
+  settle as unobservable for the exact executable, prohibit invented fake
+  events, and scope paid acceptance to the narrower definition/spawn/message/
+  parent-synthesis path.
 
 ## Migration Plan
 

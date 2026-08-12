@@ -47,10 +47,13 @@ that can silently exceed the Plugin's root, cost, and lifecycle boundaries.
   `Agent`, detect reviewed forbidden-tool leakage, and warn on unknown native
   tool drift without claiming universal containment.
 - Add a release-gated real `claude-opus-5`/`low`, `write:false` smoke observing
-  the native team/definition/message/completion facts the production stream can
-  actually expose, one final synthesis, and no task-state mutation outside
-  explicitly allowed local-memory maintenance. Account-limit errors stop
-  further paid Claude testing.
+  the native definition, first-spawn, same-team message, and successful parent
+  synthesis facts the production stream can actually expose, plus no task-state
+  mutation outside explicitly allowed local-memory maintenance. Claude 2.1.227
+  exposes teammate idle/completion through native mailbox delivery and optional
+  hooks, not a stable top-level stream event, so the witness records settle as
+  unobservable instead of inventing an event. Account-limit errors stop further
+  paid Claude testing.
 
 The public seven-tool MCP topology and `delegation_mode` enum do not change.
 `write` remains behavioral authority under terminal parity, not a filesystem

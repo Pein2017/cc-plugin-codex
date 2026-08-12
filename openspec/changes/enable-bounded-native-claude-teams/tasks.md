@@ -45,7 +45,7 @@
 
 ## 7. Explicit Paid Acceptance
 
-- [ ] 7.1 After explicit paid-test authorization, snapshot source-checkout status, create/snapshot a disposable Git witness workspace, and run exactly one real `claude-opus-5`/`low`, `write:false` Native Agent Team witness there through the production Driver/profile/adapter seam with one Haiku scout, one Sonnet reviewer, explicit intended efforts, one current-team message, both native settle signals, and one parent synthesis.
+- [ ] 7.1 After explicit paid-test authorization, snapshot source-checkout status, create/snapshot a disposable Git witness workspace, and run exactly one real `claude-opus-5`/`low`, `write:false` Native Agent Team witness there through the production Driver/profile/adapter seam with one Haiku scout, one Sonnet reviewer, explicit intended efforts, one current-team message, one successful parent synthesis, and an explicit unobservable-settle boundary for the exact CLI.
 - [ ] 7.2 Verify injected requested model definitions and production structured team events; record effective teammate model/effort/cost as unknown unless authoritative native facts exist, and leave acceptance unverified rather than trust assistant prose when required facts are absent.
 - [ ] 7.3 Allow only `.claude/agent-memory-local/haiku-scout/**` and `.claude/agent-memory-local/sonnet/**` metadata changes without reading contents; fail acceptance on any other workspace/task/repository mutation.
 - [ ] 7.4 If the witness reports a subscription, allowance, credit, or quota limit, stop all remaining paid Claude tests and leave live acceptance incomplete without classifying model quality.
