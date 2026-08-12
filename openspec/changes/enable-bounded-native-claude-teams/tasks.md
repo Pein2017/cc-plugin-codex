@@ -1,19 +1,19 @@
 ## 1. Contract-First Test Coverage
 
 - [ ] 1.1 Add failing route/pre-publication cases to `tests/runtime/agent-launch-boundary.test.mjs` for Haiku read-only leaf, Sonnet leaf-only, exact Opus/Fable orchestrators, and invalid combinations producing no readiness or durable state.
-- [ ] 1.2 Add failing pure-policy/profile cases for the lead/leaf/teammate role matrix, semantic limits, Agent Teams env mapping, exact stable definitions, `memory: local`, omitted definition effort/background/isolation, definition-owned model, subagent-model override removal, behavioral authority, and reviewed deny sets.
+- [x] 1.2 Add failing pure-policy/profile cases for the lead/leaf/teammate role matrix, semantic limits, Agent Teams env mapping, exact stable definitions, `memory: local`, omitted definition effort/background/isolation, definition-owned model, subagent-model override removal, behavioral authority, and reviewed deny sets.
 - [ ] 1.3 Add failing adapter/integration cases for deterministic one-value `--agents` JSON, init `Task`→`Agent` canonicalization, required definition/necessary-tool admission, first named `status: teammate_spawned` transport proof, rejection of ordinary-subagent results, forbidden/unknown/absent inventories, complete-inventory classification before display caps, and witness-only structured events.
 - [ ] 1.4 Add failing Driver/recovery cases for `claude-code@2`, old/new prepared-job hot-refresh and rollback rejection, unchanged leaf reconnect, orchestrator zero automatic reconnect, and explicit follow-up forming a fresh team.
-- [ ] 1.5 Add failing environment/memory cases proving `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` wins after any selected env file and that read-only acceptance distinguishes exact native-memory paths from task-state mutation.
+- [x] 1.5 Add failing environment/memory cases proving `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` wins after any selected env file and that read-only acceptance distinguishes exact native-memory paths from task-state mutation.
 - [ ] 1.6 Extend plugin-contract and fake release-smoke tests for the unchanged seven-tool API, model-visible Opus/Fable team-lead guidance, production-shaped native events, missing-evidence behavior, and account-limit stop.
 
 ## 2. Native Team Policy and Profile
 
 - [x] 2.1 Add `runtime/claude-native-team-policy.mjs` as the pure owner of role admission, teammate definitions/prompts, semantic limits, reviewed deny/baseline names, `Task` alias canonicalization, and complete-inventory classification without emitting CLI arguments or environment keys.
-- [ ] 2.2 Update `runtime/execution-profile.mjs` to remain the sole owner mapping policy into `--agents`, `--append-system-prompt`, `--disallowedTools`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, one-layer depth, and the concurrency value used only as a residual ordinary-subagent guard.
-- [ ] 2.3 Remove inherited `CLAUDE_CODE_SUBAGENT_MODEL` only for orchestrators, keep exact requested models in definitions, and require teammate prompts to omit call-level model/isolation/fork overrides while stating intended effort and inherited/unknown effective effort.
+- [x] 2.2 Update `runtime/execution-profile.mjs` to remain the sole owner mapping policy into `--agents`, `--append-system-prompt`, `--disallowedTools`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, one-layer depth, and the concurrency value used only as a residual ordinary-subagent guard.
+- [x] 2.3 Remove inherited `CLAUDE_CODE_SUBAGENT_MODEL` only for orchestrators, keep exact requested models in definitions, and require teammate prompts to omit call-level model/isolation/fork overrides while stating intended effort and inherited/unknown effective effort.
 - [ ] 2.4 Derive a fresh opaque cohort label from each durable orchestrator job ID without adding a persisted field; prove each explicit follow-up receives a new label and native team while the durable parent Agent/session remains stable.
-- [ ] 2.5 Force `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` after one-file environment resolution for every model-facing turn without exposing the value in public receipts.
+- [x] 2.5 Force `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` after one-file environment resolution for every model-facing turn without exposing the value in public receipts.
 
 ## 3. Claude CLI, Driver, and Failure Integration
 
