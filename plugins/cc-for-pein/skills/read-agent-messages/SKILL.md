@@ -22,3 +22,7 @@ discovery failure; never use shell.
   `completion_message`; use history only for earlier output or recovery.
 - Report missing retained history honestly. Present message text plus minimal
   context, not raw JSON, unless debug was explicitly requested.
+
+For an experimental exact Opus/Fable Native Agent Team lead, this never reads
+teammate transcripts or local memory; only the durable parent history is in
+scope. Missing native-team evidence remains unverified.

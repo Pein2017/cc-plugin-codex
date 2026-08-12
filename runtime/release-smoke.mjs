@@ -1,5 +1,6 @@
 /** SPDX-License-Identifier: Apache-2.0 */
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,12 +10,185 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
+import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
 import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "./version.mjs";
 
 const REAL_SMOKE_MODEL = "claude-haiku-4-5";
 const REAL_SMOKE_EFFORT = "low";
 const REAL_SMOKE_MAX_MS = 60 * 60 * 1000;
+const NATIVE_TEAM_WITNESS_MEMORY_PREFIXES = Object.freeze([
+  ".claude/agent-memory-local/haiku-scout",
+  ".claude/agent-memory-local/sonnet",
+]);
+
+function gitStatus(cwd) {
+  const result = spawnSync("git", ["-C", cwd, "status", "--porcelain", "--untracked-files=all"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error("Native-team witness requires a Git workspace.");
+  return String(result.stdout ?? "");
+}
+
+function initializeWitnessWorkspace() {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "cc-native-team-witness-"));
+  const init = spawnSync("git", ["-C", cwd, "init", "--quiet"], { encoding: "utf8" });
+  if (init.status !== 0) {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    throw new Error("Native-team witness could not initialize its disposable Git workspace.");
+  }
+  fs.writeFileSync(path.join(cwd, "README.md"), "# Native Agent Team witness fixture\n", "utf8");
+  return cwd;
+}
+
+function snapshotWorkspacePaths(root) {
+  const snapshot = new Map();
+  const visit = (relative) => {
+    const absolute = path.join(root, relative);
+    const stat = fs.lstatSync(absolute);
+    snapshot.set(relative || ".", {
+      type: stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file",
+      size: stat.size,
+      mode: stat.mode,
+      mtimeMs: stat.mtimeMs,
+    });
+    if (!stat.isDirectory()) return;
+    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+      visit(relative ? path.join(relative, entry.name) : entry.name);
+    }
+  };
+  visit("");
+  return snapshot;
+}
+
+function changedSnapshotPaths(before, after) {
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  return [...paths].filter((relative) => JSON.stringify(before.get(relative) ?? null) !== JSON.stringify(after.get(relative) ?? null)).sort();
+}
+
+function nativeMemoryPathAllowed(relative) {
+  const normalized = String(relative ?? "").replaceAll("\\", "/");
+  if (normalized === ".") return true;
+  return NATIVE_TEAM_WITNESS_MEMORY_PREFIXES.some((prefix) =>
+    normalized === prefix || normalized.startsWith(`${prefix}/`) || prefix.startsWith(`${normalized}/`)
+  );
+}
+
+function boundedWitnessEvent(fact) {
+  if (!fact || typeof fact !== "object") return null;
+  switch (fact.type) {
+    case "native_team_member_requested":
+      return typeof fact.memberName === "string" && typeof fact.memberType === "string"
+        ? { type: fact.type, memberName: fact.memberName, memberType: fact.memberType }
+        : null;
+    case "native_team_surface":
+      return { type: fact.type, observed: fact.observed === true };
+    case "native_team_transport":
+      return { type: fact.type, teamTransportLiveValidated: fact.teamTransportLiveValidated === true };
+    case "native_team_message":
+      return { type: fact.type, sameTeamRecipient: fact.sameTeamRecipient === true };
+    case "native_team_settled":
+      return typeof fact.memberName === "string" && typeof fact.signal === "string"
+        ? { type: fact.type, memberName: fact.memberName, signal: fact.signal }
+        : null;
+    case "native_team_parent_synthesis":
+      return { type: fact.type };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Run one explicitly selected native-team witness through the production
+ * Driver/profile/adapter seam. The fake-test seam supplies `runTurnSession`;
+ * it has no MCP, IPC, durable teammate state, or memory-content access.
+ */
+export async function runNativeTeamWitness(options = {}) {
+  const sourceRoot = fs.realpathSync.native(options.sourceRoot ?? SOURCE_ROOT);
+  const sourceBefore = gitStatus(sourceRoot);
+  const cwd = initializeWitnessWorkspace();
+  const before = snapshotWorkspacePaths(cwd);
+  const events = [];
+  const requestedMembers = new Map();
+  const settledMembers = new Set();
+  let firstSpawnTransport = false;
+  let sameTeamMessage = false;
+  let parentSynthesis = false;
+  let turn;
+  try {
+    const driver = options.driver ?? createClaudeCodeDriver();
+    const env = {
+      ...process.env,
+      ...(options.env ?? {}),
+      CLAUDE_CONFIG_DIR: options.env?.CLAUDE_CONFIG_DIR ?? path.join(cwd, ".claude-config"),
+    };
+    turn = await driver.startTurn({
+      workspaceRoot: cwd,
+      cwd,
+      jobId: "native-team-witness",
+      prompt: "Use one Haiku scout and one Sonnet reviewer; return one parent synthesis.",
+      route: {
+        model: "claude-opus-5",
+        effort: "low",
+        write: false,
+        delegationMode: "claude_orchestrator",
+      },
+      env,
+      launchContext: {
+        compatibility: {
+          fingerprint: "native-team-witness-fixture",
+          executable: options.executable ?? process.execPath,
+        },
+      },
+      onNativeTeamWitness: (fact) => {
+        const event = boundedWitnessEvent(fact);
+        if (!event) return;
+        events.push(event);
+        if (event.type === "native_team_member_requested") requestedMembers.set(event.memberType, event.memberName);
+        if (event.type === "native_team_transport") firstSpawnTransport ||= event.teamTransportLiveValidated;
+        if (event.type === "native_team_message") sameTeamMessage ||= event.sameTeamRecipient;
+        if (event.type === "native_team_settled") settledMembers.add(event.memberName);
+        if (event.type === "native_team_parent_synthesis") parentSynthesis = true;
+      },
+      ...(typeof options.runTurnSession === "function" ? { runTurnSession: options.runTurnSession } : {}),
+    });
+  } finally {
+    // Take the immutable path-level snapshot before optional cleanup. This does
+    // not open any native-memory file, including allowed paths.
+  }
+  const after = snapshotWorkspacePaths(cwd);
+  const changedPaths = changedSnapshotPaths(before, after);
+  const unauthorizedPaths = changedPaths.filter((relative) => !nativeMemoryPathAllowed(relative));
+  const sourceAfter = gitStatus(sourceRoot);
+  const accountLimit = isClaudeSubscriptionLimit(`${turn?.failure?.reason ?? ""}\n${turn?.failure?.detail ?? ""}`);
+  const missingEvidence = [
+    ...(requestedMembers.has("haiku-scout") ? [] : ["requested_haiku_scout"]),
+    ...(requestedMembers.has("sonnet") ? [] : ["requested_sonnet"]),
+    ...(firstSpawnTransport ? [] : ["first_spawn_transport"]),
+    ...(sameTeamMessage ? [] : ["current_team_message"]),
+    ...(settledMembers.has(requestedMembers.get("haiku-scout")) ? [] : ["settled_haiku_scout"]),
+    ...(settledMembers.has(requestedMembers.get("sonnet")) ? [] : ["settled_sonnet"]),
+    ...(parentSynthesis ? [] : ["parent_synthesis"]),
+  ];
+  const status = accountLimit ? "account_limit_stopped" : (unauthorizedPaths.length || sourceBefore !== sourceAfter || missingEvidence.length ? "unverified" : "verified");
+  const report = {
+    status,
+    liveVerified: status === "verified",
+    requestedModels: { haikuScout: "claude-haiku-4-5", sonnet: "claude-sonnet-5" },
+    effectiveTeammate: { model: "unknown", effort: "unknown", cost: "unknown" },
+    firstSpawnTransport,
+    missingEvidence,
+    events,
+    source: { unchanged: sourceBefore === sourceAfter, statusBefore: sourceBefore, statusAfter: sourceAfter },
+    disposable: {
+      gitStatus: gitStatus(cwd),
+      snapshot: { beforePathCount: before.size, afterPathCount: after.size },
+      mutation: { changedPaths, unauthorizedPaths, allowedMemoryPrefixes: [...NATIVE_TEAM_WITNESS_MEMORY_PREFIXES] },
+    },
+  };
+  if (options.keepWorkspace !== true) fs.rmSync(cwd, { recursive: true, force: true });
+  return report;
+}
 
 function exactTools(tools) {
   return JSON.stringify(tools) === JSON.stringify(CC_MCP_TOOL_NAMES);

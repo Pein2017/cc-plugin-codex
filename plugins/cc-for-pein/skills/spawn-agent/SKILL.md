@@ -1,6 +1,6 @@
 ---
 name: spawn-agent
-description: 'Experimental: start a durable current-root Claude Agent asynchronously with explicit model/write; leaf by default, Fable orchestration only when requested.'
+description: 'Experimental: start a durable current-root Claude Agent asynchronously with explicit model/write; leaf by default, exact Opus/Fable Native Agent Team lead only when requested.'
 ---
 
 # Spawn Claude Agent
@@ -45,10 +45,29 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
   session. The message must stand alone without Codex history.
 - Omit `delegation_mode` or use `leaf` normally. Leaf disables native `Agent`
   and `Workflow`.
-- Use `claude_orchestrator` only with exact Fable when the lead wants one native
-  child generation. Fable must join every child and return one self-contained
-  synthesis; only the Fable parent enters the CC registry. `Workflow` remains
-  disabled. Haiku/Sonnet/Opus orchestration requests must fail.
+- Use `claude_orchestrator` only with exact Opus or Fable (`claude-opus-5` or
+  `claude-fable-5`): it is an experimental Native Agent Team lead, not a
+  Plugin-owned child lifecycle. The first named native spawn must produce the
+  structured `status: teammate_spawned` proof; ordinary Agent results are
+  rejected. Haiku and Sonnet cannot lead.
+- The lead may select only definition-owned `haiku-scout`, `sonnet`, or `opus`
+  teammates. Do not pass a call-level model override: requested models remain
+  pinned by the definitions, while effective teammate model, effort, and cost
+  are unknown without authoritative native facts. State intended effort; the
+  fallback is inherited lead effort, not a per-teammate override.
+- `write` remains behavioral, not an OS-level boundary. In a read-only turn,
+  task/workspace/repository/external mutation is forbidden except local
+  native-memory maintenance under `.claude/agent-memory-local/<member-type>/`.
+  Native numerical limits are behavioral: at most three active teammates and
+  six creations; depth/tool denial is hard, while concurrency is only a
+  residual ordinary-subagent guard.
+- Same-team `SendMessage`, shared tasks, and native idle/failure delivery are
+  allowed only inside the current team. No cross-session recipients, nested
+  delegation, isolation, fork, or completed-peer resume. Join required native
+  settle evidence and return one parent synthesis. Transport never
+  auto-reconnects: an explicit follow-up forms a fresh native team in the
+  durable parent session. Only that parent enters the CC registry; `Workflow`
+  remains disabled.
 ## Parent join policy
 
 Before spawn, classify the result as `required` (wait and synthesize),

@@ -25,3 +25,7 @@ explicitly requested.
 observe that Agent rather than submitting a duplicate follow-up. `queued_no_turn`
 means the message is still idle and requires `$cc-for-pein:followup-task` when
 the work must run.
+
+This targets only a durable parent CC Agent. It cannot address experimental
+Native Agent Team teammates: same-team `SendMessage` is Claude-local, current-
+team-only coordination and has no Plugin mailbox or cross-session bridge.

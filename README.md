@@ -129,14 +129,35 @@ inherit the Agent's selected model.
 
 Every Agent defaults to immutable `delegation_mode: "leaf"`. The Claude runtime
 appends a bounded Codex-lead role envelope and denies Claude Code's native
-`Agent` and `Workflow` tools for leaf turns. Only exact `claude-fable-5` with explicit
-`delegation_mode: "claude_orchestrator"` may use Claude-native subagents. Those
-children remain opaque inside the Fable session; the CC registry stays flat,
-and the Fable parent must join one child generation and return one
-self-contained synthesis. Haiku, Sonnet, Opus, and ordinary Fable turns remain
-leaves. `Workflow` remains denied in orchestrator mode; Fable uses the native
-`Agent` tool for its one child generation. Public follow-ups inherit the mode
-and cannot change it.
+`Agent` and `Workflow` tools for leaf turns. Only exact `claude-opus-5` or
+`claude-fable-5` with explicit `delegation_mode: "claude_orchestrator"` may act
+as an experimental Native Agent Team lead. The public registry stays flat: only
+the durable parent is a CC Agent. Initialization definition/tool names are
+necessary, but the first named Agent result must be structured
+`status: teammate_spawned`; an ordinary-subagent result is Harness-incompatible
+and is not accepted as team work. Haiku and Sonnet remain leaves; ordinary Opus
+and Fable turns remain leaves. `Workflow` remains denied; public follow-ups
+inherit the mode and form a fresh native team rather than resuming in-process
+teammates.
+
+Each lead injects only the stable `haiku-scout`, `sonnet`, and `opus`
+definitions, whose exact pinned models are requested definitions rather than
+proof of effective teammate model. The brief states intended effort, while
+effective teammate effort inherits the lead or remains unknown; effective model
+and cost also remain unknown unless native structured facts prove them. Native
+`memory: local` may maintain only `.claude/agent-memory-local/<member-type>/` in
+a read-only turn; the Plugin never reads, copies, locks, merges, or exposes
+memory contents. `write` is behavioral authority, not an OS sandbox.
+
+The one-layer depth and teammate `Agent` denial are hard topology boundaries.
+At most three active teammates and six total creations are behavioral budgets;
+the concurrency environment is only a residual guard if forbidden ordinary
+subagent execution is attempted. Current-team `SendMessage`, shared tasks, and
+native idle/failure delivery are Claude-local coordination only: no cross-session
+recipient, peer-driven resume, Plugin-owned mailbox, or teammate lifecycle is
+added. A lead joins required native settle evidence, inspects actual work, and
+returns one parent synthesis. Orchestrator transport has zero automatic
+reconnect attempts; an explicit parent follow-up starts a fresh cohort/team.
 
 The public Agent API has no tool allow-list. Terminal parity inherits ordinary
 Claude tools, MCP servers, hooks, skills, and configuration, with only the
@@ -334,6 +355,11 @@ per Git repository, shares it across that repository's worktrees and
 subdirectories, and creates content lazily when it finds something worth
 remembering.
 
+Native Agent Team member definitions additionally use Claude-native `memory:
+local`. This is a Claude-owned write exception under the member-specific local
+memory path, including when the parent is `write: false`; no Plugin memory
+database, cleanup, synchronization, or content inspection exists.
+
 `safe` remains an explicit opt-in profile. It supplies the runtime-owned
 sandbox, permission, and read-only tool policy while retaining the Agent's
 caller-selected model. This permission choice affects only the Claude child;
@@ -458,7 +484,16 @@ tools, verifies at most two discovery-only compatibility shells, and calls
 the fresh host-load and protocol boundaries used by a new Codex task without
 claiming to run a paid Codex model turn or touching production Agent state.
 
-Only an explicit flag adds one real Claude acceptance turn:
+Only separately authorized paid native-team acceptance may add one real Claude
+turn through the production Driver/profile/adapter seam in a disposable Git
+workspace, never the source checkout. It requests `claude-opus-5`, `low`, and
+`write: false`, requires Haiku scout/Sonnet reviewer definitions, first-spawn
+transport proof, one current-team message, both native settle signals, and one
+parent synthesis. It permits only the two corresponding local-memory prefixes
+and leaves missing structured evidence unverified; assistant prose cannot fill
+those gaps. No MCP field, IPC channel, or durable teammate state is added.
+
+The older explicit smoke flag remains one ordinary Claude acceptance turn:
 
 ```bash
 npm run smoke:release -- --real-claude

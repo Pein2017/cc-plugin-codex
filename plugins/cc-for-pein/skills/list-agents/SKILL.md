@@ -25,3 +25,7 @@ work remains unresolved, call `wait_agent` again directly instead. Present
 names, model, immutable delegation mode, and only `starting`, `working`,
 `completed`, `failed`, or `interrupted`; omit JSON, tokens, and final output
 unless debug was explicitly requested.
+
+An exact Opus/Fable `claude_orchestrator` is an experimental Native Agent Team
+lead, but only its durable parent Card appears here. Native teammate roster,
+messages, memory, effective model/effort, and cost are not observable Cards.

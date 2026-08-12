@@ -235,8 +235,17 @@ describe("native plugin contract", () => {
     assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
     assert.match(text, /`write: false`[\s\S]*behavioral read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation[\s\S]*not an OS-level/i);
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
-    assert.match(text, /`leaf`[\s\S]*native `Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Fable/i);
-    assert.match(text, /Fable must join every child[\s\S]*`Workflow` remains[\s\S]*disabled/i);
+    assert.match(text, /`leaf`[\s\S]*native `Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Opus or Fable/i);
+    assert.match(text, /experimental Native Agent Team lead/i);
+    assert.match(text, /first named native spawn[\s\S]*teammate_spawned/i);
+    assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
+    assert.match(text, /intended effort[\s\S]*inherited lead effort/i);
+    assert.match(text, /explicit follow-up[\s\S]*fresh native team/i);
+    assert.match(text, /local\s+native-memory/i);
+    assert.match(text, /not an OS-level/i);
+    assert.match(text, /at most three[\s\S]*six creations[\s\S]*behavioral/i);
+    assert.match(text, /same-team[\s\S]*SendMessage/i);
+    assert.match(text, /`Workflow`[\s\S]*remains disabled/i);
     assert.doesNotMatch(text, /allowed_tools/);
     assert.doesNotMatch(text, /fork_turns|execution_profile/);
   });
@@ -318,7 +327,7 @@ describe("native plugin contract", () => {
       assert.match(text, /Experimental/i);
       assert.match(text, /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin/i);
     }
-    assert.ok(words <= 1_800, `Agent Skill guidance uses ${words} words`);
+    assert.ok(words <= 2_200, `Agent Skill guidance uses ${words} words`);
   });
 
   it("marks all seven skill prompts and discovery descriptions Experimental", () => {

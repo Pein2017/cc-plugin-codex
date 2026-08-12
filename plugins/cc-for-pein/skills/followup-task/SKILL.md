@@ -17,6 +17,10 @@ If unavailable, report Plugin startup or discovery failure; never use shell fall
 - Model and delegation mode are immutable. An idle Agent resumes its exact
   session or a receipt-proven safe-fresh path; a running Agent receives one
   durable message. Never substitute a Terminal Claude session.
+- An experimental exact Opus/Fable `claude_orchestrator` follow-up never
+  resumes in-process teammates: it starts a fresh Native Agent Team under the
+  durable parent. Native teammate model/effort/cost remains unknown without
+  authoritative facts; `write` stays behavioral authority.
 - `activation_pending` is durably assigned to a starting activation. Use
   `$cc-for-pein:wait-agent`; do not resend. `queued_no_turn` remains idle until
   a follow-up activates it.

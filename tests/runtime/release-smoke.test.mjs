@@ -7,9 +7,11 @@ import { afterEach, describe, it } from "node:test";
 import {
   isClaudeSubscriptionLimit,
   probeInstalledMcp,
+  runNativeTeamWitness,
   runPaidSmoke,
   runReleaseSmoke,
 } from "../../runtime/release-smoke.mjs";
+import { StreamParser } from "../../runtime/claude-headless-adapter.mjs";
 import { SOURCE_ROOT } from "../../runtime/version.mjs";
 
 const temporaryDirectories = [];
@@ -161,5 +163,77 @@ describe("release smoke", () => {
       ["spawn_agent", calls[0].arguments],
       ["wait_agent", {}],
     ]);
+  });
+
+  it("runs the fake Native Agent Team witness through production Driver/profile/adapter seams", async () => {
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      runTurnSession: async (request) => {
+        assert.equal(request.claudeOptions.model, "claude-opus-5");
+        assert.equal(request.claudeOptions.effort, "low");
+        assert.equal(request.claudeOptions.delegationMode, "claude_orchestrator");
+        assert.deepEqual(Object.keys(request.claudeOptions.agents), ["haiku-scout", "sonnet", "opus"]);
+        const parser = new StreamParser({
+          delegationMode: request.claudeOptions.delegationMode,
+          onNativeTeamWitness: request.claudeOptions.onNativeTeamWitness,
+        });
+        parser.feed(`${JSON.stringify({
+          type: "system", subtype: "init", session_id: "fake-parent",
+          tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+          agents: ["haiku-scout", "sonnet", "opus"],
+        })}\n`);
+        parser.feed(`${JSON.stringify({
+          type: "assistant", session_id: "fake-parent", message: { content: [{
+            type: "tool_use", id: "fake-spawn", name: "Agent",
+            input: { name: "haiku-scout-1", subagent_type: "haiku-scout" },
+          }] },
+        })}\n`);
+        parser.feed(`${JSON.stringify({
+          type: "assistant", session_id: "fake-parent", message: { content: [{
+            type: "tool_use", id: "fake-sonnet", name: "Agent",
+            input: { name: "sonnet-1", subagent_type: "sonnet" },
+          }] },
+        })}\n`);
+        parser.feed(`${JSON.stringify({
+          type: "user", session_id: "fake-parent", tool_use_result: { status: "teammate_spawned" },
+          message: { content: [{ type: "tool_result", tool_use_id: "fake-spawn" }] },
+        })}\n`);
+        fs.mkdirSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout"), { recursive: true });
+        fs.writeFileSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout", "metadata.json"), "fixture");
+        return {
+          status: "completed", exitCode: 0, sessionId: "fake-parent", finalMessage: "untrusted assistant prose",
+          failureClass: null, failureReason: null, resumable: false, recoveryAttempts: 0, attempts: [],
+          steering: { messages: [], latestAcknowledgedSequence: 0 },
+          runtimeReceipt: { nativeTeamSurface: parser.state.nativeTeamSurface }, toolUses: parser.state.toolUses, touchedFiles: [],
+        };
+      },
+    });
+    assert.equal(witness.status, "unverified");
+    assert.equal(witness.requestedModels.haikuScout, "claude-haiku-4-5");
+    assert.equal(witness.requestedModels.sonnet, "claude-sonnet-5");
+    assert.equal(witness.firstSpawnTransport, true);
+    assert.deepEqual(witness.effectiveTeammate, { model: "unknown", effort: "unknown", cost: "unknown" });
+    assert.deepEqual(witness.disposable.mutation.unauthorizedPaths, []);
+    assert.equal(witness.source.unchanged, true);
+    assert.deepEqual(witness.missingEvidence.sort(), ["current_team_message", "parent_synthesis", "settled_haiku_scout", "settled_sonnet"]);
+  });
+
+  it("stops the native witness on an account limit without a second paid attempt", async () => {
+    let attempts = 0;
+    const witness = await runNativeTeamWitness({
+      sourceRoot: SOURCE_ROOT,
+      runTurnSession: async () => {
+        attempts += 1;
+        return {
+          status: "failed", exitCode: 1, sessionId: null, finalMessage: "",
+          failureClass: "usage_limit", failureReason: "subscription usage limit reached", resumable: false,
+          recoveryAttempts: 0, attempts: [], steering: { messages: [], latestAcknowledgedSequence: 0 },
+          runtimeReceipt: {}, toolUses: [], touchedFiles: [],
+        };
+      },
+    });
+    assert.equal(attempts, 1);
+    assert.equal(witness.status, "account_limit_stopped");
+    assert.equal(witness.liveVerified, false);
   });
 });

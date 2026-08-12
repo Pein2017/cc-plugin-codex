@@ -53,3 +53,8 @@ completion-first; never repeat progress waiting for that job.
   `{reason, scope, retry}`; branch on `retry` per the spawn Skill's join
   policy. A `completed` turn asking a question is still `blocking: null`:
   answer with follow-up on that Agent, never infer status from message text.
+
+Waiting joins only the durable parent. An experimental exact Opus/Fable Native
+Agent Team lead must use Claude-native same-team settle signals before its own
+parent synthesis; no teammate wait, roster, memory, effective model/effort, or
+cost surface is added here.

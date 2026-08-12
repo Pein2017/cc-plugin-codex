@@ -424,6 +424,9 @@ export class StreamParser {
       ? options.onNativeTeamWitness
       : null;
     this.firstNamedAgentToolUseId = null;
+    // Witness-only, process-local member names. They are never copied to the
+    // parser state, runtime receipt, job, or public MCP result.
+    this.nativeTeamMembers = new Map();
   }
 
   _nativeTeamWitness(fact) {
@@ -503,23 +506,57 @@ export class StreamParser {
   _recordNamedAgentToolUse(toolUse) {
     if (
       this.delegationMode !== "claude_orchestrator" ||
-      this.state.nativeTeamFirstAgentObserved === true ||
       canonicalizeInitToolName(toolUse?.name) !== "Agent"
     ) return;
-    this.state.nativeTeamFirstAgentObserved = true;
     const input = toolUse.input;
     const memberName = typeof input?.name === "string" ? input.name.trim() : "";
     const memberType = typeof input?.subagent_type === "string" ? input.subagent_type.trim() : "";
     if (!memberName || !Object.hasOwn(NATIVE_TEAM_DEFINITION_EXPECTATIONS, memberType)) {
-      this.state.compatibilitySurfaceDrift = true;
+      if (this.state.nativeTeamFirstAgentObserved !== true) {
+        this.state.compatibilitySurfaceDrift = true;
+      }
       return;
     }
+    if (!this.nativeTeamMembers.has(memberName)) {
+      this.nativeTeamMembers.set(memberName, memberType);
+      this._nativeTeamWitness({ type: "native_team_member_requested", memberName, memberType });
+    }
+    if (this.state.nativeTeamFirstAgentObserved === true) return;
+    this.state.nativeTeamFirstAgentObserved = true;
     if (typeof toolUse.id !== "string" || !toolUse.id) {
       this.state.compatibilitySurfaceDrift = true;
       return;
     }
     this.firstNamedAgentToolUseId = toolUse.id;
     this.state.nativeTeamTransportPending = true;
+  }
+
+  _recordNativeTeamMessage(toolUse) {
+    if (
+      this.delegationMode !== "claude_orchestrator" ||
+      String(toolUse?.name ?? "").trim() !== "SendMessage" ||
+      this.state.nativeTeamSurface?.teamTransportLiveValidated !== true
+    ) return;
+    const input = toolUse?.input;
+    const recipient = typeof input?.recipient === "string"
+      ? input.recipient.trim()
+      : typeof input?.to === "string" ? input.to.trim() : "";
+    if (!recipient || !this.nativeTeamMembers.has(recipient)) return;
+    this._nativeTeamWitness({ type: "native_team_message", sameTeamRecipient: true });
+  }
+
+  _recordNativeTeamSettle(event) {
+    if (this.delegationMode !== "claude_orchestrator") return;
+    const signal = {
+      teammate_idle: "idle",
+      teammate_completed: "completed",
+      teammate_failed: "failed",
+    }[event?.subtype];
+    if (!signal) return;
+    const memberName = [event?.teammate_name, event?.teammateName, event?.agent_name, event?.agentName]
+      .find((value) => typeof value === "string" && value.trim())?.trim();
+    if (!memberName || !this.nativeTeamMembers.has(memberName)) return;
+    this._nativeTeamWitness({ type: "native_team_settled", memberName, signal });
   }
 
   /** Feed a raw stdout chunk. Returns parsed events. */
@@ -572,6 +609,9 @@ export class StreamParser {
           }
           if (event.session_id) this.state.sessionId = event.session_id;
           this.state.providerReportedMetrics = normalizeClaudeTerminalProviderMetrics(event);
+          if (this.delegationMode === "claude_orchestrator") {
+            this._nativeTeamWitness({ type: "native_team_parent_synthesis" });
+          }
           return { kind: "result", data: event };
         case "user": {
           this._recordFirstNamedAgentResult(event);
@@ -593,7 +633,10 @@ export class StreamParser {
         case "assistant": {
           const content = Array.isArray(event.message?.content) ? event.message.content : [];
           for (const part of content) {
-            if (part?.type === "tool_use") this._recordNamedAgentToolUse(part);
+            if (part?.type === "tool_use") {
+              this._recordNamedAgentToolUse(part);
+              this._recordNativeTeamMessage(part);
+            }
           }
           return null;
         }
@@ -716,6 +759,7 @@ export class StreamParser {
   }
 
   _handleSystemEvent(event) {
+    this._recordNativeTeamSettle(event);
     if (event.subtype === "init") {
       this.state.runtimeReceipt = {
         claudeCodeVersion: event.claude_code_version ?? null,

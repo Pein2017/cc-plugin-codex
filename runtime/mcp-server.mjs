@@ -64,7 +64,7 @@ const optionalWrite = z.boolean().optional().describe(
 const TOOL_DEFINITIONS = Object.freeze({
   spawn_agent: {
     description:
-      "Experimental: start a durable Claude Agent asynchronously; leaf by default, Fable orchestrator only when explicit.",
+      "Experimental: start a durable Claude Agent asynchronously; leaf by default, exact Opus or Fable experimental Native Agent Team lead only when explicit.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,

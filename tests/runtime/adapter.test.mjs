@@ -263,6 +263,48 @@ describe("Claude headless adapter", () => {
     assert.equal(classifyClaudeFailure({ status: "failed", compatibilitySurfaceDrift: true }).kind, "compatibility_surface_drift");
   });
 
+  it("emits bounded native-team witness facts for same-team messaging, settles, and parent synthesis", () => {
+    const witnesses = [];
+    const parser = new StreamParser({
+      delegationMode: "claude_orchestrator",
+      onNativeTeamWitness: (fact) => witnesses.push(fact),
+    });
+    parser.feed(`${JSON.stringify({
+      type: "system", subtype: "init",
+      tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      agents: ["haiku-scout", "sonnet", "opus"],
+    })}\n`);
+    for (const [id, name, memberType] of [
+      ["spawn-haiku", "haiku-scout-1", "haiku-scout"],
+      ["spawn-sonnet", "sonnet-1", "sonnet"],
+    ]) {
+      parser.feed(`${JSON.stringify({
+        type: "assistant", message: { content: [{ type: "tool_use", id, name: "Agent", input: { name, subagent_type: memberType, prompt: "private brief" } }] },
+      })}\n`);
+    }
+    parser.feed(`${JSON.stringify({
+      type: "user", tool_use_result: { status: "teammate_spawned" },
+      message: { content: [{ type: "tool_result", tool_use_id: "spawn-haiku" }] },
+    })}\n`);
+    parser.feed(`${JSON.stringify({
+      type: "assistant", message: { content: [{ type: "tool_use", id: "message-1", name: "SendMessage", input: { recipient: "sonnet-1", message: "private message" } }] },
+    })}\n`);
+    parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_idle", teammate_name: "haiku-scout-1" })}\n`);
+    parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_completed", teammate_name: "sonnet-1" })}\n`);
+    parser.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "private synthesis" })}\n`);
+
+    assert.deepEqual(witnesses.slice(-7), [
+      { type: "native_team_member_requested", memberName: "haiku-scout-1", memberType: "haiku-scout" },
+      { type: "native_team_member_requested", memberName: "sonnet-1", memberType: "sonnet" },
+      { type: "native_team_transport", delegationMode: "claude_orchestrator", teamTransportLiveValidated: true },
+      { type: "native_team_message", sameTeamRecipient: true },
+      { type: "native_team_settled", memberName: "haiku-scout-1", signal: "idle" },
+      { type: "native_team_settled", memberName: "sonnet-1", signal: "completed" },
+      { type: "native_team_parent_synthesis" },
+    ]);
+    assert.doesNotMatch(JSON.stringify(witnesses), /private/);
+  });
+
   it("admits a clean orchestrator inventory without mistaking it for team transport and leaves absent leaf inventory unvalidated", () => {
     const orchestrator = new StreamParser({ delegationMode: "claude_orchestrator" });
     orchestrator.feed(`${JSON.stringify({

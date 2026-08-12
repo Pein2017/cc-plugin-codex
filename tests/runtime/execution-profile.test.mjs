@@ -308,13 +308,22 @@ describe("execution profiles", () => {
     assert.equal(orchestrator.claudeOptions.env.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
     assert.deepEqual(Object.keys(orchestrator.claudeOptions.agents), ["haiku-scout", "sonnet", "opus"]);
     const scout = orchestrator.claudeOptions.agents["haiku-scout"];
-    assert.deepEqual(Object.keys(scout), ["model", "memory", "disallowedTools", "prompt"]);
+    assert.deepEqual(Object.keys(scout), ["description", "model", "memory", "disallowedTools", "prompt"]);
+    assert.equal(scout.description, "Read-only bounded reconnaissance for the current Native Agent Team.");
     assert.equal(scout.model, "claude-haiku-4-5");
     assert.equal(scout.memory, "local");
     assert.ok(scout.disallowedTools.includes("Agent"));
     assert.match(scout.prompt, /pinned model claude-haiku-4-5/i);
     assert.equal(orchestrator.claudeOptions.agents.sonnet.model, "claude-sonnet-5");
+    assert.equal(
+      orchestrator.claudeOptions.agents.sonnet.description,
+      "Bounded implementation, investigation, or review for the current Native Agent Team.",
+    );
     assert.equal(orchestrator.claudeOptions.agents.opus.model, "claude-opus-5");
+    assert.equal(
+      orchestrator.claudeOptions.agents.opus.description,
+      "Bounded implementation, investigation, or verification for the current Native Agent Team.",
+    );
     assert.equal("effort" in orchestrator.claudeOptions.agents.opus, false);
     assert.equal("isolation" in orchestrator.claudeOptions.agents.opus, false);
     assert.ok(orchestrator.claudeOptions.disallowedTools.includes("Workflow"));

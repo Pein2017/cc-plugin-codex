@@ -15,3 +15,7 @@ discovery failure; never use a shell fallback.
 A graceful Claude flush preserves exact-session continuation. Forced unflushed
 termination becomes failed and non-resumable. Report one concise sentence from
 `agent_name` and `status`; raw JSON is debug-only.
+
+For an experimental exact Opus/Fable Native Agent Team lead, interrupt never
+preserves or resumes in-process teammates; any later explicit follow-up forms a
+fresh team under the durable parent.
