@@ -476,9 +476,13 @@ export class StreamParser {
 
   _recordFirstNamedAgentResult(event) {
     if (!this.firstNamedAgentToolUseId || this.state.nativeTeamSurface == null) return;
-    const result = event.tool_use_result;
-    if (!result || typeof result !== "object" || result.tool_use_id !== this.firstNamedAgentToolUseId) return;
-    const status = result.status;
+    const content = Array.isArray(event.message?.content) ? event.message.content : [];
+    if (!content.some((part) =>
+      part?.type === "tool_result" && part.tool_use_id === this.firstNamedAgentToolUseId,
+    )) return;
+    const status = event.tool_use_result && typeof event.tool_use_result === "object"
+      ? event.tool_use_result.status
+      : null;
     const teamTransportLiveValidated = status === "teammate_spawned";
     const surface = Object.freeze({
       ...this.state.nativeTeamSurface,

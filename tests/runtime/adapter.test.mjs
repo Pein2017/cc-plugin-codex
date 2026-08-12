@@ -250,7 +250,7 @@ describe("Claude headless adapter", () => {
     parser.feed(`${JSON.stringify({
       type: "user",
       session_id: "team-session",
-      tool_use_result: { tool_use_id: "agent-1", status: "ordinary_subagent" },
+      tool_use_result: { status: "ordinary_subagent" },
       message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "teammate_spawned" }] },
     })}\n`);
     assert.equal(parser.state.compatibilitySurfaceDrift, true);
@@ -310,8 +310,8 @@ describe("Claude headless adapter", () => {
     const success = initialize();
     success.feed(`${JSON.stringify({
       type: "user",
-      tool_use_result: { tool_use_id: "sanctioned-agent-1", status: "teammate_spawned" },
-      message: { content: [{ type: "tool_result", content: "ordinary_subagent" }] },
+      tool_use_result: { status: "teammate_spawned" },
+      message: { content: [{ type: "tool_result", tool_use_id: "sanctioned-agent-1", content: "ordinary_subagent" }] },
     })}\n`);
     success.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "done" })}\n`);
     assert.equal(success.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, true);
@@ -320,11 +320,25 @@ describe("Claude headless adapter", () => {
     const ordinary = initialize();
     ordinary.feed(`${JSON.stringify({
       type: "user",
-      tool_use_result: { tool_use_id: "sanctioned-agent-1", status: "ordinary_subagent" },
+      tool_use_result: { status: "ordinary_subagent" },
+      message: { content: [{ type: "tool_result", tool_use_id: "sanctioned-agent-1", content: "teammate_spawned" }] },
     })}\n`);
     ordinary.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "wrong" })}\n`);
     assert.equal(ordinary.state.compatibilitySurfaceDrift, true);
     assert.equal(validateTurnCompletion(ordinary.state, 0).status, "failed");
+
+    const mismatch = initialize();
+    mismatch.feed(`${JSON.stringify({
+      type: "user",
+      tool_use_result: { status: "teammate_spawned" },
+      message: { content: [{ type: "tool_result", tool_use_id: "other-agent", content: "rendered string" }] },
+    })}\n`);
+    mismatch.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "mismatch" })}\n`);
+    assert.equal(mismatch.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
+    assert.deepEqual(
+      validateTurnCompletion(mismatch.state, 0),
+      { status: "failed", warning: "Claude native team transport result is missing." },
+    );
 
     const missing = initialize();
     missing.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "missing" })}\n`);
