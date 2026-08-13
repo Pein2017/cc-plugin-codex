@@ -13,6 +13,9 @@ and optional `before`/`limit`. Trusted Codex metadata owns cwd/root; never infer
 a transcript path or session ID. If unavailable, report Plugin startup or
 discovery failure; never use shell.
 
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `CC_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
 - Default returns the latest outer-assistant text, newest first. Paginate older
   messages only with returned `next_before`.
 - Text is complete within cc-for-pein; host transport may impose external

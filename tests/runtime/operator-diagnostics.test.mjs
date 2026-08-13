@@ -9,6 +9,10 @@ import {
   inspectOperatorStorage,
   runDoctor,
 } from "../../runtime/operator-diagnostics.mjs";
+import {
+  finalizeCompatibilityInstall,
+  prepareCompatibilityInstall,
+} from "../../runtime/plugin-compatibility-shells.mjs";
 import { PACKAGE_VERSION, SOURCE_ROOT } from "../../runtime/version.mjs";
 
 const temporaryDirectories = [];
@@ -167,6 +171,11 @@ describe("operator doctor", () => {
     );
     fs.mkdirSync(path.dirname(snapshotRoot), { recursive: true });
     fs.cpSync(pluginRoot, snapshotRoot, { recursive: true });
+    const coveragePlan = prepareCompatibilityInstall({
+      codexHome,
+      requestedVersion: manifest.version,
+    });
+    finalizeCompatibilityInstall({ plan: coveragePlan, installedSnapshotRoot: snapshotRoot });
     const secretEmail = "private@example.invalid";
     const fakeSpawn = (command, args) => {
       if (args.join(" ") === "plugin list --json") {
@@ -254,7 +263,11 @@ describe("operator doctor", () => {
       report.checks.find((check) => check.id === "claude-auth").summary,
       /provider liveness was not validated/,
     );
-    assert.equal(report.checks.find((check) => check.id === "plugin-compatibility-shells").status, "pass");
+    const compatibilityShells = report.checks.find((check) => check.id === "plugin-compatibility-shells");
+    assert.equal(compatibilityShells.status, "pass");
+    assert.equal(compatibilityShells.details.coverageState, "first_install");
+    assert.equal(compatibilityShells.details.expectedPredecessor, null);
+    assert.match(compatibilityShells.summary, /first install.*no distinct predecessor/i);
     assert.doesNotMatch(JSON.stringify(report), new RegExp(secretEmail));
     assert.doesNotMatch(JSON.stringify(report), /private-org/);
     assert.equal(fs.existsSync(path.join(codexHome, "plugins", "data", "cc", "state")), false);

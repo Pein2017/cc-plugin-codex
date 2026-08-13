@@ -327,7 +327,7 @@ describe("native plugin contract", () => {
       assert.match(text, /Experimental/i);
       assert.match(text, /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin/i);
     }
-    assert.ok(words <= 2_200, `Agent Skill guidance uses ${words} words`);
+    assert.ok(words <= 2_350, `Agent Skill guidance uses ${words} words`);
   });
 
   it("marks all seven skill prompts and discovery descriptions Experimental", () => {
@@ -337,6 +337,19 @@ describe("native plugin contract", () => {
       const metadata = fs.readFileSync(path.join(skillRoot, "agents", "openai.yaml"), "utf8");
       assert.match(metadata, /Experimental/i);
       assert.match(metadata, /cannot reactivate an idle Codex parent/i);
+    }
+  });
+
+  it("teaches every lifecycle Skill the bounded release-drift boundary", () => {
+    for (const name of canonicalSkills) {
+      const text = fs.readFileSync(
+        path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
+        "utf8",
+      );
+      assert.match(text, /exact retained Skill path/i);
+      assert.match(text, /latest-version instructions\s+are emergency-only/i);
+      assert.match(text, /CC_MCP_RESTART_REQUIRED[\s\S]*new Codex task/i);
+      assert.match(text, /Never repair Plugin Cache/i);
     }
   });
 

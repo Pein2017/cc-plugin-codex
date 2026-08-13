@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.18.1 - 2026-08-13
+
+- Preserve the current and two predecessor discovery-only Plugin shells in a
+  durable owner-only archive before Codex Cache replacement, fail closed when a
+  known predecessor is unavailable, and expose managed/first-install/unmanaged
+  coverage through doctor and release smoke.
+- Teach all seven lifecycle Skills to keep their exact retained instructions,
+  treat latest-version fallback as emergency-only, and start a new Codex task on
+  `CC_MCP_RESTART_REQUIRED` instead of attempting to repair Plugin Cache.
+
 ## 0.18.0 - 2026-08-13
 
 - Add experimental bounded Claude Native Agent Teams for explicit Opus/Fable

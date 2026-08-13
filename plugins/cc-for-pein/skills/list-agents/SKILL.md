@@ -14,6 +14,9 @@ current-root view as omitting the field; use `/root/...` only to narrow it.
 Trusted Codex metadata owns cwd/root. If
 unavailable, report Plugin startup or discovery failure; never use shell.
 
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `CC_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
 The list includes nonresident current-root Agents. Each Agent Card has retained
 model/effort, behavioral authority (`write: false` is not a process sandbox),
 delegation mode, safe phase, and nullable timing evidence. Elapsed time is not

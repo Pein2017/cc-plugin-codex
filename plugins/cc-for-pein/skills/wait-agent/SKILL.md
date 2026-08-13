@@ -15,6 +15,9 @@ targets form one completion-only all-settled barrier. Combine targets with
 Trusted Codex metadata owns cwd/root. If unavailable, report Plugin startup or
 discovery failure; never use shell.
 
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `CC_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
 After spawn, do non-overlapping work; wait only on the critical path. For an
 ordinary join, omit progress; use a fixed 3600000 ms (one-hour) upper bound. Set
 `wake_on_progress: true` only when one intermediate update per active Agent job

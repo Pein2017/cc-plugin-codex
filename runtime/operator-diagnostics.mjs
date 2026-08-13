@@ -523,14 +523,22 @@ export async function runDoctor(options = {}) {
         snapshotRoot: installation.installed.snapshotRoot,
         currentVersion: installation.installed.version,
       });
+      const unmanaged = shells.coverageState === "unmanaged";
+      const healthy = unmanaged ? shells.valid : (shells.valid && shells.coverageComplete);
+      const status = healthy ? (unmanaged ? "warn" : "pass") : "fail";
+      const summary = unmanaged
+        ? "Compatibility coverage is unavailable for this unmanaged or legacy installation; no predecessor is claimed."
+        : shells.coverageState === "first_install" && healthy
+          ? "First install coverage is recorded; no distinct predecessor exists yet."
+          : healthy
+            ? `Known predecessor ${shells.expectedPredecessor} is retained in cache and durable archive.`
+            : "Known Plugin compatibility coverage is incomplete or invalid.";
       checks.push(makeCheck(
         "plugin-compatibility-shells",
-        shells.valid ? "pass" : "fail",
-        shells.valid
-          ? `${shells.count} retained discovery shell(s) are bounded and checkout-routed.`
-          : "Retained Plugin discovery shells are unbounded or contain an invalid runtime route.",
+        status,
+        summary,
         shells,
-        shells.valid ? null : "Run npm run release:local and inspect the local Plugin cache compatibility shells.",
+        status === "pass" ? null : "Run npm run release:local and inspect the durable Plugin compatibility archive.",
       ));
     } catch (error) {
       checks.push(failedCheck(

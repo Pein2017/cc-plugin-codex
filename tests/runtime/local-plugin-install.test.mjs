@@ -7,6 +7,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, it } from "node:test";
 
+import {
+  finalizeCompatibilityInstall,
+  inspectCompatibilityCoverage,
+  prepareCompatibilityInstall,
+} from "../../runtime/plugin-compatibility-shells.mjs";
+
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const installScript = path.join(root, "scripts", "local-plugin-install.mjs");
 const cachebusterScript = path.join(root, "scripts", "update-plugin-cachebuster.mjs");
@@ -42,6 +48,9 @@ if (args.join(" ") === "plugin marketplace list --json") {
     fs.rmSync(process.env.FAKE_PLUGIN_CACHE_ROOT, { recursive: true, force: true });
   }
   if (process.env.FAKE_INSTALL_FAILURE === "1") process.exit(17);
+  const target = require("node:path").join(process.env.FAKE_PLUGIN_CACHE_ROOT, process.env.FAKE_PLUGIN_VERSION);
+  fs.mkdirSync(require("node:path").dirname(target), { recursive: true });
+  fs.cpSync(process.env.FAKE_PLUGIN_SOURCE, target, { recursive: true });
   process.stdout.write(JSON.stringify({ ok: true }));
 } else {
   process.stdout.write(JSON.stringify({ ok: true }));
@@ -70,6 +79,7 @@ function invokeInstall({ mode, marketplaceRoot, configure = () => ({}) }) {
       FAKE_MARKETPLACE_ROOT: marketplaceRoot ?? "",
       FAKE_PLUGIN_VERSION: manifest.version,
       FAKE_PLUGIN_CACHE_ROOT: pluginCacheRoot,
+      FAKE_PLUGIN_SOURCE: path.join(root, "plugins", "cc-for-pein"),
       CODEX_HOME: codexHome,
       PATH: `${binDirectory}:${process.env.PATH}`,
       ...configure({ directory, codexHome, pluginCacheRoot, manifest }),
@@ -79,6 +89,26 @@ function invokeInstall({ mode, marketplaceRoot, configure = () => ({}) }) {
     ? fs.readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
   return { calls, result, directory, codexHome, pluginCacheRoot, manifest };
+}
+
+function managedSnapshot(codexHome, version) {
+  const rootPath = path.join(
+    codexHome, "plugins", "cache", "pein-local", "cc-for-pein", version,
+  );
+  fs.mkdirSync(path.dirname(rootPath), { recursive: true });
+  fs.cpSync(path.join(root, "plugins", "cc-for-pein"), rootPath, { recursive: true });
+  const manifestFile = path.join(rootPath, ".codex-plugin", "plugin.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  fs.writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
+  return rootPath;
+}
+
+function seedManagedVersion(codexHome, version) {
+  const plan = prepareCompatibilityInstall({ codexHome, requestedVersion: version });
+  finalizeCompatibilityInstall({
+    plan,
+    installedSnapshotRoot: managedSnapshot(codexHome, version),
+  });
 }
 
 describe("local plugin installation", () => {
@@ -133,12 +163,10 @@ describe("local plugin installation", () => {
     const { result, pluginCacheRoot } = invokeInstall({
       mode: "--refresh-only",
       marketplaceRoot: root,
-      configure: ({ pluginCacheRoot }) => {
+      configure: ({ codexHome, pluginCacheRoot }) => {
         for (const [index, version] of ["0.2.0+codex.old", "0.3.0+codex.middle", "0.4.0+codex.recent"].entries()) {
-          const snapshot = path.join(pluginCacheRoot, version);
-          fs.mkdirSync(snapshot, { recursive: true });
+          const snapshot = managedSnapshot(codexHome, version);
           fs.writeFileSync(path.join(snapshot, "marker"), version);
-          fs.writeFileSync(path.join(snapshot, ".mcp.json"), "{}\n");
           const stamp = new Date(1_700_000_000_000 + index * 1_000);
           fs.utimesSync(snapshot, stamp, stamp);
         }
@@ -149,19 +177,80 @@ describe("local plugin installation", () => {
     assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.2.0+codex.old")), false);
     assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", "marker")), false);
     assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", "marker")), false);
-    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", ".mcp.json")), true);
-    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", ".mcp.json")), true);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.3.0+codex.middle", ".mcp.json")), true, result.stdout);
+    assert.equal(fs.existsSync(path.join(pluginCacheRoot, "0.4.0+codex.recent", ".mcp.json")), true, result.stdout);
+  });
+
+  it("restores a durable predecessor that disappeared before installer startup", () => {
+    const previousVersion = "0.17.0+codex.previous";
+    const { result, pluginCacheRoot } = invokeInstall({
+      mode: "--refresh-only",
+      marketplaceRoot: root,
+      configure: ({ codexHome, pluginCacheRoot }) => {
+        seedManagedVersion(codexHome, previousVersion);
+        fs.rmSync(pluginCacheRoot, { recursive: true, force: true });
+        return {};
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.includes(`Retained discovery shells: ${previousVersion}.`), true);
+    assert.equal(
+      fs.existsSync(path.join(pluginCacheRoot, previousVersion, "skills", "spawn-agent", "SKILL.md")),
+      true,
+    );
+  });
+
+  it("fails before plugin add when a known predecessor is absent everywhere", () => {
+    const previousVersion = "0.17.0+codex.previous";
+    const { calls, result, codexHome, pluginCacheRoot } = invokeInstall({
+      mode: "--refresh-only",
+      marketplaceRoot: root,
+      configure: ({ codexHome, pluginCacheRoot }) => {
+        seedManagedVersion(codexHome, previousVersion);
+        fs.rmSync(pluginCacheRoot, { recursive: true, force: true });
+        fs.rmSync(
+          path.join(codexHome, "plugins", "data", "cc", "compatibility-shells", "v1", "versions", previousVersion),
+          { recursive: true, force: true },
+        );
+        return {};
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stderr.includes(previousVersion), true);
+    assert.deepEqual(calls, []);
+    const report = inspectCompatibilityCoverage({
+      codexHome,
+      currentVersion: previousVersion,
+      currentSnapshotRoot: path.join(pluginCacheRoot, previousVersion),
+    });
+    assert.deepEqual(report.managedVersions, [previousVersion]);
+  });
+
+  it("records first-install migration coverage without inventing a predecessor", () => {
+    const { result, codexHome, manifest, pluginCacheRoot } = invokeInstall({
+      mode: "--refresh-only",
+      marketplaceRoot: root,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Predecessor coverage: unavailable \(first install\/migration;/i);
+    const report = inspectCompatibilityCoverage({
+      codexHome,
+      currentVersion: manifest.version,
+      currentSnapshotRoot: path.join(pluginCacheRoot, manifest.version),
+    });
+    assert.equal(report.coverageState, "first_install");
+    assert.deepEqual(report.managedVersions, [manifest.version]);
+    assert.equal(report.expectedPredecessor, null);
   });
 
   it("restores selected discovery shells when Codex installation fails", () => {
     const { result, pluginCacheRoot } = invokeInstall({
       mode: "--refresh-only",
       marketplaceRoot: root,
-      configure: ({ pluginCacheRoot }) => {
+      configure: ({ codexHome, pluginCacheRoot }) => {
         const snapshot = path.join(pluginCacheRoot, "0.5.0+codex.previous");
-        fs.mkdirSync(snapshot, { recursive: true });
+        managedSnapshot(codexHome, "0.5.0+codex.previous");
         fs.writeFileSync(path.join(snapshot, "marker"), "preserved");
-        fs.writeFileSync(path.join(snapshot, ".mcp.json"), "{}\n");
         return { FAKE_DELETE_CACHE: "1", FAKE_INSTALL_FAILURE: "1" };
       },
     });

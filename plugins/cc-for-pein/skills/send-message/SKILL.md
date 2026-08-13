@@ -11,6 +11,9 @@ Call `mcp__cc_for_pein__send_message` with exact current-root `target` and
 `message`. Trusted Codex metadata owns cwd/root. If unavailable, report Plugin
 startup or discovery failure; never use a shell fallback.
 
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `CC_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
 A running Agent receives durable delivery. `queued_no_turn` requires
 `$cc-for-pein:followup-task`; a blocked Agent rejects instead of queueing,
 naming only a closed `reason`/`scope`/`retry`, never raw internal evidence.

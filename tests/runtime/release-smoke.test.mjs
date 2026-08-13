@@ -16,6 +16,10 @@ import { createClaudeCodeDriver } from "../../runtime/claude-code-driver.mjs";
 import { StreamParser } from "../../runtime/claude-headless-adapter.mjs";
 import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
 import { runClaudeTaskSession } from "../../runtime/job-supervisor.mjs";
+import {
+  finalizeCompatibilityInstall,
+  prepareCompatibilityInstall,
+} from "../../runtime/plugin-compatibility-shells.mjs";
 import { SOURCE_ROOT } from "../../runtime/version.mjs";
 import { runReleaseSmokeCli } from "../../scripts/release-smoke.mjs";
 
@@ -28,13 +32,17 @@ afterEach(() => {
 });
 
 function matchingSnapshot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-release-snapshot-"));
-  temporaryDirectories.push(root);
-  const snapshotRoot = path.join(root, "snapshot");
+  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-release-snapshot-"));
+  temporaryDirectories.push(codexHome);
   const pluginRoot = path.join(SOURCE_ROOT, "plugins", "cc-for-pein");
-  fs.cpSync(pluginRoot, snapshotRoot, { recursive: true });
   const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
+  const snapshotRoot = path.join(
+    codexHome, "plugins", "cache", "pein-local", "cc-for-pein", manifest.version,
+  );
+  fs.mkdirSync(path.dirname(snapshotRoot), { recursive: true });
+  fs.cpSync(pluginRoot, snapshotRoot, { recursive: true });
   return {
+    codexHome,
     snapshotRoot,
     installed: {
       pluginId: "cc-for-pein@pein-local",
@@ -45,6 +53,24 @@ function matchingSnapshot() {
       snapshotRoot,
     },
   };
+}
+
+function snapshotVersion(fixture, version) {
+  const root = path.join(path.dirname(fixture.snapshotRoot), version);
+  fs.cpSync(path.join(SOURCE_ROOT, "plugins", "cc-for-pein"), root, { recursive: true });
+  const manifestFile = path.join(root, ".codex-plugin", "plugin.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  fs.writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
+  return root;
+}
+
+function establishCompatibilityCoverage(fixture, previousVersion = null) {
+  if (previousVersion) snapshotVersion(fixture, previousVersion);
+  const plan = prepareCompatibilityInstall({
+    codexHome: fixture.codexHome,
+    requestedVersion: fixture.installed.version,
+  });
+  return finalizeCompatibilityInstall({ plan, installedSnapshotRoot: fixture.snapshotRoot });
 }
 
 function completedWitnessTurn(overrides = {}) {
@@ -148,6 +174,8 @@ describe("release smoke", () => {
     assert.equal(report.tools.length, 7);
     assert.equal(report.compatibilityShells.valid, true);
     assert.equal(report.compatibilityShells.count, 0);
+    assert.equal(report.compatibilityShells.coverageState, "unmanaged");
+    assert.equal(report.compatibilityShells.coverageComplete, false);
   });
 
   it("passes paid intent only when explicitly selected", async () => {
@@ -174,10 +202,10 @@ describe("release smoke", () => {
     assert.deepEqual(paidStart, { model: "claude-haiku-4-5", reasoningEffort: "low", write: false });
   });
 
-  it("accepts a bounded discovery-only compatibility shell routed to the checkout", async () => {
+  it("accepts complete managed predecessor coverage", async () => {
     const fixture = matchingSnapshot();
-    const previous = path.join(path.dirname(fixture.snapshotRoot), "0.6.0+codex.previous");
-    fs.cpSync(path.join(SOURCE_ROOT, "plugins", "cc-for-pein"), previous, { recursive: true });
+    const previousVersion = "0.17.0+codex.previous";
+    establishCompatibilityCoverage(fixture, previousVersion);
     const report = await runReleaseSmoke({
       installed: fixture.installed,
       probeMcp: async () => ({
@@ -192,8 +220,48 @@ describe("release smoke", () => {
     });
     assert.equal(report.compatibilityShells.valid, true);
     assert.equal(report.compatibilityShells.count, 1);
-    assert.equal(report.compatibilityShells.versions[0].canonicalRoute, true);
-    assert.equal(report.compatibilityShells.versions[0].cachedRuntimeAbsent, true);
+    assert.equal(report.compatibilityShells.coverageState, "managed");
+    assert.equal(report.compatibilityShells.coverageComplete, true);
+    assert.equal(report.compatibilityShells.expectedPredecessor, previousVersion);
+    assert.deepEqual(report.compatibilityShells.retainedVersions, [previousVersion]);
+  });
+
+  it("fails when a known predecessor disappears from cache and archive", async () => {
+    const fixture = matchingSnapshot();
+    const previousVersion = "0.17.0+codex.previous";
+    establishCompatibilityCoverage(fixture, previousVersion);
+    fs.rmSync(path.join(path.dirname(fixture.snapshotRoot), previousVersion), { recursive: true, force: true });
+    fs.rmSync(path.join(
+      fixture.codexHome, "plugins", "data", "cc", "compatibility-shells", "v1", "versions", previousVersion,
+    ), { recursive: true, force: true });
+
+    await assert.rejects(
+      () => runReleaseSmoke({
+        installed: fixture.installed,
+        probeMcp: async () => ({ healthy: true, tools: [], agentCount: 0 }),
+      }),
+      /compatibility coverage|known predecessor|compatibility shells/i,
+    );
+  });
+
+  it("reports a successful first install without inventing predecessor coverage", async () => {
+    const fixture = matchingSnapshot();
+    establishCompatibilityCoverage(fixture);
+    const report = await runReleaseSmoke({
+      installed: fixture.installed,
+      probeMcp: async () => ({
+        healthy: true,
+        tools: [
+          "spawn_agent", "send_message", "followup_task", "wait_agent",
+          "interrupt_agent", "list_agents", "read_agent_messages",
+        ],
+        agentCount: 0,
+        paid: { requested: false, status: "skipped" },
+      }),
+    });
+    assert.equal(report.compatibilityShells.coverageState, "first_install");
+    assert.equal(report.compatibilityShells.expectedPredecessor, null);
+    assert.equal(report.compatibilityShells.coverageComplete, true);
   });
 
   it("launches the descriptor MCP with isolated list_agents and no model", async () => {

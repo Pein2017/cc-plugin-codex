@@ -11,6 +11,9 @@ Call `mcp__cc_for_pein__followup_task` with exact current-root `target` and
 `message`; optional: `reasoning_effort`, `write`. Trusted Codex metadata owns cwd/root.
 If unavailable, report Plugin startup or discovery failure; never use shell fallback.
 
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `CC_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
 - Omitted `write` inherits latest behavioral authority. Pass `false` for
   read/review and `true` only for authorized mutation. Both remain full-access terminal parity;
   false is prompt-enforced.

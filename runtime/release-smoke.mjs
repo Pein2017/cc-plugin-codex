@@ -574,8 +574,13 @@ export async function runReleaseSmoke(options = {}) {
     snapshotRoot: parity.installed.snapshotRoot,
     currentVersion: parity.installed.version,
   });
-  if (!compatibilityShells.valid) {
-    throw new Error("Plugin compatibility shells are unbounded or do not delegate exclusively to the canonical checkout.");
+  if (
+    !compatibilityShells.valid ||
+    (compatibilityShells.coverageState !== "unmanaged" && !compatibilityShells.coverageComplete)
+  ) {
+    throw new Error(
+      "Plugin compatibility coverage is incomplete, unbounded, or does not route exclusively to the canonical checkout.",
+    );
   }
   const mcp = await (options.probeMcp ?? probeInstalledMcp)({
     snapshotRoot: parity.installed.snapshotRoot,

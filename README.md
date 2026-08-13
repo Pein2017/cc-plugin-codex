@@ -420,7 +420,10 @@ Doctor is zero-model-cost and not exposed as a Skill or MCP tool. It checks the
 canonical checkout and installed snapshot, production Node dependencies,
 Claude CLI version/static compatibility and login, the fixed Claude config and
 9090 proxy envelope, exactly seven
-MCP tools, bounded checkout-routed compatibility shells, and aggregate local storage. Its
+MCP tools, bounded checkout-routed compatibility shells, their durable predecessor
+coverage, and aggregate local storage. A first install is reported explicitly with no
+invented predecessor; an unmanaged legacy installation warns that coverage is unavailable.
+Its
 output is redacted: it never reports account email, organization IDs, tokens,
 proxy credentials, arbitrary environment values, prompts, messages, or session
 contents. A required failure exits nonzero with a recovery command.
@@ -483,7 +486,8 @@ npm run smoke:release -- --json
 It resolves the enabled `cc-for-pein@pein-local` installation, requires an exact
 checkout/snapshot match, discovers exactly seven installed Skills, launches the
 absolute canonical-checkout descriptor bootstrap, lists exactly seven MCP
-tools, verifies at most two discovery-only compatibility shells, and calls
+tools, verifies at most two discovery-only compatibility shells plus the durable
+successful-version coverage record, and calls
 `list_agents` with a synthetic root and temporary runtime home. This exercises
 the fresh host-load and protocol boundaries used by a new Codex task without
 claiming to run a paid Codex model turn or touching production Agent state.
@@ -655,13 +659,23 @@ does not remove the plugin. After that:
   contract; a stale task then receives `CC_MCP_RESTART_REQUIRED` before any
   lifecycle operation and must start a new Codex task.
 
-During local installation, at most two recent non-current Plugin snapshots are
-restored as discovery-only compatibility shells. This prevents an older task
-from failing only because Codex cleaned its resolved version path. The shells
-contain no executable runtime source: both the new absolute descriptor and the
-retained legacy bootstrap route lifecycle execution to
-`/data/CoordExp/cc-plugin-codex`. Older-than-two tasks are outside this bounded
-compatibility promise.
+During local installation, the installer first stages the current and recent valid
+discovery files into the owner-only archive
+`$CODEX_HOME/plugins/data/cc/compatibility-shells/v1`. After Codex replaces its
+Cache entry, the installer restores at most two non-current versions as exact,
+discovery-only compatibility shells and records the successful current version plus
+two predecessors. A known predecessor missing from both Cache and archive stops the
+install before Codex runs; a first install records that no distinct predecessor exists.
+The archive and restored shells use an exact file whitelist and contain no runtime
+source. Every descriptor/bootstrap delegates lifecycle execution to
+`/data/CoordExp/cc-plugin-codex`; never hand-edit either the archive or Plugin Cache.
+
+An already-running Codex task should keep using the exact versioned Skill path it
+resolved. If that path is unexpectedly missing, reading the latest Skill is an
+emergency aid, not proof that its schema or generation matches. Run `npm run doctor`,
+repair coverage with `npm run release:local`, and start a new Codex task whenever the
+MCP returns `CC_MCP_RESTART_REQUIRED`. Versions older than the two retained
+predecessors are outside this bounded compatibility promise.
 
 Verify the installed snapshot has exactly the seven Experimental skills and
 one `cc_for_pein` MCP server whose descriptor-only bootstrap delegates only to

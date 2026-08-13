@@ -14,6 +14,9 @@ exact `model`, and explicit `write`; optional fields are `description`,
 never pass environment, session, or fork selectors. If unavailable, report
 Plugin startup or discovery failure; never use a shell fallback.
 
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `CC_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
 ## Model and effort
 
 Use only full IDs and separate effort (`low`, `medium`, `high`, `xhigh`, `max`):

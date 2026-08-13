@@ -9,6 +9,11 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { pluginBaseVersion, readPackageMetadata } from "../runtime/version.mjs";
+import {
+  finalizeCompatibilityInstall,
+  prepareCompatibilityInstall,
+  restorePreparedCompatibilityShells,
+} from "../runtime/plugin-compatibility-shells.mjs";
 
 const MARKETPLACE = "pein-local";
 const PLUGIN = "cc-for-pein";
@@ -16,33 +21,6 @@ const sourceRoot = fs.realpathSync.native(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 );
 const codex = process.platform === "win32" ? "codex.cmd" : "codex";
-const COMPATIBILITY_SHELL_LIMIT = 2;
-
-// These are the only files an already-loaded Codex shell needs when its
-// versioned snapshot is cleaned up: discovery metadata, Skill descriptors, and
-// bootstrap shims that route lifecycle execution back to the checkout. Runtime
-// source and arbitrary old-cache content are deliberately excluded.
-const COMPATIBILITY_DISCOVERY_FILES = Object.freeze([
-  ".codex-plugin/plugin.json",
-  ".mcp.json",
-  "bootstrap/cc-mcp.mjs",
-  "bootstrap/cc-runtime.mjs",
-  "bootstrap/dependency-preflight.mjs",
-  "skills/followup-task/SKILL.md",
-  "skills/followup-task/agents/openai.yaml",
-  "skills/interrupt-agent/SKILL.md",
-  "skills/interrupt-agent/agents/openai.yaml",
-  "skills/list-agents/SKILL.md",
-  "skills/list-agents/agents/openai.yaml",
-  "skills/read-agent-messages/SKILL.md",
-  "skills/read-agent-messages/agents/openai.yaml",
-  "skills/send-message/SKILL.md",
-  "skills/send-message/agents/openai.yaml",
-  "skills/spawn-agent/SKILL.md",
-  "skills/spawn-agent/agents/openai.yaml",
-  "skills/wait-agent/SKILL.md",
-  "skills/wait-agent/agents/openai.yaml",
-]);
 
 function parseArguments(argv) {
   let refreshOnly = false;
@@ -145,81 +123,40 @@ function verifyInstalled(manifest) {
   }
 }
 
-function compatibilityVersionsRoot() {
-  const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
-  return path.join(codexHome, "plugins", "cache", MARKETPLACE, PLUGIN);
-}
-
-function copyCompatibilityDiscoveryFiles(source, target) {
-  for (const relative of COMPATIBILITY_DISCOVERY_FILES) {
-    const sourceFile = path.join(source, relative);
-    if (!fs.existsSync(sourceFile) || !fs.lstatSync(sourceFile).isFile()) continue;
-    const targetFile = path.join(target, relative);
-    if (fs.existsSync(targetFile)) continue;
-    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-    fs.copyFileSync(sourceFile, targetFile);
-  }
-}
-
-function backUpCompatibilityShells(currentVersion) {
-  const versionsRoot = compatibilityVersionsRoot();
-  if (!fs.existsSync(versionsRoot)) return { versionsRoot, temporaryRoot: null, versions: [] };
-  const candidates = fs.readdirSync(versionsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== currentVersion)
-    .filter((entry) => /^[A-Za-z0-9.+_-]+$/.test(entry.name))
-    .map((entry) => ({
-      version: entry.name,
-      modifiedMs: fs.statSync(path.join(versionsRoot, entry.name)).mtimeMs,
-    }))
-    .sort((left, right) => right.modifiedMs - left.modifiedMs || right.version.localeCompare(left.version))
-    .slice(0, COMPATIBILITY_SHELL_LIMIT);
-  if (candidates.length === 0) return { versionsRoot, temporaryRoot: null, versions: [] };
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-for-pein-compat-"));
-  for (const { version } of candidates) {
-    const source = path.join(versionsRoot, version);
-    const target = path.join(temporaryRoot, version);
-    fs.mkdirSync(target, { recursive: true });
-    copyCompatibilityDiscoveryFiles(source, target);
-  }
-  return { versionsRoot, temporaryRoot, versions: candidates.map(({ version }) => version) };
-}
-
-function restoreCompatibilityShells(backup) {
-  if (!backup.temporaryRoot) return;
-  fs.mkdirSync(backup.versionsRoot, { recursive: true });
-  for (const version of backup.versions) {
-    const target = path.join(backup.versionsRoot, version);
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.mkdirSync(target, { recursive: true });
-    copyCompatibilityDiscoveryFiles(path.join(backup.temporaryRoot, version), target);
-  }
-}
-
-function removeCompatibilityBackup(backup) {
-  if (backup.temporaryRoot) fs.rmSync(backup.temporaryRoot, { recursive: true, force: true });
-}
-
-function installWithCompatibilityShells(manifest) {
-  const backup = backUpCompatibilityShells(manifest.version);
+function installWithCompatibilityShells(manifest, plan) {
+  const codexHome = plan.paths.codexHome;
   let installed;
   let failure;
+  let coverage;
   try {
     installed = run(["plugin", "add", `${PLUGIN}@${MARKETPLACE}`, "--json"]);
     verifyInstalled(manifest);
+    coverage = finalizeCompatibilityInstall({
+      plan,
+      installedSnapshotRoot: path.join(
+        codexHome, "plugins", "cache", MARKETPLACE, PLUGIN, manifest.version,
+      ),
+    });
   } catch (error) {
     failure = error;
   }
-  try {
-    restoreCompatibilityShells(backup);
-  } catch (error) {
-    failure = failure
-      ? new AggregateError([failure, error], "Plugin installation and compatibility-shell restoration both failed.")
-      : error;
-  } finally {
-    removeCompatibilityBackup(backup);
+  if (failure) {
+    try {
+      restorePreparedCompatibilityShells(plan);
+    } catch (error) {
+      failure = new AggregateError(
+        [failure, error],
+        "Plugin installation and compatibility-shell restoration both failed.",
+      );
+    }
   }
   if (failure) throw failure;
-  return { installed, retainedVersions: backup.versions };
+  return {
+    installed,
+    retainedVersions: coverage.retainedVersions,
+    coverageState: plan.coverageState,
+    expectedPredecessor: plan.expectedPredecessor,
+  };
 }
 
 function main() {
@@ -248,13 +185,26 @@ function main() {
   // Codex owns installation snapshots. The snapshot contains only discovery
   // metadata/skills/bootstrap; bootstrap always delegates execution back to
   // CC_RUNTIME_CHECKOUT and rejects versioned-cache runtime paths.
+  const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
+  const compatibilityPlan = prepareCompatibilityInstall({
+    codexHome,
+    requestedVersion: manifest.version,
+  });
   bindMarketplace(options);
-  const { installed, retainedVersions } = installWithCompatibilityShells(manifest);
+  const {
+    installed,
+    retainedVersions,
+    coverageState,
+    expectedPredecessor,
+  } = installWithCompatibilityShells(manifest, compatibilityPlan);
 
   process.stdout.write(installed.stdout);
   process.stdout.write(
     `Installed ${PLUGIN}@${MARKETPLACE} ${manifest.version} from ${sourceRoot}.\n` +
     `${retainedVersions.length > 0 ? `Retained discovery shells: ${retainedVersions.join(", ")}.\n` : ""}` +
+    `${expectedPredecessor
+      ? `Predecessor coverage: ${expectedPredecessor} retained.\n`
+      : `Predecessor coverage: unavailable (first install/migration; state=${coverageState}).\n`}` +
     "Compatible runtime-only edits hot-load on the next MCP call without refresh. " +
     "Start a new Codex task to reload Skills, schemas, annotations, or another MCP API generation.\n"
   );
