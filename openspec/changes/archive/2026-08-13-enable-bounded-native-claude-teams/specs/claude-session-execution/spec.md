@@ -33,6 +33,10 @@ behavioral rather than process-enforced.
 - **WHEN** an eligible Opus or Fable Agent activates in `claude_orchestrator` mode
 - **THEN** Claude receives the current authority and explicit experimental Native Agent Team instructions while Workflow, machine-global discovery, isolation, forks, and cross-session recipients remain forbidden by the stated enforcement layer
 
+#### Scenario: Fable orchestrator starts
+- **WHEN** a `claude-fable-5` Agent activates in `claude_orchestrator` mode
+- **THEN** Claude receives the current authority and explicit experimental Native Agent Team instructions with the same reviewed enforcement boundaries
+
 #### Scenario: Lead-owned decision blocks progress
 - **WHEN** Claude cannot continue without a decision reserved to the Codex lead or user
 - **THEN** the envelope instructs Claude to end the turn with the precise question and supporting evidence so the same durable CC Agent can receive a follow-up
@@ -40,6 +44,10 @@ behavioral rather than process-enforced.
 #### Scenario: Leaf transport reconnects
 - **WHEN** bounded transport recovery reconnects a leaf job in the exact parent Claude session
 - **THEN** the same delegation mode, tool denials, authority, and leaf envelope are reconstructed from durable job evidence
+
+#### Scenario: Exact job reconnects
+- **WHEN** bounded transport recovery reconnects the same leaf Agent job
+- **THEN** the same delegation mode, tool denials, authority, and leaf envelope are reconstructed from that durable job evidence
 
 #### Scenario: Native team transport closes
 - **WHEN** an orchestrator process loses transport while native teammates may still have in-process state
@@ -76,9 +84,17 @@ enforcement strength.
 - **WHEN** `spawn_agent` supplies a valid supported model with `write: false`
 - **THEN** Claude receives the selected config, full-access process envelope, explicit parent model, leaf behavioral envelope, no general allow-list, and no native teammate definitions or Agent Teams flag
 
+#### Scenario: Read-intent Agent starts
+- **WHEN** `spawn_agent` supplies a valid supported leaf model with `write: false`
+- **THEN** Claude receives the selected config, full-access process envelope, explicit parent model, read-only behavioral envelope, and no general allow-list
+
 #### Scenario: Write-intent leaf Agent starts
 - **WHEN** `spawn_agent` supplies an eligible model with `write: true`
 - **THEN** Claude receives the same terminal-parity process envelope with task-scoped mutation authority and no native teammate definitions or Agent Teams flag
+
+#### Scenario: Write-intent Agent starts
+- **WHEN** `spawn_agent` supplies an eligible leaf model with `write: true`
+- **THEN** Claude receives the same full-access process envelope with task-scoped mutation authority and no general allow-list
 
 #### Scenario: Native Claude customizations are configured
 - **WHEN** the selected Claude config enables hooks, Serena MCP, memories, plugins, or skills
@@ -87,6 +103,10 @@ enforcement strength.
 #### Scenario: Native team lead starts
 - **WHEN** terminal parity activates an explicit Opus or Fable orchestrator
 - **THEN** the profile injects only the three sanctioned teammate definitions, sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, removes a conflicting subagent-model environment override, sets the hard depth boundary and residual ordinary-subagent concurrency guard, and applies the team-lead deny list without a general allow-list
+
+#### Scenario: Fable orchestrator uses native subagents
+- **WHEN** terminal parity activates an explicit Fable orchestrator
+- **THEN** the profile forms the bounded Native Agent Team, keeps `Workflow` denied, and applies no general native-tool allow-list
 
 #### Scenario: Later orchestrator turn resumes the parent Claude session
 - **WHEN** a follow-up activates a durable orchestrator in the exact parent session
@@ -117,6 +137,10 @@ mismatches.
 - **WHEN** the unchanged public API starts exact Opus or Fable in `claude_orchestrator` mode
 - **THEN** Workflow remains denied, the experimental native team envelope is reproduced, and only the outer Claude turn becomes the durable Harness result
 
+#### Scenario: Existing Fable orchestrator runs after extraction
+- **WHEN** the unchanged public API starts `claude-fable-5` in `claude_orchestrator` mode
+- **THEN** Workflow remains denied, the experimental native team envelope is reproduced, and only the outer Claude turn becomes the durable Harness result
+
 #### Scenario: Old prepared job meets new Driver
 - **WHEN** a job prepared under the previous Driver version is discovered after hot refresh or promotion
 - **THEN** the new Driver refuses to launch it rather than reconstruct the job under materially different orchestration semantics
@@ -129,6 +153,10 @@ mismatches.
 - **WHEN** a running Claude parent turn receives a valid active message
 - **THEN** the Driver preserves the current dispatch, acknowledgement, ordering, and recovery semantics rather than reducing the message to an unproven generic capability
 
+#### Scenario: Claude history is read after extraction
+- **WHEN** the root reads bounded assistant messages for its nonresident Agent
+- **THEN** the Driver uses the same native Claude history owner and returns the same bounded message semantics without activating the Agent
+
 #### Scenario: Claude compatibility or account limit fails
 - **WHEN** the host Claude version is incompatible or the selected account reports explicit exhaustion
 - **THEN** the Driver preserves the existing fail-closed compatibility or non-fallback usage-limit result
@@ -140,8 +168,9 @@ terminal or initialization events, stderr, warnings, exit state, or equivalent
 native execution evidence, not from Claude assistant prose. A reviewed
 mode-forbidden tool observed after canonicalizing native aliases, an
 orchestrator initialization missing any injected teammate definition or
-necessary coordination tool name, or a first named Agent result other than
-structured `status: teammate_spawned`, SHALL produce an admitted Harness-scoped compatibility
+necessary coordination tool name, a named Agent result that is not a correlated
+asynchronous launch, or a failed/uncorrelated `SendMessage` to that launched
+member name, SHALL produce an admitted Harness-scoped compatibility
 classification that maps to the existing `harness_incompatible` blocking
 reason. An absent leaf inventory or unknown non-forbidden native tool SHALL NOT
 produce that classification.
@@ -159,7 +188,7 @@ produce that classification.
 - **THEN** the turn fails as Harness-incompatible rather than continuing with silently ignored `--agents` definitions
 
 #### Scenario: Team server gate is unavailable after clean initialization
-- **WHEN** the first named Agent invocation returns an ordinary-subagent result rather than `status: teammate_spawned`
+- **WHEN** a named Agent returns a synchronous/interactive result or no correlated `SendMessage` succeeds for the launched member name
 - **THEN** the turn fails as Harness-incompatible and does not accept that result as native-team completion
 
 ### Requirement: CC Agent turns enable native Auto Memory by default
@@ -175,6 +204,18 @@ remain Claude-owned at `.claude/agent-memory-local/<member-type>/`.
 #### Scenario: Inherited or selected value disables Auto Memory
 - **WHEN** inherited environment or the selected env file contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, or omits the setting
 - **THEN** the canonical effective child environment replaces it with `0` before Claude starts
+
+#### Scenario: New CC Agent starts
+- **WHEN** `spawn_agent` activates a new Claude Code turn
+- **THEN** the Claude child environment contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`
+
+#### Scenario: Inherited host value disables Auto Memory
+- **WHEN** the inherited model-facing environment contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
+- **THEN** the canonical effective environment replaces it with `0` before Claude starts
+
+#### Scenario: Claude selects memory storage
+- **WHEN** Auto Memory is available to an Agent working in a Git repository or worktree
+- **THEN** the Plugin passes no shared memory directory or memory content and Claude retains native repository-derived storage
 
 #### Scenario: Durable Agent resumes
 - **WHEN** a follow-up activates a proven parent Claude session

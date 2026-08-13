@@ -23,9 +23,10 @@ init inventories. Official current behavior is important:
 - The init tool inventory names the public `Agent` surface `Task`; init also
   carries loaded Agent definition names.
 - Init tool names are not mode-discriminating: `Agent`, `SendMessage`, and task
-  tools may exist even when the Agent Teams server gate is inactive. A first
-  named Agent result with `status: teammate_spawned` is the structured
-  transport proof.
+  tools may exist even when the Agent Teams server gate is inactive. In Claude
+  Code 2.1.227, named background Agent calls return `status: async_launched`;
+  that launch alone is not team proof. Successful correlated `SendMessage` to
+  the launched member name proves name-addressable current-team transport.
 - Agent Teams have no hard teammate-count limit. The ordinary-subagent
   concurrency env is inert on the native teammate path.
 - Teammate idle/completion is delivered to the lead through the native mailbox.
@@ -83,12 +84,14 @@ local teammate memory, and teammate transcripts inside one process turn.
 displayed as “native team lead.” Exact Opus 5 joins Fable 5 as eligible. The
 profile sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` only for that process and
 the prompt explicitly requests named teammates rather than ordinary
-subagents. Initialization must prove the definitions and necessary tool names,
-but the first named Agent result must prove `status: teammate_spawned`. A
-different result fails as Harness-incompatible and is never accepted as
-native-team work. Because gate state is absent from init, the runtime cannot
-prevent that first attempted call from taking Claude's ordinary path; it can
-and must prevent silent acceptance.
+subagents. Initialization must prove the definitions and necessary tool names.
+The Adapter then requires a named Agent call to return the documented
+asynchronous launch shape and a later correlated `SendMessage` to that launched
+member name to succeed. A synchronous/interactive result or failed/uncorrelated
+message fails as Harness-incompatible and is never accepted as native-team
+work. Because gate state is absent from init, the runtime cannot prevent an
+attempted call from taking Claude's ordinary path; it can and must prevent
+silent acceptance.
 
 This preserves the user-approved peer communication and shared-task behavior.
 Ordinary unnamed subagents were rejected because they cannot provide the
@@ -208,10 +211,14 @@ definitions. On production init:
 - unknown non-forbidden native names warn but do not block.
 
 The names above are necessary but do not prove the experimental server gate.
-The adapter separately inspects the first named Agent tool result. Only
-structured `status: teammate_spawned` sets
-`teamTransportLiveValidated:true`; any ordinary-subagent result terminates the
-turn as Harness-incompatible and cannot be used as native-team completion.
+The Adapter alone interprets Claude's versioned structured vocabulary. It
+records a bounded internal member-launch fact for a correlated
+`status: async_launched` Agent result, but does not validate transport yet.
+Only a later successful, correlated `SendMessage` to that launched member name
+sets the stable internal `teamTransportLiveValidated:true`. Synchronous,
+interactive, malformed, failed, or uncorrelated evidence terminates the turn
+as Harness-incompatible and cannot be used as native-team completion. The rest
+of the Plugin never depends on Claude's raw status tokens.
 
 `denySetLiveValidated` means only “the reviewed deny set was observed clean.”
 It is never described as universal containment. The latest sanitized
@@ -278,8 +285,9 @@ not claim that parent success independently proves each teammate settled.
 The witness invokes the real production Driver/profile/adapter directly rather
 than the public MCP/detached-worker path. A witness-only in-process callback
 receives the same bounded structured init/tool/team events emitted by the
-adapter. It may count requested definition/type/name, first-spawn transport,
-same-team message recipient, and successful terminal synthesis, but persists no prompt/message content,
+adapter. It may count requested definition/type/name, correlated member
+launches, validated same-team transport, and successful terminal synthesis,
+but persists no prompt/message content,
 session ID, transcript, or memory contents. Requested models are proven by the
 injected definitions; effective teammate model, effort, and cost remain unknown
 unless an authoritative structured fact exists. Assistant prose cannot replace
@@ -302,11 +310,21 @@ fixture executable or fingerprint.
 If Claude reports a subscription/quota limit, no later paid call starts and the
 capability remains unverified. Real Claude never runs in `npm run check`.
 
+If a paid turn exposes all required closed structured facts but the observer
+rejects them solely because its Adapter expected an obsolete upstream status
+token, the original report stays immutable and unverified. A test-first Adapter
+correction plus sanitized replay of those exact fact shapes through the
+production parser and witness controller may disposition the same live turn as
+release evidence. This is operator verification, not a runtime transcript
+fallback: no prompt/content/session pointer becomes Plugin state, and no paid
+retry is implied.
+
 ## Risks / Trade-offs
 
 - **Agent Teams are experimental and server-gated** -> orchestrator-only env,
-  init definition/tool preconditions, first-spawn `teammate_spawned` proof,
-  rejection of ordinary-subagent output, explicit Harness-incompatible result.
+  init definition/tool preconditions, Adapter-local translation of asynchronous
+  member launch plus successful named messaging, rejection of synchronous or
+  uncorrelated output, explicit Harness-incompatible result.
 - **Native team session resumption is unsupported** -> zero automatic reconnect
   for orchestrator turns; explicit parent follow-up creates a fresh team.
 - **Prompt-governed roles/recipients/budgets can be violated under permission
@@ -324,7 +342,7 @@ capability remains unverified. Real Claude never runs in `npm run check`.
 - **`SendMessage` can reach other sessions and resume completed agents** ->
   current-team recipient/lead-only resume prompt, no universal containment claim.
 - **Init inventories may drift and do not prove the team gate** -> canonical
-  aliases, necessary preconditions, first-spawn proof, scoped validation,
+  aliases, necessary preconditions, Adapter-local launch/message proof, scoped validation,
   unknown-native warning, bounded history.
 - **Structured production stream omits stable teammate settle facts** -> record
   settle as unobservable for the exact executable, prohibit invented fake

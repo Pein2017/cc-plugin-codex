@@ -1,6 +1,6 @@
 {
   "name": "cc-for-pein-runtime",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Checkout-owned durable Claude Agent runtime for Codex",
   "private": true,
   "type": "module",

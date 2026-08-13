@@ -12,11 +12,13 @@ explicit `claude_orchestrator` Native Agent Team leads. An orchestrator SHALL
 enable the experimental native team transport for that Claude process and
 SHALL fail observably rather than accept ordinary-subagent work as a native
 team when the required native definitions or transport proof are unavailable.
-Initialization names SHALL be treated only as necessary preconditions; the
-first named teammate call SHALL prove the transport with a structured
-`teammate_spawned` result. Because Claude does not expose the server-gate state
-at initialization, one failed ordinary-subagent attempt MAY occur before that
-result is classified, but its result SHALL NOT be accepted as native-team task
+Initialization names SHALL be treated only as necessary preconditions. The
+Adapter SHALL translate Claude's versioned structured results into stable
+internal facts: a named member SHALL launch asynchronously and a correlated
+`SendMessage` to that launched member name SHALL succeed before transport is
+live-validated. Because Claude does not expose the server-gate state at
+initialization, one failed ordinary-subagent attempt MAY occur before evidence
+is classified, but its result SHALL NOT be accepted as native-team task
 completion. Any invalid
 model, mode, or Haiku write combination SHALL fail before readiness, Agent
 reservation, mailbox mutation, job preparation, or Claude launch. The public
@@ -37,8 +39,12 @@ synthesis.
 - **WHEN** spawn selects `claude-fable-5` with `delegation_mode=claude_orchestrator`
 - **THEN** the Fable Agent may lead one bounded experimental Native Agent Team while native `Workflow` remains denied
 
+#### Scenario: Non-Fable orchestration is requested
+- **WHEN** a model outside the exact Opus/Fable lead set, currently Haiku or Sonnet, is combined with `claude_orchestrator`
+- **THEN** spawn fails synchronously with no readiness probe, durable mutation, or Claude process
+
 #### Scenario: Native team surface is unavailable
-- **WHEN** an otherwise valid orchestrator omits an injected definition at initialization or its first named Agent result is not `status: teammate_spawned`
+- **WHEN** an otherwise valid orchestrator omits an injected definition at initialization, a named Agent does not launch asynchronously, or a correlated message to the launched name does not succeed
 - **THEN** the turn fails with actionable Harness-incompatible evidence and does not accept the attempted work as native-team completion
 
 #### Scenario: Sonnet orchestration is requested

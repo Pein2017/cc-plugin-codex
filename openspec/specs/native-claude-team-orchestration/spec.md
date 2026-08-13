@@ -1,11 +1,10 @@
-## Purpose
+# native-claude-team-orchestration Specification
 
+## Purpose
 Define one bounded experimental Claude Native Agent Team inside an
 orchestrating CC Agent turn without creating a second Plugin-owned lifecycle or
 weakening Codex's ownership of final acceptance.
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: Every orchestrator turn uses one fresh native team
 An orchestrating CC Agent turn SHALL enable Claude Code's experimental Native
 Agent Teams transport only for that process. The lead SHALL use named native
@@ -20,16 +19,16 @@ events, public receipts, or transcript pointers for native teammates.
 - **WHEN** an Opus or Fable orchestrator starts and native team admission succeeds
 - **THEN** the first named teammate forms one Native Agent Team with the current Claude session as lead while the lead remains the only durable CC Agent
 
-#### Scenario: First named teammate proves team transport
-- **WHEN** the first named Agent invocation returns structured `status: teammate_spawned`
-- **THEN** the runtime marks the current turn's native-team transport live-validated without treating init tool names alone as proof
+#### Scenario: Named teammate and message prove team transport
+- **WHEN** a correlated named Agent result proves asynchronous launch and a later correlated `SendMessage` to that launched member name succeeds
+- **THEN** the runtime marks the current turn's native-team transport live-validated without treating init tool names or launch status alone as proof
 
 #### Scenario: Same CC Agent receives a follow-up turn
 - **WHEN** a durable orchestrating CC Agent resumes its parent Claude session in a new process
 - **THEN** it forms a fresh native team and does not reuse the earlier process's in-process teammates
 
 #### Scenario: Native team gate is unavailable
-- **WHEN** Claude accepts the process but omits an injected definition or the first named Agent tool result lacks `status: teammate_spawned`
+- **WHEN** Claude accepts the process but omits an injected definition, returns a non-asynchronous named Agent result, or fails to complete a correlated message to the launched member name
 - **THEN** the turn fails as Harness-incompatible and does not accept ordinary-subagent output as native-team work
 
 ### Requirement: Team-size controls are classified by enforcement strength

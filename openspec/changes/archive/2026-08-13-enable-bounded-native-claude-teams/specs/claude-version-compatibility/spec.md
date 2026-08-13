@@ -19,6 +19,10 @@ validated.
 - **WHEN** Claude CLI help omits `--agents`
 - **THEN** every new public activation fails before state mutation because the executable cannot reproduce the orchestrator profile
 
+#### Scenario: Delegation policy flag is missing
+- **WHEN** Claude CLI help omits `--append-system-prompt`, `--disallowedTools`, or `--agents`
+- **THEN** every new public activation fails before state mutation because the runtime cannot reproduce its delegation boundary
+
 #### Scenario: Compatible frontier version appears
 - **WHEN** a previously unseen version advertises the complete required surface and stays stable through the probe
 - **THEN** readiness admits it as statically compatible and live-unverified without requiring a repository change
@@ -49,13 +53,17 @@ observed clean, never universal containment. Evidence SHALL contain names and
 fingerprint/mode association only, never prompts, inputs, outputs, sessions,
 rosters, or memory content.
 
-The first named orchestrator Agent invocation SHALL separately validate the
-transport from its structured tool result. Only `status: teammate_spawned`
-SHALL set `teamTransportLiveValidated: true`; an ordinary-subagent result SHALL
-terminate the turn as Harness-incompatible. This post-call validation cannot
-prevent the first attempted call from taking Claude's ordinary path when its
-server gate is unavailable, but it SHALL prevent the Plugin from silently
-accepting that output as native-team work.
+The Adapter SHALL separately translate Claude's versioned Agent and
+`SendMessage` tool results into stable transport evidence. A correlated named
+Agent result SHALL first prove an asynchronous launch; that launch alone SHALL
+NOT set `teamTransportLiveValidated`. Only a later successful correlated
+`SendMessage` to the launched member name SHALL set
+`teamTransportLiveValidated: true`. A synchronous/interactive Agent result or
+failed/uncorrelated message SHALL terminate the turn as Harness-incompatible.
+This validation cannot prevent an attempted call from taking Claude's ordinary
+path when its server gate is unavailable, but it SHALL prevent the Plugin from
+silently accepting that output as native-team work. Raw Claude status tokens
+SHALL NOT escape the Adapter as Plugin business protocol.
 
 #### Scenario: Leaf still exposes Agent
 - **WHEN** a leaf initialization advertises native init name `Task` despite the emitted `Agent` deny policy
@@ -78,7 +86,7 @@ accepting that output as native-team work.
 - **THEN** the turn fails as Harness-incompatible instead of trusting `--agents` help text or assistant prose
 
 #### Scenario: Agent Teams gate is inactive despite clean init names
-- **WHEN** the first named Agent result does not contain structured `status: teammate_spawned`
+- **WHEN** a named Agent does not produce a correlated asynchronous launch or no correlated `SendMessage` succeeds for the launched member name
 - **THEN** the turn records `teamTransportLiveValidated: false` and fails as Harness-incompatible instead of accepting ordinary-subagent output
 
 ### Requirement: Native-surface observation history is bounded

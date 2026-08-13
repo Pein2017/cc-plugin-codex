@@ -175,6 +175,7 @@ function boundedWitnessEvent(fact) {
   if (!fact || typeof fact !== "object") return null;
   switch (fact.type) {
     case "native_team_member_requested":
+    case "native_team_member_launched":
       return safeWitnessName(fact.memberName) && safeWitnessName(fact.memberType)
         ? { type: fact.type, memberName: safeWitnessName(fact.memberName), memberType: safeWitnessName(fact.memberType) }
         : null;
@@ -219,10 +220,11 @@ export async function runNativeTeamWitness(options = {}) {
   }
   const events = [];
   const requestedMembers = new Map();
+  const launchedMembers = new Map();
   let requestedModelHaiku = null;
   let requestedModelSonnet = null;
   let definitionSurface = false;
-  let firstSpawnTransport = false;
+  let teamTransportValidated = false;
   let sameTeamMessage = false;
   let parentSynthesis = false;
   let witnessOverflow = false;
@@ -289,7 +291,8 @@ export async function runNativeTeamWitness(options = {}) {
         if (event.type === "native_team_witness_overflow") witnessOverflow = true;
         if (event.type === "native_team_surface") definitionSurface ||= event.observed;
         if (event.type === "native_team_member_requested") requestedMembers.set(event.memberType, event.memberName);
-        if (event.type === "native_team_transport") firstSpawnTransport ||= event.teamTransportLiveValidated;
+        if (event.type === "native_team_member_launched") launchedMembers.set(event.memberType, event.memberName);
+        if (event.type === "native_team_transport") teamTransportValidated ||= event.teamTransportLiveValidated;
         if (event.type === "native_team_message") sameTeamMessage ||= event.sameTeamRecipient;
         if (event.type === "native_team_parent_synthesis") parentSynthesis = true;
       },
@@ -323,7 +326,9 @@ export async function runNativeTeamWitness(options = {}) {
     ...(definitionSurface ? [] : ["native_team_definition_surface"]),
     ...(requestedMembers.has("haiku-scout") ? [] : ["requested_haiku_scout"]),
     ...(requestedMembers.has("sonnet") ? [] : ["requested_sonnet"]),
-    ...(firstSpawnTransport ? [] : ["first_spawn_transport"]),
+    ...(launchedMembers.has("haiku-scout") ? [] : ["launched_haiku_scout"]),
+    ...(launchedMembers.has("sonnet") ? [] : ["launched_sonnet"]),
+    ...(teamTransportValidated ? [] : ["team_transport"]),
     ...(sameTeamMessage ? [] : ["current_team_message"]),
     ...(parentSynthesis ? [] : ["parent_synthesis"]),
   ];
@@ -343,7 +348,11 @@ export async function runNativeTeamWitness(options = {}) {
       status: "unobservable",
       executable: launchContext?.compatibility?.executable ?? null,
     },
-    firstSpawnTransport,
+    memberLaunches: {
+      haikuScout: launchedMembers.has("haiku-scout"),
+      sonnet: launchedMembers.has("sonnet"),
+    },
+    teamTransportValidated,
     missingEvidence,
     events,
     source: { unchanged: sourceBefore === sourceAfter && sourceChangedPaths.length === 0, statusBefore: sourceBefore, statusAfter: sourceAfter, changedPaths: sourceChangedPaths },

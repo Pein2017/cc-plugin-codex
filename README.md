@@ -133,9 +133,10 @@ appends a bounded Codex-lead role envelope and denies Claude Code's native
 `claude-fable-5` with explicit `delegation_mode: "claude_orchestrator"` may act
 as an experimental Native Agent Team lead. The public registry stays flat: only
 the durable parent is a CC Agent. Initialization definition/tool names are
-necessary, but the first named Agent result must be structured
-`status: teammate_spawned`; an ordinary-subagent result is Harness-incompatible
-and is not accepted as team work. Haiku and Sonnet remain leaves; ordinary Opus
+necessary, but transport is live-validated only after a named member launches
+asynchronously and a correlated `SendMessage` to that launched member name
+succeeds. A synchronous Agent result, an uncorrelated message, or a failed
+message is Harness-incompatible and is not accepted as team work. Haiku and Sonnet remain leaves; ordinary Opus
 and Fable turns remain leaves. `Workflow` remains denied; public follow-ups
 inherit the mode and form a fresh native team rather than resuming in-process
 teammates.
@@ -499,7 +500,7 @@ This is mutually exclusive with `--real-claude`, announces its paid
 `claude-opus-5`/`low`/`write:false` intent before launch, resolves the normal
 runtime environment, and performs Driver preflight plus prepared revalidation
 for the actual executable and fingerprint. It requires Haiku scout/Sonnet
-reviewer definitions, first-spawn transport proof, one current-team message,
+reviewer definitions, correlated member-launch and named-team transport proof,
 and one parent synthesis. Teammate settle is explicitly reported as
 unobservable for that executable: native mailbox/hook delivery is not a stable
 top-level stream event, so it is neither invented nor a verification

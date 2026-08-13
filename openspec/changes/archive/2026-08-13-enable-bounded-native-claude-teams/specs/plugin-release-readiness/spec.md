@@ -1,8 +1,9 @@
 ## ADDED Requirements
 
 ### Requirement: Native-team release acceptance is explicit and paid
-Before releasing the native-team capability, the checkout SHALL run exactly one
-explicit real-Claude witness using a top-level `claude-opus-5` Driver turn with `low`
+Before releasing the native-team capability, the checkout SHALL run at most one
+explicit real-Claude witness per user authorization, with no automatic paid
+retry. The acceptance witness SHALL use a top-level `claude-opus-5` Driver turn with `low`
 effort and `write: false` inside a dedicated disposable Git witness workspace,
 not the source checkout. This witness SHALL invoke the same production
 Driver/profile/adapter seam used by public Agents directly, not the public MCP
@@ -16,7 +17,8 @@ SHALL NOT invent `system/teammate_*` events or claim the parent terminal proves
 each teammate settled. A
 witness-only in-process callback SHALL read only structured top-level
 initialization/tool/team events needed to count the requested definitions,
-teammate types/names, first `teammate_spawned` proof, current-team message, and
+teammate types/names, correlated asynchronous launches, successful validated
+current-team transport, and
 successful parent terminal synthesis; it SHALL not
 persist prompts, message text, child transcripts, session IDs, or memory
 content. It SHALL verify pinned requested models from the injected definitions
@@ -33,8 +35,8 @@ Claude tests and SHALL leave the capability unverified rather than failed on
 model quality.
 
 #### Scenario: Native-team capability is ready to release
-- **WHEN** all zero-cost tests pass and the explicit native-team witness is authorized
-- **THEN** exactly one Opus-low read-only production Driver turn in a disposable witness repository proves the observable Driver/profile/adapter Native Agent Teams path before release without claiming paid MCP/detached-worker validation
+- **WHEN** all zero-cost tests pass and an explicit native-team witness is authorized
+- **THEN** that authorization starts at most one Opus-low read-only production Driver turn in a disposable witness repository to prove the observable Driver/profile/adapter Native Agent Teams path before release without claiming paid MCP/detached-worker validation
 
 #### Scenario: Witness observes repository mutation
 - **WHEN** the read-only native-team witness changes task/workspace/repository state outside the two approved native local-memory paths
@@ -51,6 +53,10 @@ model quality.
 #### Scenario: Claude account limit stops the witness
 - **WHEN** the witness reports an explicit subscription or quota limit
 - **THEN** no further paid model test starts and release evidence records the capability as not live verified
+
+#### Scenario: Adapter vocabulary causes an observer false negative
+- **WHEN** one authorized paid turn contains the required closed structured launch, named-message, and parent-terminal facts but the then-current Adapter rejects them because it expected an obsolete upstream status token
+- **THEN** acceptance remains closed until the original false report is preserved, the raw-status translation is corrected test-first at the Adapter boundary, and a sanitized replay of those exact fact shapes passes through the production Adapter/witness controller; that same paid turn MAY then satisfy the live-path evidence without an automatic paid retry or reliance on assistant prose
 
 ### Requirement: Native-team paid loop is regression tested without Claude usage
 The repository SHALL test the native-team paid witness control flow with a fake

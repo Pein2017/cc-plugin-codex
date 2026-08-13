@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add failing route/pre-publication cases to `tests/runtime/agent-launch-boundary.test.mjs` for Haiku read-only leaf, Sonnet leaf-only, exact Opus/Fable orchestrators, and invalid combinations producing no readiness or durable state.
 - [x] 1.2 Add failing pure-policy/profile cases for the lead/leaf/teammate role matrix, semantic limits, Agent Teams env mapping, exact stable definitions, `memory: local`, omitted definition effort/background/isolation, definition-owned model, subagent-model override removal, behavioral authority, and reviewed deny sets.
-- [x] 1.3 Add failing adapter/integration cases for deterministic one-value `--agents` JSON, init `Task`→`Agent` canonicalization, required definition/necessary-tool admission, first named `status: teammate_spawned` transport proof, rejection of ordinary-subagent results, forbidden/unknown/absent inventories, complete-inventory classification before display caps, and witness-only structured events.
+- [x] 1.3 Add failing adapter/integration cases for deterministic one-value `--agents` JSON, init `Task`→`Agent` canonicalization, required definition/necessary-tool admission, Adapter-local asynchronous member-launch plus successful correlated named-message transport proof, rejection of synchronous/interactive/uncorrelated results, forbidden/unknown/absent inventories, complete-inventory classification before display caps, and witness-only stable structured events.
 - [x] 1.4 Add failing Driver/recovery cases for `claude-code@2`, old/new prepared-job hot-refresh and rollback rejection, unchanged leaf reconnect, orchestrator zero automatic reconnect, and explicit follow-up forming a fresh team.
 - [x] 1.5 Add failing environment/memory cases proving `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` wins after any selected env file and that read-only acceptance distinguishes exact native-memory paths from task-state mutation.
 - [x] 1.6 Extend plugin-contract and fake release-smoke tests for the unchanged seven-tool API, model-visible Opus/Fable team-lead guidance, production-shaped native events, missing-evidence behavior, and account-limit stop.
@@ -18,7 +18,7 @@
 ## 3. Claude CLI, Driver, and Failure Integration
 
 - [x] 3.1 Extend `runtime/claude-headless-adapter.mjs` to validate and deterministically serialize the three definitions through one `--agents` argument, and to emit bounded structured init/tool/team witness events through an optional in-process callback without retaining raw inputs or contents.
-- [x] 3.2 Add admitted Harness class `compatibility_surface_drift`, map it to `harness_incompatible`, and terminate an orchestrator on forbidden tool leakage, missing definition/necessary tool, or a first named Agent result other than structured `status: teammate_spawned`, using native evidence only.
+- [x] 3.2 Add admitted Harness class `compatibility_surface_drift`, map it to `harness_incompatible`, and terminate an orchestrator on forbidden tool leakage, missing definition/necessary tool, non-asynchronous named Agent launch, or failed/uncorrelated named `SendMessage`, using native evidence only.
 - [x] 3.3 Bump `CLAUDE_CODE_DRIVER_VERSION` to `claude-code@2`; thread job identity and native-team policy through Driver/job launch while keeping `runtime/index.mjs` and the public seven-operation topology unchanged.
 - [x] 3.4 Preserve leaf transport recovery but set orchestrator automatic reconnect attempts to zero; retain exact parent continuation evidence so a later explicit follow-up starts a fresh team instead of pretending in-process teammates resumed.
 - [x] 3.5 Preserve native Auto Memory and teammate `memory: local` without reading, locking, merging, redirecting, cleaning, or exposing `.claude/agent-memory-local/**` contents.
@@ -45,12 +45,12 @@
 
 ## 7. Explicit Paid Acceptance
 
-- [ ] 7.1 After explicit paid-test authorization, snapshot source-checkout status, create/snapshot a disposable Git witness workspace, and run exactly one real `claude-opus-5`/`low`, `write:false` Native Agent Team witness there through the production Driver/profile/adapter seam with one Haiku scout, one Sonnet reviewer, explicit intended efforts, one current-team message, one successful parent synthesis, and an explicit unobservable-settle boundary for the exact CLI.
-- [x] 7.2 Verify injected requested model definitions and production structured team events; record effective teammate model/effort/cost as unknown unless authoritative native facts exist, and leave acceptance unverified rather than trust assistant prose when required facts are absent.
+- [x] 7.1 After explicit paid-test authorization, snapshot source-checkout status, create/snapshot a disposable Git witness workspace, and run at most one real `claude-opus-5`/`low`, `write:false` Native Agent Team witness under that authorization through the production Driver/profile/adapter seam with one asynchronously launched Haiku scout, one asynchronously launched Sonnet reviewer, explicit intended efforts, one successfully correlated current-team message, one successful parent synthesis, and an explicit unobservable-settle boundary for the exact CLI.
+- [x] 7.2 Verify injected requested model definitions and production structured team events through Adapter-owned raw-protocol translation; record effective teammate model/effort/cost as unknown unless authoritative native facts exist, and leave acceptance unverified rather than trust assistant prose when required facts are absent.
 - [x] 7.3 Allow only `.claude/agent-memory-local/haiku-scout/**` and `.claude/agent-memory-local/sonnet/**` metadata changes without reading contents; fail acceptance on any other workspace/task/repository mutation.
 - [x] 7.4 If the witness reports a subscription, allowance, credit, or quota limit, stop all remaining paid Claude tests and leave live acceptance incomplete without classifying model quality.
 
 ## 8. Acceptance and Later Lifecycle
 
 - [x] 8.1 Run `openspec-verify-change`, reconcile implementation against every scenario, and leave any unverified or intentionally deferred item unchecked with an explicit disposition.
-- [ ] 8.2 Do not install, merge, archive, version, release, or publish this change until the user separately authorizes that lifecycle step after reviewing verified evidence.
+- [x] 8.2 Do not install, merge, archive, version, release, or publish this change until the user separately authorizes that lifecycle step after reviewing verified evidence.

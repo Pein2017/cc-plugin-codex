@@ -237,7 +237,7 @@ describe("native plugin contract", () => {
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
     assert.match(text, /`leaf`[\s\S]*native `Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Opus or Fable/i);
     assert.match(text, /experimental Native Agent Team lead/i);
-    assert.match(text, /first named native spawn[\s\S]*teammate_spawned/i);
+    assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
     assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
     assert.match(text, /intended effort[\s\S]*inherited lead effort/i);
     assert.match(text, /explicit follow-up[\s\S]*fresh native team/i);

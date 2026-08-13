@@ -139,7 +139,7 @@ describe("operator doctor", () => {
       assert.deepEqual(lead.forbiddenTools, []);
       assert.deepEqual(lead.unknownNativeTools, ["FutureNativeTool"]);
       assert.match(lead.summary, /reviewed deny-set validation/i);
-      assert.match(lead.summary, /first-spawn transport proof/i);
+      assert.match(lead.summary, /named-team transport proof/i);
       assert.doesNotMatch(JSON.stringify(report), /universal containment|doctor-prompt-sentinel|doctor-memory-sentinel/i);
 
       const noObservation = diagnoseNativeTeamCompatibility(workspace, "other-fingerprint");

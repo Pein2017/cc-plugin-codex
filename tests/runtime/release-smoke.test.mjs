@@ -272,14 +272,26 @@ describe("release smoke", () => {
         type: "tool_use", id: "fake-sonnet", name: "Agent",
         input: { name: "sonnet-1", subagent_type: "sonnet" },
       }] } })}\n`);
-      parser.feed(`${JSON.stringify({
-        type: "user", tool_use_result: { status: "teammate_spawned" },
-        message: { content: [{ type: "tool_result", tool_use_id: "fake-spawn" }] },
-      })}\n`);
+      for (const [toolUseId, agentId, resolvedModel] of [
+        ["fake-spawn", "fake-haiku-agent", "claude-haiku-4-5"],
+        ["fake-sonnet", "fake-sonnet-agent", "claude-sonnet-5"],
+      ]) {
+        parser.feed(`${JSON.stringify({
+          type: "user", tool_use_result: { status: "async_launched", agentId, resolvedModel },
+          message: { content: [{ type: "tool_result", tool_use_id: toolUseId }] },
+        })}\n`);
+      }
       parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
         type: "tool_use", id: "fake-message", name: "SendMessage",
         input: { recipient: "haiku-scout-1", content: "opaque fixture" },
       }] } })}\n`);
+      parser.feed(`${JSON.stringify({
+        type: "user", tool_use_result: {
+          success: true,
+          pin: { id: "fake-haiku-agent", name: "haiku-scout-1", ref: "safe-ref" },
+        },
+        message: { content: [{ type: "tool_result", tool_use_id: "fake-message" }] },
+      })}\n`);
       parser.feed(`${JSON.stringify({ type: "result", subtype: "success", is_error: false })}\n`);
       fs.mkdirSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout"), { recursive: true });
       fs.writeFileSync(path.join(request.cwd, ".claude", "agent-memory-local", "haiku-scout", "metadata.json"), "fixture");
@@ -293,7 +305,8 @@ describe("release smoke", () => {
     assert.equal(witness.liveVerified, true);
     assert.equal(witness.requestedModels.haikuScout, "claude-haiku-4-5");
     assert.equal(witness.requestedModels.sonnet, "claude-sonnet-5");
-    assert.equal(witness.firstSpawnTransport, true);
+    assert.deepEqual(witness.memberLaunches, { haikuScout: true, sonnet: true });
+    assert.equal(witness.teamTransportValidated, true);
     assert.equal(witness.definitionSurface, true);
     assert.deepEqual(witness.intendedEffort, { haikuScout: "low", sonnet: "low" });
     assert.deepEqual(witness.effectiveTeammate, { model: "unknown", effort: "unknown", cost: "unknown" });

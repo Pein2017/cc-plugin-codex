@@ -397,7 +397,7 @@ export function diagnoseNativeTeamCompatibility(cwd, fingerprint = null) {
         forbiddenTools: [],
         unknownNativeTools: [],
         status: "live-unverified",
-        summary: "No production inventory is retained; reviewed deny-set validation and first-spawn transport proof are live-unverified.",
+        summary: "No production inventory is retained; reviewed deny-set validation and named-team transport proof are live-unverified.",
       };
     }
     const classification = observation.classification;
@@ -428,7 +428,7 @@ export function diagnoseNativeTeamCompatibility(cwd, fingerprint = null) {
       forbiddenTools: classification.forbiddenTools,
       unknownNativeTools: classification.unknownNativeTools,
       status,
-      summary: `Reviewed deny-set validation is ${classification.denySetLiveValidated ? "observed clean" : "not live-validated"}; first-spawn transport proof is ${classification.teamTransportLiveValidated ? "observed" : "live-unverified"}.`,
+      summary: `Reviewed deny-set validation is ${classification.denySetLiveValidated ? "observed clean" : "not live-validated"}; named-team transport proof is ${classification.teamTransportLiveValidated ? "observed" : "live-unverified"}.`,
     };
   });
   return {

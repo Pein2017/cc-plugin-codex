@@ -9,7 +9,8 @@ report `denySetLiveValidated: false` when no matching production observation
 exists. That field SHALL describe only the reviewed deny set, not universal
 containment. For an orchestrator it SHALL separately report whether all three
 injected definitions and necessary coordination tool names were observed, and
-whether a first named call produced `teamTransportLiveValidated: true`. Doctor SHALL
+whether correlated launch-and-message evidence produced
+`teamTransportLiveValidated: true`. Doctor SHALL
 NOT launch a model to obtain inventory and SHALL NOT expose tool inputs,
 prompts, outputs, session identity, member roster, or memory content.
 
@@ -29,6 +30,6 @@ prompts, outputs, session identity, member roster, or memory content.
 - **WHEN** the latest orchestrator observation omits one required teammate definition
 - **THEN** doctor reports the native team surface incompatible even if the reviewed deny set itself is clean
 
-#### Scenario: No validated teammate spawn exists
-- **WHEN** init names are clean but no first named call has produced structured `status: teammate_spawned`
-- **THEN** doctor reports the native transport as live-unverified rather than inferring Agent Teams from tool names
+#### Scenario: No validated current-team transport exists
+- **WHEN** init names are clean but no asynchronous named member launch plus successful correlated `SendMessage` has been observed
+- **THEN** doctor reports the native transport as live-unverified rather than inferring Agent Teams from tool names or launch status alone

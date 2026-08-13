@@ -47,9 +47,10 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
   and `Workflow`.
 - Use `claude_orchestrator` only with exact Opus or Fable (`claude-opus-5` or
   `claude-fable-5`): it is an experimental Native Agent Team lead, not a
-  Plugin-owned child lifecycle. The first named native spawn must produce the
-  structured `status: teammate_spawned` proof; ordinary Agent results are
-  rejected. Haiku and Sonnet cannot lead.
+  Plugin-owned child lifecycle. A named member must launch asynchronously and
+  a correlated `SendMessage` to that launched current-team name must succeed
+  before transport is live-validated; a synchronous Agent result or failed or
+  uncorrelated message is rejected. Haiku and Sonnet cannot lead.
 - The lead may select only definition-owned `haiku-scout`, `sonnet`, or `opus`
   teammates. Do not pass a call-level model override: requested models remain
   pinned by the definitions, while effective teammate model, effort, and cost

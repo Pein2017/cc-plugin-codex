@@ -121,7 +121,19 @@ async function main() {
     process.stdout.write(JSON.stringify({
       type: "user",
       message: { content: [{ type: "tool_result", tool_use_id: "fixture-team-spawn" }] },
-      tool_use_result: { status: "teammate_spawned" },
+      tool_use_result: { status: "async_launched", agentId: "fixture-team-agent" },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "assistant",
+      message: { content: [{
+        type: "tool_use", id: "fixture-team-message", name: "SendMessage",
+        input: { recipient: "fixture-scout", message: "opaque" },
+      }] },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "fixture-team-message" }] },
+      tool_use_result: { success: true },
     }) + "\\n");
   }
   if (failMode === "transport") {

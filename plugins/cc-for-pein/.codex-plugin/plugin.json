@@ -1,7 +1,7 @@
 {
   "name": "cc-for-pein",
-  "version": "0.17.0+codex.20260811132739",
-  "description": "Experimental checkout-owned Claude Code Agent runtime with bounded leaf/Fable delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
+  "version": "0.18.0+codex.20260813013704",
+  "description": "Experimental checkout-owned Claude Code Agent runtime with bounded leaf and Opus/Fable native-team delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up.",
   "author": {
     "name": "Pein",
     "email": "852128461@qq.com",

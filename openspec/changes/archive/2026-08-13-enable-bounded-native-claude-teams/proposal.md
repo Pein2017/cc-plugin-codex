@@ -14,10 +14,11 @@ that can silently exceed the Plugin's root, cost, and lifecycle boundaries.
 - Enable Claude Code's experimental Native Agent Teams transport only for an
   explicit Opus/Fable orchestrator. If the native gate or injected definitions
   are unavailable, the runtime refuses to accept the turn as native-team work.
-  Definition/tool names at initialization are necessary but not sufficient:
-  the first named teammate call must return the structured
-  `teammate_spawned` result, or the turn fails observably instead of silently
-  accepting ordinary unnamed-subagent work.
+  Definition/tool names at initialization are necessary but not sufficient.
+  The Adapter translates Claude's versioned tool results into stable internal
+  facts: a named member must launch asynchronously, then a correlated
+  `SendMessage` to that launched member name must succeed. Otherwise the turn
+  fails observably instead of silently accepting ordinary unnamed-subagent work.
 - Give a team lead three session-local named teammate definitions:
   `haiku-scout`, `sonnet`, and `opus`. Sonnet and Opus may implement or review;
   Haiku remains a prompt-governed read-only scout.
@@ -47,7 +48,8 @@ that can silently exceed the Plugin's root, cost, and lifecycle boundaries.
   `Agent`, detect reviewed forbidden-tool leakage, and warn on unknown native
   tool drift without claiming universal containment.
 - Add a release-gated real `claude-opus-5`/`low`, `write:false` smoke observing
-  the native definition, first-spawn, same-team message, and successful parent
+  the native definition, named-member launches, validated same-team transport,
+  and successful parent
   synthesis facts the production stream can actually expose, plus no task-state
   mutation outside explicitly allowed local-memory maintenance. Claude 2.1.227
   exposes teammate idle/completion through native mailbox delivery and optional
@@ -103,6 +105,7 @@ OS/runtime capabilities.
 
 Lifecycle ordering is: specify the bounded team and role matrix; add red
 contract/argument/compatibility tests; implement profile and adapter changes;
-update diagnostics and skills; run zero-cost verification; then run the single
-explicit paid witness. Installation, merge, release, and publication remain
+update diagnostics and skills; run zero-cost verification; then run one paid
+witness per explicit authorization with no automatic paid retry. Installation,
+merge, release, and publication remain
 separate later actions.

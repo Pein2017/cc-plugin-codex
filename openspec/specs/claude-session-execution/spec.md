@@ -66,54 +66,116 @@ The explicit opt-in safe profile SHALL apply the runtime-owned sandbox and permi
 - **THEN** Claude receives the read-only sandbox settings, bounded read-only tool policy, and caller-selected supported model
 
 ### Requirement: Runtime appends a bounded delegation envelope
-Every public Claude turn SHALL receive a runtime-owned `--append-system-prompt` envelope without replacing Claude's native system prompt. The common envelope SHALL identify the turn as a bounded delegation from the Codex lead, preserve the supplied task/workspace boundary, state the current activation's write intent as a behavioral authority boundary, assign user-facing synthesis and final acceptance to Codex, require one self-contained final result, and instruct Claude to end the turn with the exact question and supporting evidence when progress requires a decision only the Codex lead or user can make. False write intent SHALL forbid workspace and repository mutation even though terminal parity grants full Claude CLI authority; true write intent SHALL permit only task-scoped mutation. Every mode SHALL emit a hard native `Workflow` denial. Leaf mode SHALL additionally forbid delegation and emit a hard native `Agent` denial. Fable orchestrator mode SHALL permit only one native `Agent` child generation and require the parent to join and synthesize its children.
+Every public Claude turn SHALL receive a runtime-owned
+`--append-system-prompt` envelope without replacing Claude's native system
+prompt. The common envelope SHALL identify the turn as a bounded delegation
+from the Codex lead, preserve the supplied task/workspace boundary, state the
+current activation's write intent as behavioral authority, assign user-facing
+synthesis and final acceptance to Codex, require one self-contained result,
+and require an exact blocker question with evidence when a reserved decision is
+needed. False write intent SHALL forbid task/workspace/repository/external
+mutation except explicitly identified native local-memory maintenance; true
+write intent SHALL permit only task-scoped mutation. Every mode SHALL emit the
+reviewed deny list for `Workflow`, machine-global discovery, scheduled/routine
+wakeups, user/notification delivery, and native worktree switching. Leaf mode
+SHALL additionally deny `Agent` and `SendMessage`. Orchestrator mode SHALL make
+the Native Agent Teams coordination surface available only under the approved
+team contract, require named pinned teammate definitions and disjoint write
+surfaces, forbid isolation/forks/cross-session recipients in the prompt, and
+require the lead to join, verify, and synthesize the team. The envelope SHALL
+label prompt-governed recipient, role, write, team-size, and cost budgets as
+behavioral rather than process-enforced.
 
 #### Scenario: Read-intent leaf turn starts
 - **WHEN** an Agent activates in leaf mode with `write: false`
-- **THEN** Claude receives the common read-only behavioral instruction and leaf instruction plus hard native `Agent` and `Workflow` tool denials
+- **THEN** Claude receives the common read-only behavioral instruction and leaf instruction plus hard native delegation, Workflow, and SendMessage tool denials
 
 #### Scenario: Write-intent leaf turn starts
-- **WHEN** an Agent activates in leaf mode with `write: true`
-- **THEN** Claude receives task-scoped mutation authority and the leaf instruction plus hard native `Agent` and `Workflow` tool denials
+- **WHEN** an eligible non-Haiku Agent activates in leaf mode with `write: true`
+- **THEN** Claude receives task-scoped mutation authority and the same leaf containment boundary
+
+#### Scenario: Native team lead starts
+- **WHEN** an eligible Opus or Fable Agent activates in `claude_orchestrator` mode
+- **THEN** Claude receives the current authority and explicit experimental Native Agent Team instructions while Workflow, machine-global discovery, isolation, forks, and cross-session recipients remain forbidden by the stated enforcement layer
 
 #### Scenario: Fable orchestrator starts
 - **WHEN** a `claude-fable-5` Agent activates in `claude_orchestrator` mode
-- **THEN** Claude receives the current write-intent instruction and orchestrator instruction with `Workflow` denied and `Agent` available
+- **THEN** Claude receives the current authority and explicit experimental Native Agent Team instructions with the same reviewed enforcement boundaries
 
 #### Scenario: Lead-owned decision blocks progress
 - **WHEN** Claude cannot continue without a decision reserved to the Codex lead or user
-- **THEN** the envelope instructs Claude to end the turn with the precise question and supporting evidence so the same session can receive a follow-up
+- **THEN** the envelope instructs Claude to end the turn with the precise question and supporting evidence so the same durable CC Agent can receive a follow-up
+
+#### Scenario: Leaf transport reconnects
+- **WHEN** bounded transport recovery reconnects a leaf job in the exact parent Claude session
+- **THEN** the same delegation mode, tool denials, authority, and leaf envelope are reconstructed from durable job evidence
 
 #### Scenario: Exact job reconnects
-- **WHEN** transport recovery reconnects the same Agent job
-- **THEN** the same delegation mode, tool denials, and write-intent envelope are reconstructed from that durable job evidence
+- **WHEN** bounded transport recovery reconnects the same leaf Agent job
+- **THEN** the same delegation mode, tool denials, authority, and leaf envelope are reconstructed from that durable job evidence
+
+#### Scenario: Native team transport closes
+- **WHEN** an orchestrator process loses transport while native teammates may still have in-process state
+- **THEN** the runtime does not automatically reconnect that same team turn and instead preserves the parent session evidence for a later explicit follow-up that forms a fresh team
 
 #### Scenario: Follow-up changes write intent
-- **WHEN** a follow-up activates the same Claude session with a new explicit write intent
-- **THEN** the new job receives the envelope for the new intent without changing Agent or Claude session identity
+- **WHEN** a follow-up activates the same parent Claude session with a new explicit write intent
+- **THEN** the new job receives a fresh native team and envelope for the new intent without changing durable CC Agent identity
 
 #### Scenario: Native Claude customizations exist
 - **WHEN** hooks, memories, skills, plugins, Serena MCP, or other native configuration is enabled
 - **THEN** the runtime appends its bounded envelope rather than replacing or disabling Claude's native system and configuration sources
 
 ### Requirement: Default terminal-parity profile preserves native configuration with full access
-The model-facing terminal-parity profile SHALL inherit Claude settings, hooks, memories, skills, plugins, MCP configuration, and native tools while requiring the explicit supported model and explicit spawn write intent. Before launching Claude it SHALL set the effective `CLAUDE_CONFIG_DIR`, set `IS_SANDBOX=1`, and pass `--dangerously-skip-permissions` for both false and true write intent. It SHALL NOT add an allowed-tool list, model fallback, effort, settings, MCP, or replacement-system-prompt override. Its only implicit prompt/tool policy SHALL be the runtime-owned delegation envelope for the current write intent, the hard native `Workflow` denial for every Agent, and the additional hard native `Agent` denial for leaf Agents.
+The model-facing terminal-parity profile SHALL inherit Claude settings, hooks,
+memories, skills, plugins, MCP configuration, and native tools while requiring
+an explicit supported model and explicit spawn write intent. Before launch it
+SHALL set the effective `CLAUDE_CONFIG_DIR`, `IS_SANDBOX=1`, force native Auto
+Memory enabled after env-file resolution, and use
+`--dangerously-skip-permissions` for both authority values. It SHALL NOT add a
+general allowed-tool list, model fallback, settings, MCP, or
+replacement-system-prompt override. It SHALL add only the runtime-owned
+delegation/team envelope, mode-specific deny list, and orchestrator-only
+session-local teammate definitions and fixed environment. The orchestrator
+environment SHALL enable Native Agent Teams, remove an inherited
+`CLAUDE_CODE_SUBAGENT_MODEL` override so pinned definitions own requested
+models, set one child layer as a hard boundary, and set the reviewed concurrency
+value only as a residual guard on the forbidden ordinary-subagent path, not as
+a native-team host hint. The profile SHALL describe write authority, Haiku
+read-only behavior, teammate recipients, and team budgets by their actual
+enforcement strength.
+
+#### Scenario: Read-intent leaf Agent starts
+- **WHEN** `spawn_agent` supplies a valid supported model with `write: false`
+- **THEN** Claude receives the selected config, full-access process envelope, explicit parent model, leaf behavioral envelope, no general allow-list, and no native teammate definitions or Agent Teams flag
 
 #### Scenario: Read-intent Agent starts
-- **WHEN** `spawn_agent` supplies a supported model with `write: false`
-- **THEN** Claude receives the selected config directory, `IS_SANDBOX=1`, `--dangerously-skip-permissions`, the explicit model, a read-only behavioral delegation envelope, and no allowed-tool list
+- **WHEN** `spawn_agent` supplies a valid supported leaf model with `write: false`
+- **THEN** Claude receives the selected config, full-access process envelope, explicit parent model, read-only behavioral envelope, and no general allow-list
+
+#### Scenario: Write-intent leaf Agent starts
+- **WHEN** `spawn_agent` supplies an eligible model with `write: true`
+- **THEN** Claude receives the same terminal-parity process envelope with task-scoped mutation authority and no native teammate definitions or Agent Teams flag
 
 #### Scenario: Write-intent Agent starts
-- **WHEN** `spawn_agent` supplies a supported model and `write: true`
-- **THEN** Claude receives the same full-access process envelope with task-scoped mutation authority and no allowed-tool list
+- **WHEN** `spawn_agent` supplies an eligible leaf model with `write: true`
+- **THEN** Claude receives the same full-access process envelope with task-scoped mutation authority and no general allow-list
 
 #### Scenario: Native Claude customizations are configured
 - **WHEN** the selected Claude config enables hooks, Serena MCP, memories, plugins, or skills
-- **THEN** terminal-parity leaves those native configuration sources enabled for both read and write intent rather than replacing them with runtime-owned settings
+- **THEN** terminal parity leaves those sources enabled instead of replacing them with runtime-owned settings
+
+#### Scenario: Native team lead starts
+- **WHEN** terminal parity activates an explicit Opus or Fable orchestrator
+- **THEN** the profile injects only the three sanctioned teammate definitions, sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, removes a conflicting subagent-model environment override, sets the hard depth boundary and residual ordinary-subagent concurrency guard, and applies the team-lead deny list without a general allow-list
 
 #### Scenario: Fable orchestrator uses native subagents
 - **WHEN** terminal parity activates an explicit Fable orchestrator
-- **THEN** the profile denies `Workflow`, leaves `Agent` available, and applies no native tool allow-list
+- **THEN** the profile forms the bounded Native Agent Team, keeps `Workflow` denied, and applies no general native-tool allow-list
+
+#### Scenario: Later orchestrator turn resumes the parent Claude session
+- **WHEN** a follow-up activates a durable orchestrator in the exact parent session
+- **THEN** the runtime supplies a new job-derived team identity while retaining the same three stable member types and native local memories without restoring prior in-process teammates
 
 #### Scenario: Operator safe profile is selected
 - **WHEN** an explicit operator/debug path selects the safe profile
@@ -169,18 +231,40 @@ The runtime SHALL prevent concurrent plugin workers from owning the same canonic
 - **THEN** the second request fails without launching a competing Claude owner
 
 ### Requirement: Claude Code Driver extraction preserves established execution semantics
-The `claude-code` Harness Driver SHALL compose the existing Claude Code execution, environment, profile, compatibility, stream-json, steering, session, history, interruption, and recovery owners without changing their observable public behavior. Extraction behind the Driver boundary SHALL preserve supported model/effort admission, fixed terminal-parity environment, dangerous permission bypass, prompt-level write intent, bounded delegation envelope, universal Workflow denial, leaf Agent denial, Fable one-generation orchestration, exact-session drift rejection, usage-limit classification, native customizations, completion content, and public lifecycle receipts.
+The `claude-code` Harness Driver SHALL compose the established Claude Code
+execution, environment, profile, compatibility, stream-json, steering,
+session, history, interruption, and recovery owners behind a bumped Driver
+contract version. It SHALL preserve supported model/effort admission, fixed
+terminal-parity environment, dangerous permission bypass, prompt-level write
+intent, universal Workflow denial, leaf Agent/SendMessage denial, exact-session
+drift rejection, usage-limit classification, native customizations, completion
+content, and public lifecycle receipts. It SHALL replace the old Fable-only
+one-generation orchestration with the explicit Opus/Fable Native Agent Team
+contract and SHALL fail closed across old/new prepared-job or rollback version
+mismatches.
 
 #### Scenario: Existing Claude leaf Agent runs after extraction
-- **WHEN** the unchanged public API starts a supported non-Fable route in leaf mode
-- **THEN** the same admitted command, fixed environment, stream protocol, prompt/tool envelope, native configuration, receipts, session binding, and terminal result are produced through the Claude Code Driver
+- **WHEN** the unchanged public API starts any valid route in leaf mode
+- **THEN** the same admitted command, fixed environment, stream protocol, prompt/tool envelope, native configuration, receipts, session binding, and terminal result are produced through the bumped Claude Code Driver
+
+#### Scenario: Opus or Fable team lead runs after extraction
+- **WHEN** the unchanged public API starts exact Opus or Fable in `claude_orchestrator` mode
+- **THEN** Workflow remains denied, the experimental native team envelope is reproduced, and only the outer Claude turn becomes the durable Harness result
 
 #### Scenario: Existing Fable orchestrator runs after extraction
 - **WHEN** the unchanged public API starts `claude-fable-5` in `claude_orchestrator` mode
-- **THEN** Workflow remains denied, one native Agent generation remains available, and the outer Claude turn still joins and synthesizes its children
+- **THEN** Workflow remains denied, the experimental native team envelope is reproduced, and only the outer Claude turn becomes the durable Harness result
+
+#### Scenario: Old prepared job meets new Driver
+- **WHEN** a job prepared under the previous Driver version is discovered after hot refresh or promotion
+- **THEN** the new Driver refuses to launch it rather than reconstruct the job under materially different orchestration semantics
+
+#### Scenario: New prepared job meets rolled-back Driver
+- **WHEN** rollback exposes a job prepared under the bumped Driver version to the old Driver
+- **THEN** the old Driver refuses to launch it while safe interrupt/process-control paths remain available
 
 #### Scenario: Active steering is acknowledged after extraction
-- **WHEN** a running Claude turn receives a valid active message
+- **WHEN** a running Claude parent turn receives a valid active message
 - **THEN** the Driver preserves the current dispatch, acknowledgement, ordering, and recovery semantics rather than reducing the message to an unproven generic capability
 
 #### Scenario: Claude history is read after extraction
@@ -203,34 +287,80 @@ The Claude Code Driver SHALL return the latest complete top-level outer-assistan
 - **THEN** the Driver uses the terminal result as a fallback without concatenating duplicate prefixes
 
 ### Requirement: Harness failure classification uses native execution evidence
-The runtime SHALL derive Harness-scoped authentication, account-limit, transport, and process blocking only from structured terminal events, stderr, warnings, exit state, or equivalent native execution evidence, not from Claude assistant prose.
+The runtime SHALL derive Harness-scoped authentication, account-limit,
+transport, process, and native-team/tool-surface blocking only from structured
+terminal or initialization events, stderr, warnings, exit state, or equivalent
+native execution evidence, not from Claude assistant prose. A reviewed
+mode-forbidden tool observed after canonicalizing native aliases, an
+orchestrator initialization missing any injected teammate definition or
+necessary coordination tool name, a named Agent result that is not a correlated
+asynchronous launch, or a failed/uncorrelated `SendMessage` to that launched
+member name, SHALL produce an admitted Harness-scoped compatibility
+classification that maps to the existing `harness_incompatible` blocking
+reason. An absent leaf inventory or unknown non-forbidden native tool SHALL NOT
+produce that classification.
 
 #### Scenario: Assistant discusses an account limit hypothetically
-- **WHEN** a successful final assistant message mentions quota, authentication, or permission errors without matching native failure evidence
+- **WHEN** a successful final assistant message mentions quota, authentication, permission, or forbidden-tool errors without matching native failure evidence
 - **THEN** the job is not classified as a Harness-scoped operator-required failure
+
+#### Scenario: Native initialization leaks a forbidden tool
+- **WHEN** an authoritative production init inventory exposes a tool forbidden by the active mode after mapping init alias `Task` to policy name `Agent`
+- **THEN** the turn is classified as Harness-incompatible from structured native evidence and no assistant prose is used in that decision
+
+#### Scenario: Orchestrator definitions do not load
+- **WHEN** an orchestrator init inventory omits `haiku-scout`, `sonnet`, or `opus`
+- **THEN** the turn fails as Harness-incompatible rather than continuing with silently ignored `--agents` definitions
+
+#### Scenario: Team server gate is unavailable after clean initialization
+- **WHEN** a named Agent returns a synchronous/interactive result or no correlated `SendMessage` succeeds for the launched member name
+- **THEN** the turn fails as Harness-incompatible and does not accept that result as native-team completion
 
 ### Requirement: CC Agent turns enable native Auto Memory by default
 Every model-facing Claude Code turn launched by the CC runtime SHALL receive
-`CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` from the canonical fixed environment so
-Claude native Auto Memory is enabled for new and resumed Agent turns. The fixed
-value SHALL override a conflicting inherited model-facing value. The runtime
-SHALL NOT emulate Auto Memory with `CLAUDE.md`, prompt content, public receipts,
-or Plugin-owned memory storage, and SHALL NOT set `autoMemoryDirectory`; Claude
-SHALL retain its repository-derived memory isolation and shared-worktree
-behavior.
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` from the canonical effective environment
+after the one env file is resolved, so a selected file cannot accidentally
+omit or disable it. The runtime SHALL NOT emulate Auto Memory with `CLAUDE.md`,
+prompt content, public receipts, or Plugin-owned memory storage, and SHALL NOT
+set `autoMemoryDirectory`. Claude SHALL retain its repository-derived memory
+isolation and shared-worktree behavior. Native teammate `memory: local` SHALL
+remain Claude-owned at `.claude/agent-memory-local/<member-type>/`.
+
+#### Scenario: Inherited or selected value disables Auto Memory
+- **WHEN** inherited environment or the selected env file contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, or omits the setting
+- **THEN** the canonical effective child environment replaces it with `0` before Claude starts
 
 #### Scenario: New CC Agent starts
 - **WHEN** `spawn_agent` activates a new Claude Code turn
 - **THEN** the Claude child environment contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`
 
-#### Scenario: Durable Agent resumes
-- **WHEN** `followup_task` activates a proven native Claude session
-- **THEN** the resumed Claude child receives the same force-enabled Auto Memory environment
-
 #### Scenario: Inherited host value disables Auto Memory
 - **WHEN** the inherited model-facing environment contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
-- **THEN** the canonical fixed environment replaces it with `0` before Claude starts
+- **THEN** the canonical effective environment replaces it with `0` before Claude starts
 
 #### Scenario: Claude selects memory storage
 - **WHEN** Auto Memory is available to an Agent working in a Git repository or worktree
 - **THEN** the Plugin passes no shared memory directory or memory content and Claude retains native repository-derived storage
+
+#### Scenario: Durable Agent resumes
+- **WHEN** a follow-up activates a proven parent Claude session
+- **THEN** the resumed parent and any fresh native teammates receive the same force-enabled Auto Memory environment
+
+### Requirement: Orchestrator activation injects stable native teammate definitions
+Every orchestrator activation SHALL supply session-local definitions named
+`haiku-scout`, `sonnet`, and `opus`. Each definition SHALL pin its exact Claude
+model, enable `memory: local`, omit fixed effort, background, isolation,
+permission, skills, and MCP overrides, deny nested `Agent`, `Workflow`,
+`ListAgents`, `ListPeers`, scheduled/routine wakeups, user/notification delivery,
+and native worktree switching, and describe its role and authority boundary.
+Definitions SHALL retain Claude's current-team `SendMessage` and shared-task
+coordination. They SHALL NOT be persisted as Plugin-owned project or user Agent
+files and SHALL NOT override native settings, hooks, skills, plugins, or MCP.
+
+#### Scenario: Team definitions are serialized
+- **WHEN** an orchestrator process starts or resumes
+- **THEN** Claude receives exactly three injected definitions with stable type names, exact requested models, native local memory, and bounded tool denials
+
+#### Scenario: Leaf process starts
+- **WHEN** a leaf process starts or resumes
+- **THEN** it receives no session-local teammate definitions or Agent Teams environment

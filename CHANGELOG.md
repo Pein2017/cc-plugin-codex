@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.18.0 - 2026-08-13
+
+- Add experimental bounded Claude Native Agent Teams for explicit Opus/Fable
+  orchestrators while preserving the flat seven-tool CC Agent API, strict leaf
+  behavior, fresh-team follow-ups, and zero automatic team reconnect.
+- Inject stable Haiku scout, Sonnet, and Opus teammate definitions with pinned
+  requested models, Claude-owned local memory, reviewed tool denials, explicit
+  behavioral authority, and no Plugin-owned teammate registry or transcript.
+- Translate Claude's versioned Agent and `SendMessage` results only at the
+  Adapter boundary. A bounded asynchronous member launch is necessary but not
+  sufficient; successful correlated messaging to that launched member name is
+  required before stable team transport becomes live-validated.
+- Add bounded native-surface compatibility history, doctor projections, and a
+  disposable production-Driver release witness with fail-closed protocol,
+  mutation, overflow, account-limit, and observer-false-negative handling.
+
 ## 0.17.0 - 2026-08-11
 
 - Observe native Claude OAuth credential generations without retaining tokens,

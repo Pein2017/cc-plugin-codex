@@ -251,7 +251,7 @@ describe("Claude headless adapter", () => {
       type: "user",
       session_id: "team-session",
       tool_use_result: { status: "ordinary_subagent" },
-      message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "teammate_spawned" }] },
+      message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "opaque" }] },
     })}\n`);
     assert.equal(parser.state.compatibilitySurfaceDrift, true);
     assert.equal(parser.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
@@ -282,12 +282,21 @@ describe("Claude headless adapter", () => {
         type: "assistant", message: { content: [{ type: "tool_use", id, name: "Agent", input: { name, subagent_type: memberType, prompt: "private brief" } }] },
       })}\n`);
     }
-    parser.feed(`${JSON.stringify({
-      type: "user", tool_use_result: { status: "teammate_spawned" },
-      message: { content: [{ type: "tool_result", tool_use_id: "spawn-haiku" }] },
-    })}\n`);
+    for (const [toolUseId, agentId] of [
+      ["spawn-haiku", "haiku-current"],
+      ["spawn-sonnet", "sonnet-current"],
+    ]) {
+      parser.feed(`${JSON.stringify({
+        type: "user", tool_use_result: { status: "async_launched", agentId },
+        message: { content: [{ type: "tool_result", tool_use_id: toolUseId }] },
+      })}\n`);
+    }
     parser.feed(`${JSON.stringify({
       type: "assistant", message: { content: [{ type: "tool_use", id: "message-1", name: "SendMessage", input: { recipient: "sonnet-1", message: "private message" } }] },
+    })}\n`);
+    parser.feed(`${JSON.stringify({
+      type: "user", tool_use_result: { success: true },
+      message: { content: [{ type: "tool_result", tool_use_id: "message-1" }] },
     })}\n`);
     // Claude's native mailbox/hook lifecycle is not a stable top-level
     // stream-json witness surface. These look-alike records must not become
@@ -296,9 +305,11 @@ describe("Claude headless adapter", () => {
     parser.feed(`${JSON.stringify({ type: "system", subtype: "teammate_completed", teammate_name: "sonnet-1" })}\n`);
     parser.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "private synthesis" })}\n`);
 
-    assert.deepEqual(witnesses.slice(-5), [
+    assert.deepEqual(witnesses.slice(-7), [
       { type: "native_team_member_requested", memberName: "haiku-scout-1", memberType: "haiku-scout" },
       { type: "native_team_member_requested", memberName: "sonnet-1", memberType: "sonnet" },
+      { type: "native_team_member_launched", memberName: "haiku-scout-1", memberType: "haiku-scout" },
+      { type: "native_team_member_launched", memberName: "sonnet-1", memberType: "sonnet" },
       { type: "native_team_transport", delegationMode: "claude_orchestrator", teamTransportLiveValidated: true },
       { type: "native_team_message", sameTeamRecipient: true },
       { type: "native_team_parent_synthesis" },
@@ -345,6 +356,28 @@ describe("Claude headless adapter", () => {
     assert.equal(unsafeParser.state.nativeTeamTransportPending, false);
   });
 
+  it("bounds pending native Agent and named-message correlations before results arrive", () => {
+    const witnesses = [];
+    const parser = new StreamParser({
+      delegationMode: "claude_orchestrator",
+      onNativeTeamWitness: (fact) => witnesses.push(fact),
+    });
+    parser.feed(`${JSON.stringify({
+      type: "system", subtype: "init",
+      tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      agents: ["haiku-scout", "sonnet", "opus"],
+    })}\n`);
+    for (let index = 0; index < 33; index += 1) {
+      parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+        type: "tool_use", id: `repeat-${index}`, name: "Agent",
+        input: { name: "repeat-sonnet", subagent_type: "sonnet" },
+      }] } })}\n`);
+    }
+    assert.equal(parser.pendingNativeTeamAgentResults.size <= 32, true);
+    assert.equal(parser.state.compatibilitySurfaceDrift, true);
+    assert.deepEqual(witnesses.at(-1), { type: "native_team_witness_overflow" });
+  });
+
   it("admits a clean orchestrator inventory without mistaking it for team transport and leaves absent leaf inventory unvalidated", () => {
     const orchestrator = new StreamParser({ delegationMode: "claude_orchestrator" });
     orchestrator.feed(`${JSON.stringify({
@@ -368,7 +401,7 @@ describe("Claude headless adapter", () => {
     assert.equal(leaf.state.compatibilitySurfaceDrift, false);
   });
 
-  it("validates only a correlated production-shaped named teammate spawn", () => {
+  it("validates current Claude team transport only after async launch and correlated named SendMessage success", () => {
     const initialize = () => {
       const parser = new StreamParser({ delegationMode: "claude_orchestrator" });
       parser.feed(`${JSON.stringify({
@@ -392,13 +425,34 @@ describe("Claude headless adapter", () => {
     const success = initialize();
     success.feed(`${JSON.stringify({
       type: "user",
-      tool_use_result: { status: "teammate_spawned" },
-      message: { content: [{ type: "tool_result", tool_use_id: "sanctioned-agent-1", content: "ordinary_subagent" }] },
+      tool_use_result: { status: "async_launched", agentId: "agent-current-1" },
+      message: { content: [{ type: "tool_result", tool_use_id: "sanctioned-agent-1", content: "opaque" }] },
+    })}\n`);
+    assert.equal(success.state.compatibilitySurfaceDrift, false);
+    assert.equal(success.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
+    success.feed(`${JSON.stringify({
+      type: "assistant",
+      message: { content: [{
+        type: "tool_use",
+        id: "send-current-1",
+        name: "SendMessage",
+        input: { recipient: "reviewer-1", message: "opaque" },
+      }] },
+    })}\n`);
+    assert.equal(success.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
+    success.feed(`${JSON.stringify({
+      type: "user",
+      tool_use_result: {
+        success: true,
+      },
+      message: { content: [{ type: "tool_result", tool_use_id: "send-current-1", content: "opaque" }] },
     })}\n`);
     success.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "done" })}\n`);
     assert.equal(success.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, true);
     assert.deepEqual(validateTurnCompletion(success.state, 0), { status: "completed" });
+  });
 
+  it("does not validate team transport from partial Agent input, async launch alone, or SendMessage invocation alone", () => {
     const partial = new StreamParser({ delegationMode: "claude_orchestrator" });
     partial.feed(`${JSON.stringify({
       type: "system",
@@ -427,17 +481,52 @@ describe("Claude headless adapter", () => {
     })}\n`);
     partial.feed(`${JSON.stringify({
       type: "user",
-      tool_use_result: { status: "teammate_spawned" },
+      tool_use_result: { status: "async_launched", agentId: "partial-agent-current" },
       message: { content: [{ type: "tool_result", tool_use_id: "partial-agent-1", content: "rendered string" }] },
     })}\n`);
+    partial.feed(`${JSON.stringify({
+      type: "assistant",
+      message: { content: [{
+        type: "tool_use",
+        id: "partial-send-1",
+        name: "SendMessage",
+        input: { recipient: "scout-1", message: "opaque" },
+      }] },
+    })}\n`);
     partial.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "partial complete" })}\n`);
-    assert.deepEqual(validateTurnCompletion(partial.state, 0), { status: "completed" });
+    assert.equal(partial.state.compatibilitySurfaceDrift, false);
+    assert.equal(partial.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
+    assert.deepEqual(
+      validateTurnCompletion(partial.state, 0),
+      { status: "failed", warning: "Claude native team transport result is missing." },
+    );
+  });
 
+  it("rejects non-background Agent results and uncorrelated named-message results", () => {
+    const initialize = () => {
+      const parser = new StreamParser({ delegationMode: "claude_orchestrator" });
+      parser.feed(`${JSON.stringify({
+        type: "system",
+        subtype: "init",
+        tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+        agents: ["haiku-scout", "sonnet", "opus"],
+      })}\n`);
+      parser.feed(`${JSON.stringify({
+        type: "assistant",
+        message: { content: [{
+          type: "tool_use",
+          id: "sanctioned-agent-1",
+          name: "Agent",
+          input: { name: "reviewer-1", subagent_type: "sonnet" },
+        }] },
+      })}\n`);
+      return parser;
+    };
     const ordinary = initialize();
     ordinary.feed(`${JSON.stringify({
       type: "user",
-      tool_use_result: { status: "ordinary_subagent" },
-      message: { content: [{ type: "tool_result", tool_use_id: "sanctioned-agent-1", content: "teammate_spawned" }] },
+      tool_use_result: { status: "completed", agentId: "ordinary-agent" },
+      message: { content: [{ type: "tool_result", tool_use_id: "sanctioned-agent-1", content: "opaque" }] },
     })}\n`);
     ordinary.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "wrong" })}\n`);
     assert.equal(ordinary.state.compatibilitySurfaceDrift, true);
@@ -446,8 +535,8 @@ describe("Claude headless adapter", () => {
     const mismatch = initialize();
     mismatch.feed(`${JSON.stringify({
       type: "user",
-      tool_use_result: { status: "teammate_spawned" },
-      message: { content: [{ type: "tool_result", tool_use_id: "other-agent", content: "rendered string" }] },
+      tool_use_result: { status: "async_launched", agentId: "mismatch-agent" },
+      message: { content: [{ type: "tool_result", tool_use_id: "other-agent", content: "opaque" }] },
     })}\n`);
     mismatch.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "mismatch" })}\n`);
     assert.equal(mismatch.state.runtimeReceipt.nativeTeamSurface.teamTransportLiveValidated, false);
@@ -455,13 +544,31 @@ describe("Claude headless adapter", () => {
       validateTurnCompletion(mismatch.state, 0),
       { status: "failed", warning: "Claude native team transport result is missing." },
     );
+  });
 
-    const missing = initialize();
-    missing.feed(`${JSON.stringify({ type: "result", subtype: "success", result: "missing" })}\n`);
-    assert.deepEqual(
-      validateTurnCompletion(missing.state, 0),
-      { status: "failed", warning: "Claude native team transport result is missing." },
-    );
+  it("does not fan one enriched tool result across multiple pending native calls", () => {
+    const parser = new StreamParser({ delegationMode: "claude_orchestrator" });
+    parser.feed(`${JSON.stringify({
+      type: "system", subtype: "init",
+      tools: ["Task", "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"],
+      agents: ["haiku-scout", "sonnet", "opus"],
+    })}\n`);
+    parser.feed(`${JSON.stringify({ type: "assistant", message: { content: [{
+      type: "tool_use", id: "multi-a", name: "Agent",
+      input: { name: "multi-scout", subagent_type: "haiku-scout" },
+    }, {
+      type: "tool_use", id: "multi-b", name: "Agent",
+      input: { name: "multi-reviewer", subagent_type: "sonnet" },
+    }] } })}\n`);
+    parser.feed(`${JSON.stringify({
+      type: "user", tool_use_result: { status: "async_launched", agentId: "ambiguous-agent" },
+      message: { content: [
+        { type: "tool_result", tool_use_id: "multi-a" },
+        { type: "tool_result", tool_use_id: "multi-b" },
+      ] },
+    })}\n`);
+    assert.equal(parser.launchedNativeTeamMembers.size, 0);
+    assert.equal(parser.state.compatibilitySurfaceDrift, true);
   });
 
   it("pins canonical model aliases, every explicit effort, and names only fresh sessions", () => {

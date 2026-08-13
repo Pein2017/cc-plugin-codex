@@ -123,6 +123,7 @@ export const MAX_STDERR_BYTES = 64 * 1024;
 // the member map or reach the optional callback.
 const MAX_NATIVE_TEAM_WITNESS_MEMBERS = 16;
 const MAX_NATIVE_TEAM_WITNESS_MEMBER_NAME_BYTES = 96;
+const MAX_NATIVE_TEAM_PENDING_CORRELATIONS = 32;
 export const SANDBOX_TEMP_DIR = normalizePathSlashes(path.resolve(os.tmpdir()));
 
 const NATIVE_TEAM_DEFINITION_EXPECTATIONS = Object.freeze(Object.fromEntries(
@@ -438,10 +439,12 @@ export class StreamParser {
     this.onNativeTeamWitness = typeof options.onNativeTeamWitness === "function"
       ? options.onNativeTeamWitness
       : null;
-    this.firstNamedAgentToolUseId = null;
     // Witness-only, process-local member names. They are never copied to the
     // parser state, runtime receipt, job, or public MCP result.
     this.nativeTeamMembers = new Map();
+    this.pendingNativeTeamAgentResults = new Map();
+    this.launchedNativeTeamMembers = new Set();
+    this.pendingNativeTeamMessageResults = new Map();
     this.nativeTeamWitnessOverflow = false;
   }
 
@@ -458,6 +461,16 @@ export class StreamParser {
     if (this.nativeTeamWitnessOverflow) return;
     this.nativeTeamWitnessOverflow = true;
     this._nativeTeamWitness({ type: "native_team_witness_overflow" });
+  }
+
+  _recordPendingNativeTeamCorrelation(map, toolUseId, value) {
+    if (!map.has(toolUseId) && map.size >= MAX_NATIVE_TEAM_PENDING_CORRELATIONS) {
+      this._recordNativeTeamWitnessOverflow();
+      this.state.compatibilitySurfaceDrift = true;
+      return false;
+    }
+    map.set(toolUseId, value);
+    return true;
   }
 
   _recordNativeTeamSurface(event) {
@@ -499,30 +512,70 @@ export class StreamParser {
     }
   }
 
-  _recordFirstNamedAgentResult(event) {
-    if (!this.firstNamedAgentToolUseId || this.state.nativeTeamSurface == null) return;
+  _recordNativeTeamToolResult(event) {
+    if (this.delegationMode !== "claude_orchestrator" || this.state.nativeTeamSurface == null) return;
     const content = Array.isArray(event.message?.content) ? event.message.content : [];
-    if (!content.some((part) =>
-      part?.type === "tool_result" && part.tool_use_id === this.firstNamedAgentToolUseId,
-    )) return;
-    const status = event.tool_use_result && typeof event.tool_use_result === "object"
-      ? event.tool_use_result.status
+    const toolUseIds = content
+      .filter((part) => part?.type === "tool_result" && typeof part.tool_use_id === "string")
+      .map((part) => part.tool_use_id);
+    if (toolUseIds.length === 0) return;
+    const result = event.tool_use_result && typeof event.tool_use_result === "object"
+      ? event.tool_use_result
       : null;
-    const teamTransportLiveValidated = status === "teammate_spawned";
-    const surface = Object.freeze({
-      ...this.state.nativeTeamSurface,
-      teamTransportLiveValidated,
-    });
-    this.state.nativeTeamSurface = surface;
-    this.state.runtimeReceipt.nativeTeamSurface = surface;
-    this._nativeTeamWitness({
-      type: "native_team_transport",
-      delegationMode: surface.delegationMode,
-      teamTransportLiveValidated,
-    });
-    this.firstNamedAgentToolUseId = null;
-    this.state.nativeTeamTransportPending = false;
-    if (!teamTransportLiveValidated) this.state.compatibilitySurfaceDrift = true;
+    if (!result) return;
+    if (toolUseIds.length !== 1) {
+      this.state.compatibilitySurfaceDrift = true;
+      return;
+    }
+
+    for (const toolUseId of toolUseIds) {
+      const memberName = this.pendingNativeTeamAgentResults.get(toolUseId);
+      if (memberName) {
+        this.pendingNativeTeamAgentResults.delete(toolUseId);
+        if (
+          result.status === "async_launched" &&
+          typeof result.agentId === "string" &&
+          result.agentId.trim()
+        ) {
+          this.launchedNativeTeamMembers.add(memberName);
+          this._nativeTeamWitness({
+            type: "native_team_member_launched",
+            memberName,
+            memberType: this.nativeTeamMembers.get(memberName),
+          });
+        } else {
+          this.state.compatibilitySurfaceDrift = true;
+          this._nativeTeamWitness({
+            type: "native_team_transport",
+            delegationMode: this.state.nativeTeamSurface.delegationMode,
+            teamTransportLiveValidated: false,
+          });
+        }
+      }
+
+      const recipient = this.pendingNativeTeamMessageResults.get(toolUseId);
+      if (!recipient) continue;
+      this.pendingNativeTeamMessageResults.delete(toolUseId);
+      const pinName = result.pin && typeof result.pin === "object" ? result.pin.name : null;
+      const sameTeamRecipient = result.success === true && (pinName == null || pinName === recipient);
+      if (!sameTeamRecipient) {
+        this.state.compatibilitySurfaceDrift = true;
+        continue;
+      }
+      const surface = Object.freeze({
+        ...this.state.nativeTeamSurface,
+        teamTransportLiveValidated: true,
+      });
+      this.state.nativeTeamSurface = surface;
+      this.state.runtimeReceipt.nativeTeamSurface = surface;
+      this.state.nativeTeamTransportPending = false;
+      this._nativeTeamWitness({
+        type: "native_team_transport",
+        delegationMode: surface.delegationMode,
+        teamTransportLiveValidated: true,
+      });
+      this._nativeTeamWitness({ type: "native_team_message", sameTeamRecipient: true });
+    }
   }
 
   _recordNamedAgentToolUse(toolUse) {
@@ -549,28 +602,42 @@ export class StreamParser {
       this.nativeTeamMembers.set(memberName, memberType);
       this._nativeTeamWitness({ type: "native_team_member_requested", memberName, memberType });
     }
-    if (this.state.nativeTeamFirstAgentObserved === true) return;
-    this.state.nativeTeamFirstAgentObserved = true;
     if (typeof toolUse.id !== "string" || !toolUse.id) {
       this.state.compatibilitySurfaceDrift = true;
       return;
     }
-    this.firstNamedAgentToolUseId = toolUse.id;
-    this.state.nativeTeamTransportPending = true;
+    if (!this._recordPendingNativeTeamCorrelation(
+      this.pendingNativeTeamAgentResults,
+      toolUse.id,
+      memberName,
+    )) return;
+    if (this.state.nativeTeamFirstAgentObserved !== true) {
+      this.state.nativeTeamFirstAgentObserved = true;
+      this.state.nativeTeamTransportPending = true;
+    }
   }
 
   _recordNativeTeamMessage(toolUse) {
     if (
       this.delegationMode !== "claude_orchestrator" ||
       String(toolUse?.name ?? "").trim() !== "SendMessage" ||
-      this.state.nativeTeamSurface?.teamTransportLiveValidated !== true
+      this.state.nativeTeamSurface == null
     ) return;
     const input = toolUse?.input;
     const recipient = typeof input?.recipient === "string"
       ? input.recipient.trim()
       : typeof input?.to === "string" ? input.to.trim() : "";
-    if (!recipient || !this.nativeTeamMembers.has(recipient)) return;
-    this._nativeTeamWitness({ type: "native_team_message", sameTeamRecipient: true });
+    if (
+      !recipient ||
+      !this.launchedNativeTeamMembers.has(recipient) ||
+      typeof toolUse.id !== "string" ||
+      !toolUse.id
+    ) return;
+    this._recordPendingNativeTeamCorrelation(
+      this.pendingNativeTeamMessageResults,
+      toolUse.id,
+      recipient,
+    );
   }
 
   /** Feed a raw stdout chunk. Returns parsed events. */
@@ -628,7 +695,7 @@ export class StreamParser {
           }
           return { kind: "result", data: event };
         case "user": {
-          this._recordFirstNamedAgentResult(event);
+          this._recordNativeTeamToolResult(event);
           const text = Array.isArray(event.message?.content)
             ? event.message.content
                 .filter((part) => part?.type === "text" && typeof part.text === "string")
@@ -655,7 +722,12 @@ export class StreamParser {
           return null;
         }
         case "tool_result":
-          this._recordFirstNamedAgentResult({ tool_use_result: event.tool_use_result ?? event });
+          this._recordNativeTeamToolResult({
+            tool_use_result: event.tool_use_result ?? event,
+            message: {
+              content: [{ type: "tool_result", tool_use_id: event.tool_use_id }],
+            },
+          });
           return null;
         default:
           recordUnknownEvent(this.state, event.type, event.subtype);
