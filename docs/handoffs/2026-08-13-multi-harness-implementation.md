@@ -21,17 +21,36 @@ Execution companions:
 
 If a plan conflicts with OpenSpec, correct the plan before code work. Do not reconstruct decisions from the old conversation when the artifacts answer them.
 
-## Planning checkout state
+## Current transfer checkpoint — 2026-08-14
 
-- Planning checkout: `/data/CoordExp/cc-plugin-codex-dev`
-- Production/source owner remains: `/data/CoordExp/cc-plugin-codex`
-- Baseline when planning began: `1a2ea06a598d84c90254ba61501555998620f283`
-- These planning artifacts were initially untracked. Re-run `git status --short`, inspect worktrees/ownership, and record the exact accepted planning tree; do not trust this snapshot as current.
-- This planning task performs no runtime implementation, install/refresh, data migration, live model call, commit, push, archive, public release, or physical source rename.
+- Development owner: `/data/CoordExp/codex-harnessdock-dev` on branch `codex/harnessdock-dev`.
+- Phase 0 baseline commit: `a344b56eb615ce24c1f234bce3e3832d772c2470` (`rename plugin identity to HarnessDock`).
+- Phase 0 acceptance-correction commit: `6e9d38d` (`fix: fail closed during identity cutover`).
+- Production/executable source owner remains `/data/CoordExp/cc-plugin-codex`; do not load runtime code from the development worktree.
+- `/data/CoordExp/cc-plugin-codex-dev` is superseded as a development owner and must remain clean; it is not a second authority or write target.
+- The Phase A/B OpenSpec changes and their two execution plans were copied byte-identically into this worktree and are retained here as the sole successor planning copies. Do not sync them back to the old development worktree.
+- Commit `6e9d38d` requires complete explicit Agent/MCP ownership witnesses for cutover and rollback, and lets a failed post-move metadata check recover from one uniquely matching pending receipt. Treat missing, partial, or ambiguous evidence as a blocked cutover rather than inferring settlement from arbitrary state JSON.
+- Phase 0 is not fully accepted or ready to archive: installed cutover and fresh loaded-Plugin acceptance tasks 8–9 remain intentionally incomplete and require separate authorization.
+- The commit author identity currently records a private email. Distributable manifests are clean, but configure an appropriate public/noreply Git identity before any future public commit or rewrite/push decision; do not rewrite history implicitly.
 
-Create a fresh isolated implementation worktree/session for Phase 0 only. Use Serena in that exact worktree for code declarations/references/diagnostics and shell search for specs/docs/diffs. Preserve unrelated dirty work.
+Start the next fresh Codex task with cwd `/data/CoordExp/codex-harnessdock-dev` and activate Serena for that exact root. Preserve unrelated dirty work and treat this handoff as transport rather than completion evidence.
+
+## Worker routing during the transition
+
+- Codex remains the main planner, dispatcher, synthesizer, reviewer, and acceptor.
+- Before installed cutover, the currently loaded `@cc-for-pein` Plugin MAY remain the primary implementation-worker transport, with every spawn explicitly specifying full model, reasoning effort, `leaf`/approved topology, and `write` authority.
+- Prefer Sonnet for routine bounded implementation; Haiku remains suitable for mechanical smoke. Opus may handle ordinary code audit and complex implementation. Reserve Fable for important or decision-owning architecture/release gates, or when the user explicitly requests it; OpenSpec review does not automatically require the strongest reviewer.
+- Every worker must use `/data/CoordExp/codex-harnessdock-dev` as its task workspace and must not modify `/data/CoordExp/cc-plugin-codex-dev`, `/data/CoordExp/cc-plugin-codex`, Plugin registration, installed snapshots, or either old/new Plugin data root unless the owning cutover task is explicitly authorized.
+- After tasks 8–9 switch the installed identity, start a fresh Codex task and use the loaded `codex-harnessdock` tools instead of retaining two live Plugin identities.
 
 Before freezing any phase implementation, run `openspec list` again. The currently active `add-targeted-barrier-agent-join`, `expose-actionable-agent-blocking`, `improve-agent-card-and-usage-receipts`, `replace-wait-polling-with-event-wakeup`, and `harden-native-background-task-completion` changes overlap public wait/blocking/card/usage/settlement requirements. If any has been accepted or archived, rebase this phase's copied MODIFIED/RENAMED requirements and file plan onto the new main specs before editing code; strict validation alone does not detect stale cross-change authority.
+
+## Immediate next action and stop rule
+
+1. Bind Git/Serena to `/data/CoordExp/codex-harnessdock-dev`, inspect exact HEAD/status, and re-run `openspec list` before selecting work.
+2. Treat candidate-tree tests as passed only when fresh focused/full receipts exist for the exact tree; do not infer installed readiness from them.
+3. Stop before state migration, Plugin refresh/install, enabled-record changes, or real Claude acceptance unless the user explicitly authorizes Phase 0 tasks 8–9.
+4. Do not begin Phase A merely because candidate-tree tests pass. Phase A begins only from the exact tree accepted by the fresh installed-Plugin witness.
 
 ## Product and technology decisions
 
