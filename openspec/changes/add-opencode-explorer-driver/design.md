@@ -1,6 +1,6 @@
 ## Context
 
-This change consumes the accepted HarnessDock identity and Driver v2 control plane. See `proposal.md` for motivation and `specs/` for behavior. `runtime/index.mjs` remains the sole public lifecycle facade; the static core sees only route/capability snapshots, launch claims, leases, separate native-session/native-turn references, live handles, and normalized terminal evidence.
+This change consumes the exact candidate-accepted HarnessDock identity and Driver v2 control plane; their installed witnesses may remain deferred. See `proposal.md` for motivation and `specs/` for behavior. `runtime/index.mjs` remains the sole public lifecycle facade; the static core sees only route/capability snapshots, launch claims, leases, separate native-session/native-turn references, live handles, and normalized terminal evidence.
 
 OpenCode differs from Claude Code in the relevant ownership boundary: an operator-owned HTTP Server persists outside Plugin turns, while a client request/session/message lineage represents one native turn. Server persistence avoids OpenCode/MCP cold boot; it does not prove provider prompt-cache reuse. Native OpenCode transcript/history remains owned by OpenCode and is not imported into the Plugin.
 
@@ -220,10 +220,10 @@ Implementation workers remain a later phase using operator-prepared isolated Git
 
 ## Migration Plan
 
-1. Start only from accepted Phase 0 and Phase A trees; revalidate no active/unknown incompatible jobs.
+1. Start only from exact candidate-accepted Phase 0 and Phase A trees; revalidate no active/unknown incompatible jobs without requiring their intermediate generation to be installed.
 2. Run the zero-model compatibility probe, freeze model/profile/Server/client facts, and update the plan/spec only if the actual route or semantics differ.
 3. Add the exact pinned client, fixed-origin secret boundary, fake Server, profile/prompt/result helpers, and OpenCode Driver behind non-public tests.
 4. Prove launch/session/turn lineage, unknown acceptance, no observation/recovery, conditional continuation, metrics, and mutation witness through fake vertical slices.
-5. Atomically activate the eight-operation HarnessDock generation, v3 public writes, route receipts, eighth Skill, docs, and zero-cost installed smoke.
-6. With explicit authorization, run the three live examples and write the evidence report.
-7. Refresh/release only under separate authorization after acceptance. Rollback removes new OpenCode admission and restores the previous public generation while retaining v3/unknown records read-only; it never deletes or replays ambiguous OpenCode work.
+5. Complete the eight-operation HarnessDock candidate generation, v3 public writes, route receipts, eighth Skill, docs, installed-smoke implementation, evaluation tooling, deterministic tests, and review without changing the loaded Plugin.
+6. Stop for consolidated authorization: promote the final tree, perform the one identity/data cutover, refresh/install, and start a fresh Codex task for installed smoke and the three live examples.
+7. Write the evidence report from those actual receipts. Publish/release only under separate authorization after acceptance. Rollback removes new OpenCode admission and restores the previous public generation while retaining v3/unknown records read-only; it never deletes or replays ambiguous OpenCode work.

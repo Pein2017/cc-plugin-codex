@@ -26,21 +26,24 @@ The local cutover SHALL drain active Agents, preserve a recoverable backup of th
 - **WHEN** any Agent turn is active or settlement is unknown
 - **THEN** the cutover stops before enabling the new identity or removing the old entry
 
-### Requirement: Fresh Codex discovery proves the cutover
-Acceptance SHALL use a fresh Codex task after the new identity is installed. That task SHALL discover exactly the seven renamed Skills and seven renamed typed tools, spawn one explicit read-only Claude Agent through the new namespace, join its completion, perform one exact valid follow-up, and inspect list/message behavior. Acceptance SHALL also prove the old MCP server is not concurrently active. The witness SHALL not be replaced by checkout-only tests, marketplace metadata, or a zero exit code.
+### Requirement: Candidate acceptance and installed cutover acceptance are distinct
+Checkout-level identity, parity, migration, and fake-Claude tests plus fresh read-only review SHALL be sufficient to candidate-accept the rename for dependent Phase A/B implementation while the old Plugin remains installed. Installed cutover acceptance SHALL still use a fresh Codex task after the final accepted HarnessDock generation is installed. That task SHALL discover the exact operation catalog owned by the final generation, prove the required legacy-Claude lifecycle through the new namespace, and prove the old MCP server is not concurrently active. When Phase B is included before installation, the expected catalog is its eight-operation generation rather than the intermediate seven-operation catalog. The installed witness SHALL not be replaced by checkout-only tests, marketplace metadata, or a zero exit code.
 
-#### Scenario: Fresh task proves the renamed lifecycle
-- **WHEN** the new Plugin is loaded after the atomic cutover
-- **THEN** discovery, spawn, wait, exact follow-up, list, and message read all succeed only through `codex_harnessdock`
+#### Scenario: Dependent implementation starts before installation
+- **WHEN** the exact rename candidate passes all checkout-level gates and review but the installed identity remains `cc_for_pein`
+- **THEN** Phase A and Phase B candidate implementation may proceed without claiming that the rename is installed or release-accepted
+
+#### Scenario: Fresh task proves the final renamed lifecycle
+- **WHEN** the final accepted Plugin generation is loaded after the atomic cutover
+- **THEN** its exact catalog and required legacy-Claude lifecycle succeed only through `codex_harnessdock`
 
 #### Scenario: Old and new servers are both visible
 - **WHEN** the fresh task can discover or invoke both namespaces
 - **THEN** cutover acceptance fails and the operator rolls back to one enabled identity
 
 ### Requirement: Phase-zero rename does not move source ownership
-This identity transition SHALL continue loading the canonical production checkout at `/data/CoordExp/cc-plugin-codex` and MAY retain the development worktree `/data/CoordExp/cc-plugin-codex-dev`. It SHALL NOT rename Git repositories, registered worktrees, remotes, GitHub ownership, or historical records. A later separately specified physical rename SHALL update those boundaries only after the neutral control plane and OpenCode Driver are accepted.
+This identity transition SHALL continue loading the canonical production checkout at `/data/CoordExp/cc-plugin-codex` and MAY use `/data/CoordExp/codex-harnessdock-dev` as the successor development worktree. It SHALL NOT rename the canonical production checkout, Git common directory, remotes, GitHub ownership, or historical records. A later separately specified physical rename SHALL update those production/deployment boundaries only after the neutral control plane and OpenCode Driver are accepted.
 
 #### Scenario: Runtime path is inspected after identity cutover
 - **WHEN** doctor resolves the loaded source
 - **THEN** the Plugin reports the current canonical checkout and does not claim that physical source paths were renamed
-

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Do not begin until `rename-to-codex-harnessdock` is implemented/accepted and a fresh Codex task proves the new seven-operation identity.
+- Begin only from the exact reviewed `rename-to-codex-harnessdock` candidate tree with fresh focused/full checkout-level gates. Its installed cutover/fresh-Codex witness may remain deferred until the Phase B candidate is complete.
 - Read the owning proposal/design/specs/tasks in full; OpenSpec wins over this execution plan.
 - Use an isolated worktree/session. Keep `runtime/index.mjs` the sole lifecycle interface and the registry static/in-tree.
 - Phase A adds no OpenCode/DeepSeek/Grok/Pi/Codex Driver, no eighth operation, no public schema change, and no v3 public creation.
@@ -192,4 +192,4 @@ driver = {
 - [ ] If separately authorized, run one real read-only Claude leaf smoke in a disposable Git workspace and stop on auth/account/quota evidence.
 - [ ] Run `npm run check`, `openspec validate generalize-multi-harness-agent-control-plane --strict`, `openspec validate --all --strict`, and `git diff --check`.
 - [ ] Freeze the exact tree and obtain fresh read-only review for false acceptance/terminal, replay, secret scope, lost-worker release, legacy mutation, root crossover, Driver policy, and public-generation drift.
-- [ ] Disposition findings, rerun gates, update the fresh handoff, and stop. Phase B begins only in a new task from the accepted tree.
+- [ ] Disposition findings, rerun gates, and update the handoff. Once the exact candidate tree is accepted, Phase B may begin immediately in the same task/worktree; preserve a separate commit/checkpoint and OpenSpec ledger.

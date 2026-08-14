@@ -16,7 +16,7 @@
 - Do not enable old and new MCP identities concurrently. Do not copy state into two writable stores.
 - Do not rename `/data/CoordExp/cc-plugin-codex`, this development worktree, Git remotes, or GitHub in Phase 0.
 - Default tests are zero-model-cost. Installed cutover and real Claude witness require separate explicit authorization.
-- Do not install, refresh, publish, archive, push, or begin Phase A implicitly.
+- Phase A MAY begin from the exact reviewed candidate tree after all checkout-level gates pass. Do not install, refresh, publish, archive, or push implicitly; defer the installed cutover until the Phase B candidate is complete.
 
 ---
 
@@ -138,16 +138,16 @@
 - [ ] Freeze exact tree/hashes and request one fresh read-only review for split authority, state loss, rollback race, stale-task mutation, discovery duplication, and accidental Phase A behavior.
 - [ ] Disposition findings and rerun affected gates. Do not install or cut over in this task unless the user separately authorizes it.
 
-### Task 8: Perform the explicit local cutover
+### Task 8: Perform the consolidated explicit local cutover
 
 - [ ] Record current doctor/status and prove no active/unknown Agent.
-- [ ] Back up and atomically move the data namespace, refresh/install the new identity from `/data/CoordExp/cc-plugin-codex`, and disable/remove the old enabled record.
-- [ ] Before starting Codex, prove exactly one enabled MCP identity and run zero-model-cost installed release smoke.
+- [ ] Back up and atomically move the data namespace, promote the final accepted candidate to `/data/CoordExp/cc-plugin-codex`, refresh/install that identity, and disable/remove the old enabled record.
+- [ ] Before starting Codex, prove exactly one enabled MCP identity and run zero-model-cost installed release smoke for the final accepted public generation (eight operations when Phase B is included).
 - [ ] On failure, follow the evidence-gated rollback and re-run doctor/status; never roll back across unsettled new work.
 
-### Task 9: Run the fresh Codex witness and hand off Phase A
+### Task 9: Run the fresh Codex witness for the final generation
 
-- [ ] In a new Codex task, prove exactly seven renamed Skills/tools are model-visible and the old identity is absent.
+- [ ] In a new Codex task, prove the final accepted HarnessDock catalog is model-visible (eight Skills/tools when Phase B is included) and the old identity is absent.
 - [ ] With explicit real-Claude authorization, spawn one read-only Agent, wait for terminal completion, issue one exact valid follow-up, list it, and read one bounded native assistant message.
 - [ ] Record actual loaded source path, installed snapshot, data lineage, mutation witness, cutover/backup receipts, and rollback readiness.
-- [ ] Update the cross-session handoff with the exact accepted tree and authorize only the next Phase A planning target; do not publish, push, archive, or physically rename source paths.
+- [ ] Update the cross-session handoff with the exact released tree and all Phase 0/A/B receipts; do not publish, push, archive, or physically rename source paths implicitly.

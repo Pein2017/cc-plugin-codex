@@ -53,17 +53,17 @@
 - [x] 7.4 Freeze the exact tree and obtain one fresh read-only architecture/migration review covering split lifecycle authority, state loss, rollback safety, stale-task behavior, public metadata, and Phase A/B ordering.
 - [x] 7.5 Disposition every review finding and rerun all affected focused/full gates without installing or cutting over implicitly.
 
-## 8. Execute The Explicit Local Cutover
+## 8. Execute The Consolidated Explicit Local Cutover
 
 - [ ] 8.1 After separate user authorization, record old doctor/status, confirm zero active/unknown Agents, create the backup, and atomically move the data namespace.
-- [ ] 8.2 Refresh/install the new identity from the canonical production checkout, disable/remove the old enabled entry, and prove only one MCP identity is registered before starting a Codex task.
-- [ ] 8.3 Run zero-model-cost installed release smoke proving the matching snapshot, seven renamed Skills/tools, isolated `list_agents`, correct source provenance, and absence of concurrent old identity.
+- [ ] 8.2 After Phase A/B candidate acceptance, promote the exact final tree to the canonical production checkout, refresh/install only that new identity, disable/remove the old enabled entry, and prove only one MCP identity is registered before starting a Codex task.
+- [ ] 8.3 Run zero-model-cost installed release smoke proving the matching final snapshot, the final accepted catalog (eight Skills/tools when Phase B is included), isolated inspection, correct source provenance, and absence of concurrent old identity.
 - [ ] 8.4 On any failure, stop new lifecycle work and follow the evidence-gated rollback; never restore an old runtime across active or unknown new ownership.
 
-## 9. Run Fresh Codex Live Acceptance And Hand Off Phase A
+## 9. Run Fresh Codex Live Acceptance For The Final Generation
 
-- [ ] 9.1 With explicit real-Claude authorization, start a fresh Codex task and prove model-visible discovery of exactly the seven `$codex-harnessdock:*` Skills and `mcp__codex_harnessdock__*` tools.
-- [ ] 9.2 Through the loaded Plugin, spawn one read-only Claude Agent, join its terminal completion, deliver one exact valid follow-up, list the Agent, and read one bounded native assistant message; record lifecycle and mutation evidence only.
+- [ ] 9.1 Start a fresh Codex task and prove model-visible discovery of the exact final `$codex-harnessdock:*` / `mcp__codex_harnessdock__*` catalog (eight operations when Phase B is included).
+- [ ] 9.2 With explicit live authorization, prove legacy Claude spawn/terminal/follow-up/list/message behavior and the Phase B OpenCode examples through the loaded Plugin; record bounded lifecycle, route, usage, and mutation evidence only.
 - [ ] 9.3 Prove the old Skill/MCP identity is absent, the loaded runtime resolves to `/data/CoordExp/cc-plugin-codex`, and the same migrated state lineage remains authoritative.
-- [ ] 9.4 Record the exact accepted commit/tree, cutover and backup receipts, installed snapshot, live witness, rollback readiness, and all still-unproven multi-Harness facts in a fresh Phase A handoff.
-- [ ] 9.5 Leave publish, push, archive, physical checkout/GitHub rename, Phase A implementation, OpenCode work, and later Harnesses unstarted unless separately authorized.
+- [ ] 9.4 Record the exact accepted commit/tree, cutover and backup receipts, installed snapshot, live witnesses, rollback readiness, and all still-unproven maturity facts in a fresh Phase R handoff.
+- [ ] 9.5 Leave publish, push, archive, physical production-checkout/GitHub rename, maturity runs, and later Harnesses unstarted unless separately authorized.

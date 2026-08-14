@@ -1,6 +1,6 @@
 ## 1. Freeze Driver Contract V2
 
-- [ ] 1.1 Verify `rename-to-codex-harnessdock` is implemented and accepted, then add failing contract tests for static descriptions, side-effect-free instance inspection, least-authority DriverScope, explicit route validation, route-qualified capability maturity, `noninteractive_fixed_policy` admission, process-local LiveTurn shape, optional operation/capability coherence, and rejection of Driver v1.
+- [ ] 1.1 Verify the exact `rename-to-codex-harnessdock` candidate passed its checkout-level gates/review (installed cutover may remain deferred), then add failing contract tests for static descriptions, side-effect-free instance inspection, least-authority DriverScope, explicit route validation, route-qualified capability maturity, `noninteractive_fixed_policy` admission, process-local LiveTurn shape, optional operation/capability coherence, and rejection of Driver v1.
 - [ ] 1.2 Replace the process-shaped Harness contract and capability validators with the exact Driver v2 and normalized terminal schemas from `design.md`, retaining bounded failure, progress, metrics, and receipt validation.
 - [ ] 1.3 Add a fake service Driver fixture that starts and completes a turn without a child PID or exit status, and prove the Supervisor contains no Harness-ID behavior branch.
 - [ ] 1.4 Prove Driver prompt preparation can add only authority/topology/return-envelope facts and that the generic completion accepts one bounded final message without repository-specific result fields.
@@ -60,4 +60,4 @@
 
 - [ ] 9.1 Freeze the exact tested tree and request one fresh read-only architecture/concurrency review for false terminal claims, secret persistence, lost-worker lease release, legacy mutation, root crossover, and accidental public-generation drift.
 - [ ] 9.2 Let the Codex lead disposition every finding, rerun affected focused/full gates, and leave the accepted implementation uninstalled and unreleased.
-- [ ] 9.3 Update the implementation handoff with exact commit/tree, closed and unknown settlement risks, the real-smoke receipt, and confirmation that `add-opencode-explorer-driver` remains the sole next change authorized to activate v3 public spawns.
+- [ ] 9.3 Update the implementation handoff with exact commit/tree, closed and unknown settlement risks, any authorized direct real-smoke receipt, and confirmation that `add-opencode-explorer-driver` remains the sole next change authorized to activate v3 public spawns; once this candidate gate passes, continue into that change without requiring an intermediate install/restart.

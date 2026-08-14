@@ -10,13 +10,13 @@
 
 ## Global Constraints
 
-- Do not begin until Phase 0 and Phase A are accepted at exact trees with no incompatible active/unknown jobs.
+- Begin only after Phase 0 and Phase A candidate trees are accepted by their exact checkout-level tests/reviews, with no incompatible active/unknown jobs. Their installed release witnesses may remain deferred to the consolidated final activation.
 - Assume OpenCode is operator-installed/logged-in/configured, but independently prove versions/model/profile/protocol before admission.
 - Operator owns `opencode serve`, auth, account, profile, and Go subscription. The Plugin never manages them or binds remote interfaces.
 - Intended route is explicit `opencode` + exact discovered DeepSeek V4 Flash full ID + `leaf` + `write=false`, capacity one. No defaults/substitution.
 - No active steering, interrupt, restart observation/recovery, native history, approval broker, orchestration, write, or automatic fallback/retry in the first release.
 - Default tests/smoke use zero model tokens. Three real calls require explicit authorization and fixed guards.
-- Do not install/refresh/release/archive/push or begin Phase R/later Harness work implicitly.
+- Complete candidate code, deterministic tests, zero-model compatibility probing, release/evaluation tooling, and docs before stopping. Do not install/refresh/release/archive/push or begin Phase R/later Harness work implicitly.
 
 ---
 
@@ -166,7 +166,7 @@
 - [ ] Document Phase R then DeepSeek Harness/Grok probes, with Pi reference-only and no TUI automation.
 - [ ] Run `node --test tests/runtime/plugin-contract.test.mjs tests/runtime/operator-diagnostics.test.mjs tests/runtime/version-and-bootstrap.test.mjs`.
 
-### Task 9: Run deterministic and installed zero-cost acceptance
+### Task 9: Run deterministic and prepare installed zero-cost acceptance
 
 **Files:**
 - Create: `tests/runtime/opencode-integration.test.mjs`
@@ -176,7 +176,7 @@
 
 - [ ] Exercise fake MCP → runtime → launch/session/turn → assistant completion, including exact-resume or fresh-only fixture branch.
 - [ ] Cover model/profile/auth/quota-like/provider/result/submission/worker-loss/unknown/redaction/mutation/capacity failures.
-- [ ] Update installed smoke for eight renamed Skills/tools, route discovery, strict schema, legacy Claude, no old MCP identity, and no model/Server lifecycle side effect.
+- [ ] Update and test installed-smoke logic for eight renamed Skills/tools, route discovery, strict schema, legacy Claude, no old MCP identity, and no model/Server lifecycle side effect; defer execution against the installed snapshot to the consolidated activation.
 - [ ] Run `node --test tests/runtime/opencode-integration.test.mjs tests/runtime/release-smoke.test.mjs`, then `npm run check`, strict OpenSpec validation, and `git diff --check`.
 
 ### Task 10: Run three real examples and write the evidence report

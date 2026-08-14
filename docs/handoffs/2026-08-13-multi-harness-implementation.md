@@ -2,7 +2,7 @@
 
 ## Objective
 
-Build the Codex-originated multi-Harness control plane in three independently accepted phases: rename the current local Plugin identity without behavior drift, generalize its internal lifecycle, then add one read-only OpenCode/DeepSeek V4 Flash Explorer. Do not implement all phases in one session.
+Build the Codex-originated multi-Harness control plane in three sequentially gated changes: rename the current local Plugin identity without behavior drift, generalize its internal lifecycle, then add one read-only OpenCode/DeepSeek V4 Flash Explorer. The next implementation task SHOULD continue across all remaining candidate code and deterministic tests in this order without pausing for user intervention; it stops only at the consolidated installed-release boundary or on evidence that requires a product/spec decision.
 
 ## Authority
 
@@ -30,7 +30,7 @@ If a plan conflicts with OpenSpec, correct the plan before code work. Do not rec
 - `/data/CoordExp/cc-plugin-codex-dev` is superseded as a development owner and must remain clean; it is not a second authority or write target.
 - The Phase A/B OpenSpec changes and their two execution plans were copied byte-identically into this worktree and are retained here as the sole successor planning copies. Do not sync them back to the old development worktree.
 - Commit `6e9d38d` requires complete explicit Agent/MCP ownership witnesses for cutover and rollback, and lets a failed post-move metadata check recover from one uniquely matching pending receipt. Treat missing, partial, or ambiguous evidence as a blocked cutover rather than inferring settlement from arbitrary state JSON.
-- Phase 0 is not fully accepted or ready to archive: installed cutover and fresh loaded-Plugin acceptance tasks 8–9 remain intentionally incomplete and require separate authorization.
+- Phase 0's exact candidate tree is accepted for dependent implementation after the `6e9d38d` correction and fresh full gates. Its installed cutover and loaded-Plugin acceptance tasks 8–9 remain intentionally incomplete; they are consolidated with the final Phase B installation rather than blocking Phase A/B candidate work.
 - The commit author identity currently records a private email. Distributable manifests are clean, but configure an appropriate public/noreply Git identity before any future public commit or rewrite/push decision; do not rewrite history implicitly.
 
 Start the next fresh Codex task with cwd `/data/CoordExp/codex-harnessdock-dev` and activate Serena for that exact root. Preserve unrelated dirty work and treat this handoff as transport rather than completion evidence.
@@ -41,16 +41,17 @@ Start the next fresh Codex task with cwd `/data/CoordExp/codex-harnessdock-dev` 
 - Before installed cutover, the currently loaded `@cc-for-pein` Plugin MAY remain the primary implementation-worker transport, with every spawn explicitly specifying full model, reasoning effort, `leaf`/approved topology, and `write` authority.
 - Prefer Sonnet for routine bounded implementation; Haiku remains suitable for mechanical smoke. Opus may handle ordinary code audit and complex implementation. Reserve Fable for important or decision-owning architecture/release gates, or when the user explicitly requests it; OpenSpec review does not automatically require the strongest reviewer.
 - Every worker must use `/data/CoordExp/codex-harnessdock-dev` as its task workspace and must not modify `/data/CoordExp/cc-plugin-codex-dev`, `/data/CoordExp/cc-plugin-codex`, Plugin registration, installed snapshots, or either old/new Plugin data root unless the owning cutover task is explicitly authorized.
-- After tasks 8–9 switch the installed identity, start a fresh Codex task and use the loaded `codex-harnessdock` tools instead of retaining two live Plugin identities.
+- Continue using the currently loaded `@cc-for-pein` transport until the consolidated final cutover. After that cutover, start a fresh Codex task and use the loaded `codex-harnessdock` tools instead of retaining two live Plugin identities.
 
 Before freezing any phase implementation, run `openspec list` again. The currently active `add-targeted-barrier-agent-join`, `expose-actionable-agent-blocking`, `improve-agent-card-and-usage-receipts`, `replace-wait-polling-with-event-wakeup`, and `harden-native-background-task-completion` changes overlap public wait/blocking/card/usage/settlement requirements. If any has been accepted or archived, rebase this phase's copied MODIFIED/RENAMED requirements and file plan onto the new main specs before editing code; strict validation alone does not detect stale cross-change authority.
 
 ## Immediate next action and stop rule
 
 1. Bind Git/Serena to `/data/CoordExp/codex-harnessdock-dev`, inspect exact HEAD/status, and re-run `openspec list` before selecting work.
-2. Treat candidate-tree tests as passed only when fresh focused/full receipts exist for the exact tree; do not infer installed readiness from them.
-3. Stop before state migration, Plugin refresh/install, enabled-record changes, or real Claude acceptance unless the user explicitly authorizes Phase 0 tasks 8–9.
-4. Do not begin Phase A merely because candidate-tree tests pass. Phase A begins only from the exact tree accepted by the fresh installed-Plugin witness.
+2. Implement the remaining Phase A candidate with TDD, fresh focused/full receipts, review, and an exact-tree checkpoint. When that checkpoint passes, continue directly into Phase B in the same task/worktree; do not merge the two OpenSpec task ledgers or skip either review gate.
+3. Complete Phase B code, deterministic fake-Server coverage, compatibility probing that consumes no model request, release/evaluation tooling, documentation, and all checkout-level tests that the available local contract permits.
+4. Stop before the first operation that mutates installed state or requires the freshly loaded final Plugin: production-checkout promotion, durable data cutover, Plugin refresh/install, enabled-record changes, Codex restart/new loaded task, installed-smoke execution, or live Claude/OpenCode examples through that loaded Plugin. Present these as one operator runbook instead of performing a partial seven-operation installation.
+5. Also stop on an actual OpenCode contract mismatch requiring OpenSpec revision, unavailable required operator-owned Server evidence, secret/auth/account/quota failure, material paid-model authorization need, or a conclusion-changing review finding. Ordinary implementation details and failing tests are not pause conditions; diagnose and fix them.
 
 ## Product and technology decisions
 
@@ -79,7 +80,7 @@ Before freezing any phase implementation, run `openspec list` again. The current
 - One behavioral writer per canonical worktree. Unknown writer holds the lease. No model-facing force-clear.
 - Operator CLI is doctor/status/inspect/reconcile only; formal dispatch is Codex/MCP.
 
-## Phase 0 stop boundary
+## Phase 0 candidate and deferred activation boundary
 
 Phase 0 preserves the current seven Claude operations and only changes identity/source-within-checkout/data namespaces. It must:
 
@@ -88,10 +89,11 @@ Phase 0 preserves the current seven Claude operations and only changes identity/
 - rename MCP/Skill/package namespaces;
 - record the cutover timestamp so operator usage reports count new `codex_harnessdock` events, retain only valid pre-cutover `cc_for_pein` history, and flag post-cutover legacy traffic;
 - retain `/data/CoordExp/cc-plugin-codex` as loaded runtime source;
-- prove zero-model installed smoke and a fresh Codex task with new discovery, read-only Claude spawn/wait, exact follow-up, list/read, and absence of old MCP;
-- leave a recoverable backup and stop before Phase A.
+- prove seven-operation identity/behavior parity in checkout-level and fake-Claude tests;
+- leave installed state untouched while Phase A/B candidates are implemented;
+- at the consolidated final activation, prove the then-current accepted public generation (eight operations after Phase B), a read-only Claude lifecycle witness, correct state lineage, and absence of the old MCP.
 
-Do not run cutover automatically. It requires explicit authorization after tests/review. Never roll back across active/unknown new work.
+Do not run cutover automatically. It requires explicit authorization after all three candidate changes pass their tests/reviews. Never roll back across active/unknown new work.
 
 ## Phase A stop boundary
 
@@ -99,7 +101,7 @@ Phase A adds Driver v2, least-authority scope, static instance inspection, inter
 
 `DEFAULT_HARNESS_ID` may exist only in the legacy Claude adapter. `runtime/execution-profile.mjs` becomes Claude Driver-internal. No generic session/tool/event/approval/workflow/routing API is allowed.
 
-Stop after deterministic/full gates, optional separately authorized read-only Claude smoke, fresh review, exact accepted tree, and a new Phase B handoff.
+Checkpoint after deterministic/full gates, optional separately authorized direct read-only Claude smoke, fresh review, and an exact accepted tree. Phase B may then begin immediately in the same task/worktree; this checkpoint is not installed/release acceptance.
 
 ## Phase B live facts to discover, not assume
 
@@ -116,15 +118,15 @@ Three explicit live successes admit only Experimental dogfooding. Twenty-task re
 
 ## Verification and authorization rules
 
-For each phase:
+For each change:
 
-1. start from the exact accepted prior tree in a fresh isolated task/worktree;
+1. start from the exact candidate-accepted prior tree in the isolated development worktree; a fresh task is recommended but not required between Phase A and B;
 2. implement test-first in the order of the owning OpenSpec/tasks and Superpowers plan;
 3. run focused tests, `npm run check`, per-change/all strict OpenSpec validation, and `git diff --check`;
 4. freeze exact tree and request fresh read-only review; disposition and rerun;
-5. report actual evidence and stop at the phase boundary.
+5. report actual evidence and cross into the next change only after its candidate gate passes.
 
-Paid/live calls, installed cutover/refresh, publish/release, commit, push, archive, physical checkout move, force-clear, and next-phase start are separately authorized. Auth/account/quota, mutation, wrong route, ambiguous acceptance/settlement, or materially unverifiable findings stop the relevant live matrix without automatic fallback.
+Commit the accepted development changes as ordinary implementation bookkeeping. Paid/live model calls, installed cutover/refresh, publish/release, push, archive, physical production-checkout move, force-clear, and the loaded-Plugin witness remain separately authorized. Auth/account/quota, mutation, wrong route, ambiguous acceptance/settlement, or materially unverifiable findings stop the relevant live matrix without automatic fallback.
 
 ## Required completion receipt
 

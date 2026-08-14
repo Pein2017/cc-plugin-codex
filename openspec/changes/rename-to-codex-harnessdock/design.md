@@ -54,7 +54,7 @@ Alternative considered: expose both MCP namespaces as aliases. Rejected because 
 
 Within the checkout, `plugins/cc-for-pein/` moves mechanically to `plugins/codex-harnessdock/`; bootstrap, asset, manifest, Skill, package-file, installer, doctor, and release-smoke references move with it. Generic runtime modules are not bulk-renamed. Claude-specific modules retain Claude names, and `runtime/index.mjs` remains the only public lifecycle facade.
 
-The production checkout `/data/CoordExp/cc-plugin-codex`, development worktree `/data/CoordExp/cc-plugin-codex-dev`, Git common directory, remote, and GitHub repository remain fixed during Phase 0. After Phase A and Phase B acceptance, a separate Phase R change will rename them to `/data/CoordExp/codex-harnessdock` and `/data/CoordExp/codex-harnessdock-dev`, update registered worktrees/loaders/installers/AGENTS pointers/remotes, and prove the loaded path again before a third Harness.
+The production checkout `/data/CoordExp/cc-plugin-codex`, Git common directory, remote, and GitHub repository remain fixed during Phase 0. Development continues in the successor worktree `/data/CoordExp/codex-harnessdock-dev`; the superseded `/data/CoordExp/cc-plugin-codex-dev` is clean and no longer an authority. After Phase A and Phase B acceptance, a separate Phase R change will rename the canonical production checkout to `/data/CoordExp/codex-harnessdock`, update registered worktrees/loaders/installers/AGENTS pointers/remotes as needed, and prove the loaded path again before a third Harness.
 
 Alternative considered: rename all filesystem/Git surfaces in one step. Rejected because it combines discovery, state migration, worktree registration, and source provenance into one hard-to-rollback event before the new control plane is proven.
 
@@ -76,11 +76,11 @@ Alternative considered: keep the old data path indefinitely. Rejected because th
 
 ### 5. Use a two-stage installed cutover with one rollback boundary
 
-Implementation may prepare the new checkout identity and zero-cost tests while the old Plugin remains installed, but activation is atomic from the Codex user's perspective:
+Implementation may prepare the new checkout identity, then the dependent Phase A/B candidate generations and zero-cost tests, while the old Plugin remains installed. Activation is atomic from the Codex user's perspective and uses only the final accepted generation:
 
 1. stop/drain old Agent work and record doctor/status;
 2. back up and move the durable data root;
-3. refresh/install only the new Plugin identity from the canonical checkout;
+3. promote/refresh/install only the final accepted new Plugin identity from the canonical checkout;
 4. remove/disable the old enabled record before starting the acceptance task;
 5. start a fresh Codex task and run the exact live witness;
 6. retain backup until the witness and zero-cost release smoke pass.
@@ -91,17 +91,17 @@ The cutover script/doctor owns only Plugin identity and data movement. It does n
 
 ### 6. Prove runtime provenance, not just manifest text
 
-Acceptance has three layers:
+Acceptance has three layers. The first layer is sufficient to admit dependent candidate implementation; the latter two are consolidated after Phase B and are required for installed release acceptance:
 
 - deterministic contract tests for every renamed source/metadata/reference and rejection of stale old prefixes;
-- zero-model-cost installed smoke for new Plugin discovery, seven Skills/tools, isolated state, and absence of the old MCP identity;
-- one separately authorized fresh Codex task using the actual loaded Plugin to spawn a read-only Claude Agent, join, issue an exact follow-up, list the Agent, and read a bounded native message.
+- zero-model-cost installed smoke for new Plugin discovery, the final accepted operation catalog (eight Skills/tools after Phase B), isolated state, and absence of the old MCP identity;
+- one separately authorized fresh Codex task using the actual loaded final Plugin to prove legacy Claude behavior and the Phase B OpenCode acceptance matrix.
 
-The live witness reuses current Claude behavioral requirements and records only bounded lifecycle evidence. It does not claim multi-Harness readiness. A checkout test, local CLI success, marketplace record, or process exit alone cannot satisfy the loaded-Plugin witness.
+The legacy-Claude portion of the final live witness reuses current behavioral requirements and records only bounded lifecycle evidence; Phase B's separate OpenCode receipts own the multi-Harness claim. A checkout test, local CLI success, marketplace record, or process exit alone cannot satisfy the loaded-Plugin witness.
 
 ### 7. Keep later plans dependent on the new identity
 
-Phase A (`generalize-multi-harness-agent-control-plane`) must refer to HarnessDock names but still retain seven operations and no v3 public writes. Phase B (`add-opencode-explorer-driver`) alone adds the eighth operation and the explicit multi-Harness spawn generation. Phase R performs physical source/deployment rename. DeepSeek Harness, Grok Build, and implementation workers remain later independent changes.
+Phase A (`generalize-multi-harness-agent-control-plane`) must refer to HarnessDock names but still retain seven operations and no v3 public writes. It may begin from the reviewed/tested uninstalled Phase 0 candidate. Phase B (`add-opencode-explorer-driver`) alone adds the eighth operation and the explicit multi-Harness spawn generation, and may likewise begin from the accepted uninstalled Phase A candidate. Phase R performs physical production-source/deployment rename. DeepSeek Harness, Grok Build, and implementation workers remain later independent changes.
 
 ## Risks / Trade-offs
 
@@ -118,7 +118,7 @@ Phase A (`generalize-multi-harness-agent-control-plane`) must refer to HarnessDo
 2. Rename checkout-owned Plugin source/assets/bootstrap/Skill paths and update package/manifests/docs without changing runtime behavior.
 3. Rename MCP/Skill/package/data namespaces and add exact old-prefix rejection plus state-move/rollback tooling.
 4. Run focused tests, `npm run check`, strict OpenSpec validation, and full diff/path scans.
-5. Obtain independent read-only review, then prepare but do not silently execute the local installed cutover.
-6. With explicit cutover authorization, drain Agents, back up/move state, refresh the new identity, remove the old enabled entry, and run zero-cost installed smoke.
-7. Start a fresh Codex task for the live seven-operation Claude witness. Retain or restore the single authoritative identity based on its result.
-8. Record the accepted tree, cutover receipt, backup location, live witness, rollback state, and next Phase A handoff. Do not publish, push, archive, or begin Phase A implicitly.
+5. Obtain independent read-only review and record exact candidate acceptance; Phase A and then Phase B may proceed sequentially without installing this intermediate generation.
+6. After the Phase B candidate is accepted, stop for explicit cutover authorization. Drain Agents, back up/move state, promote the final tree to the canonical production checkout, refresh the new identity, remove the old enabled entry, and run zero-cost installed smoke for the final generation.
+7. Start a fresh Codex task for the loaded final-generation Claude/OpenCode witnesses. Retain or restore the single authoritative identity based on their result.
+8. Record the final accepted tree, cutover receipt, backup location, live witnesses, rollback state, and Phase R handoff. Do not publish, push, archive, or physically rename the production checkout implicitly.

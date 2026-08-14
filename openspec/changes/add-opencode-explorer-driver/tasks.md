@@ -1,6 +1,6 @@
 ## 1. Revalidate Prerequisites And Probe The Installed Contract
 
-- [ ] 1.1 Verify `rename-to-codex-harnessdock` and `generalize-multi-harness-agent-control-plane` are implemented/accepted at exact trees, the renamed seven-operation generation is loaded, v3 validation/launch claims/session-turn references/legacy Claude adapter/unknown leases work, and no incompatible active or unknown job exists.
+- [ ] 1.1 Verify `rename-to-codex-harnessdock` and `generalize-multi-harness-agent-control-plane` are candidate-accepted at exact trees with fresh checkout-level gates/reviews, v3 validation/launch claims/session-turn references/legacy Claude adapter/unknown leases work, and no incompatible active or unknown job exists; the renamed intermediate generation need not be installed.
 - [ ] 1.2 Add a zero-model compatibility probe that records sanitized `opencode --version`, Server health/version, exact `opencode models` match for DeepSeek V4 Flash, resolved `codex-explorer` profile, available OpenAPI/SDK version/types, and authoritative server/session incarnation evidence if any.
 - [ ] 1.3 Run the probe against the operator-owned configured Server without creating a model request; if the actual full model identifier differs from `opencode-go/deepseek-v4-flash` or required protocol facts are unavailable, stop for an OpenSpec update rather than aliasing.
 - [ ] 1.4 Capture sanitized compatibility fixtures and pin exactly one proven client dependency/version; add tests forbidding a Server-spawning helper, CLI stdout lifecycle parser, raw provider client, range/latest dependency, or silent HTTP fallback.
@@ -62,11 +62,11 @@
 - [ ] 8.3 Update manifests/package checks, README/operator docs, doctor/status/inspect/reconcile guidance, and examples for operator-owned loopback Server/auth/profile, CLI attach as diagnostic, unsupported first-release capabilities, and Codex-led fallback.
 - [ ] 8.4 Document Phase R physical rename after Phase B, then independent DeepSeek Harness and Grok Build probes; record Pi as reference-only and forbid TUI automation.
 
-## 9. Deterministic And Installed Acceptance
+## 9. Deterministic Acceptance And Installed-Smoke Preparation
 
 - [ ] 9.1 Run the shared Driver contract suite and a full fake OpenCode path through MCP → runtime → launch claim → session/turn references → completion, including the conditional continuation branch.
 - [ ] 9.2 Cover auth/quota-like/provider/profile/model failures, secret redaction, malformed result, submission uncertainty, worker loss, unknown lease retention, no restart observation, mutation witness, and idempotent reconciliation.
-- [ ] 9.3 Update zero-model-cost installed smoke for exactly eight renamed Skills/tools, side-effect-free Harness discovery, explicit schema rejection, legacy Claude control, and no model request or Server lifecycle mutation.
+- [ ] 9.3 Update and unit/integration-test zero-model-cost installed-smoke logic for exactly eight renamed Skills/tools, side-effect-free Harness discovery, explicit schema rejection, legacy Claude control, and no model request or Server lifecycle mutation; defer execution against the installed snapshot until consolidated activation.
 - [ ] 9.4 Run all focused tests, `npm run check`, `git diff --check`, `openspec validate add-opencode-explorer-driver --strict`, and `openspec validate --all --strict`; inspect the complete diff for stale namespace, accidental policy, and unrelated paths.
 
 ## 10. Run Three Explicitly Authorized Real Explorer Examples
@@ -77,9 +77,9 @@
 - [ ] 10.4 Populate `docs/opencode-worker-evaluation.md` with measured facts, unavailable telemetry, the twelve requested architecture answers, and bounded `GO`, `GO WITH CHANGES`, or `NO-GO`; do not fill unknown cache/economics/reliability with inference.
 - [ ] 10.5 Record twenty-task reliability, separate-session/cache benchmark, one/two/four concurrency, idle/crash behavior, real-workday economics, interrupt/history, implementation worker, DeepSeek Harness, and Grok Build as subsequent maturity/changes rather than release-complete claims.
 
-## 11. Final Review And Handoff
+## 11. Candidate Review And Consolidated-Activation Handoff
 
 - [ ] 11.1 Freeze the exact candidate tree and request fresh read-only review for secret leakage, remote-origin escape, false acceptance/settlement, session/incarnation crossover, replay, unknown lease release, unsafe profile, partial public generation, and accidental routing policy.
 - [ ] 11.2 Disposition every finding, rerun all affected focused/full/live gates, and mark tasks complete only from fresh evidence.
-- [ ] 11.3 Record exact commit/tree, installed OpenCode/Server/client/model/profile versions, artifact roots, actual metrics/mutation samples, continuation mode, unknown states, rollback, and Phase R/next-Harness prerequisites in the implementation handoff.
-- [ ] 11.4 Leave install/refresh/release/archive/push, maturity runs, physical source rename, later Harnesses, and implementation workers for separate authorization and fresh tasks.
+- [ ] 11.3 Before activation, record exact candidate commit/tree, probed OpenCode/Server/client/model/profile facts, continuation mode, unknown states, and one operator runbook for production promotion, identity/data cutover, install/refresh, Codex restart, installed smoke, live examples, rollback, and Phase R prerequisites. Append artifact/metrics/mutation receipts after that runbook is executed.
+- [ ] 11.4 Leave production promotion, data cutover, install/refresh, Codex restart, live model calls, release/archive/push, maturity runs, physical production-source rename, later Harnesses, and implementation workers for separate authorization; these form the deliberate manual stop boundary after all candidate code/tests are complete.
