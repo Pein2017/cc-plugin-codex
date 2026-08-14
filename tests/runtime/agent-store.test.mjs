@@ -19,11 +19,11 @@ const HARNESS = {
 };
 
 const roots = [];
-const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
+const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 
 afterEach(() => {
-  if (originalRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = originalRuntimeHome;
+  if (originalRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = originalRuntimeHome;
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
@@ -33,7 +33,7 @@ function setup(ownerRootId = "codex-root-agent-test") {
   const claudeConfigDir = path.join(root, "claude");
   fs.mkdirSync(workspace);
   fs.mkdirSync(claudeConfigDir);
-  process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
   roots.push(root);
   return {
     root,
@@ -86,7 +86,7 @@ function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, 
     const child = spawn(process.execPath, ["--input-type=module", "-e", source, workspace, claudeConfigDir, ownerRootId, target, String(start), String(count)], {
       env: {
         ...process.env,
-        CC_RUNTIME_HOME: runtimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
         CC_TEST_HARNESS: JSON.stringify(HARNESS),
       },
       stdio: ["ignore", "ignore", "pipe"],
@@ -149,7 +149,7 @@ describe("Agent durable store", () => {
     );
 
     const legacy = store.createAgent({ task_name: "legacy_leaf" });
-    const registryFile = findRegistryFile(process.env.CC_RUNTIME_HOME);
+    const registryFile = findRegistryFile(process.env.CODEX_HARNESSDOCK_RUNTIME_HOME);
     const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
     delete registry.agents[legacy.agentId].delegationMode;
     fs.writeFileSync(registryFile, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
@@ -261,7 +261,7 @@ describe("Agent durable store", () => {
     const perWriter = 8;
     await Promise.all(Array.from({ length: writers }, (_, index) => concurrentWriter(
       workspace,
-      process.env.CC_RUNTIME_HOME,
+      process.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
       claudeConfigDir,
       ownerRootId,
       agent.path,

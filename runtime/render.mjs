@@ -16,7 +16,7 @@ function sessionIdOf(job) {
 export function renderLaunch(receipt) {
   return [
     `${receipt.title} started as ${receipt.jobId}.`,
-    `Check $cc-for-pein:status ${receipt.jobId}; steer with $cc-for-pein:steer ${receipt.jobId} <message>.`,
+    `Check $codex-harnessdock:status ${receipt.jobId}; steer with $codex-harnessdock:steer ${receipt.jobId} <message>.`,
     "",
   ].join("\n");
 }

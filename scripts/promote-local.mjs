@@ -144,7 +144,7 @@ export async function promoteLocal(options = {}) {
   }
 
   const gateDirectory = options.gateDirectory
-    ?? path.join(live.commonDirectory, "cc-for-pein-promotion-gate");
+    ?? path.join(live.commonDirectory, "codex-harnessdock-promotion-gate");
   const gate = await acquirePromotionGate({
     gateDirectory,
     timeoutMs: options.gateTimeoutMs,

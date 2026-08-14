@@ -6,7 +6,7 @@
  */
 import { createAgentRuntime } from "./agent-runtime.mjs";
 
-export { CC_MCP_API_GENERATION } from "./mcp-api.mjs";
+export { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 
 /**
  * @typedef {object} AgentRuntimeLifecycle

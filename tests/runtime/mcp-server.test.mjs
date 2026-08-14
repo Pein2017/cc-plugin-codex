@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,24 +11,24 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import {
-  CC_MCP_TOOL_NAMES,
+  HARNESSDOCK_MCP_TOOL_NAMES,
   CODEX_SANDBOX_META_KEY,
   createCcMcpServer,
   invokeIsolatedRuntimeOperation,
   redactMcpErrorMessage,
 } from "../../runtime/mcp-server.mjs";
-import { CC_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
+import { HARNESSDOCK_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
 import { PACKAGE_VERSION } from "../../runtime/version.mjs";
 
 const root = path.resolve(new URL("../../", import.meta.url).pathname);
-const pluginRoot = path.join(root, "plugins", "cc-for-pein");
+const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
 const meta = {
   threadId: "mcp-test-thread",
   [CODEX_SANDBOX_META_KEY]: { sandboxCwd: pathToFileURL(root).href },
 };
 
 function runtimeMethods(handler) {
-  return Object.fromEntries(CC_MCP_TOOL_NAMES.map((name) => [name, (input) => handler(name, input)]));
+  return Object.fromEntries(HARNESSDOCK_MCP_TOOL_NAMES.map((name) => [name, (input) => handler(name, input)]));
 }
 
 async function inMemoryClient(runtimeFactory) {
@@ -47,13 +48,13 @@ afterEach(async () => {
   }
 });
 
-describe("typed CC MCP server", () => {
+describe("typed HarnessDock MCP server", () => {
   it("advertises exactly the canonical seven typed tools", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const listed = await client.listTools();
     assert.equal(client.getServerVersion()?.version, PACKAGE_VERSION);
-    assert.deepEqual(listed.tools.map((tool) => tool.name), CC_MCP_TOOL_NAMES);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), HARNESSDOCK_MCP_TOOL_NAMES);
     for (const tool of listed.tools) assert.equal(tool.inputSchema.additionalProperties, false);
     const listAgents = listed.tools.find((tool) => tool.name === "list_agents");
     assert.deepEqual(listAgents.annotations, {
@@ -211,9 +212,9 @@ describe("typed CC MCP server", () => {
     const message = redactMcpErrorMessage(
       [
         "Claude session abc-123 in internal job job-456 failed at /data/CoordExp/cc-plugin-codex/runtime/state/jobs/job-456.json:",
-        "(/data/CoordExp/.codex/plugins/data/cc/state/private.json)",
-        "`/data/CoordExp/.codex/plugins/data/cc/state/private.json`",
-        "/root/.codex/plugins/data/cc/state/session-leases/private.json",
+        "(/data/CoordExp/.codex/plugins/data/codex-harnessdock/state/private.json)",
+        "`/data/CoordExp/.codex/plugins/data/codex-harnessdock/state/private.json`",
+        "/root/.codex/plugins/data/codex-harnessdock/state/session-leases/private.json",
         "/root/.claude /root/project",
         "Agent /root/public_agent authentication required",
       ].join(" "),
@@ -491,7 +492,7 @@ describe("typed CC MCP server", () => {
     temporaryDirectories.push(directory);
     const runtimeFile = path.join(directory, "runtime.mjs");
     const writeRuntime = (revision) => fs.writeFileSync(runtimeFile, `
-export const CC_MCP_API_GENERATION = ${CC_MCP_API_GENERATION};
+export const HARNESSDOCK_MCP_API_GENERATION = ${HARNESSDOCK_MCP_API_GENERATION};
 export function createClaudeRuntime() {
   return { list_agents() { return { revision: ${JSON.stringify(revision)} }; } };
 }
@@ -532,7 +533,7 @@ export function createClaudeRuntime() {
         envFile: path.join(root, "config", "runtime.env"),
         env: {
           CODEX_HOME: codexHome,
-          CC_RUNTIME_HOME: runtimeHome,
+          CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
           CODEX_THREAD_ID: "mcp-isolated-wait-timeout",
           CLAUDE_CONFIG_DIR: claudeConfig,
           CC_RUNTIME_CHECKOUT: root,
@@ -550,7 +551,7 @@ export function createClaudeRuntime() {
     const runtimeFile = path.join(directory, "runtime.mjs");
     fs.writeFileSync(runtimeFile, `
 import fs from "node:fs";
-export const CC_MCP_API_GENERATION = ${CC_MCP_API_GENERATION + 1};
+export const HARNESSDOCK_MCP_API_GENERATION = ${HARNESSDOCK_MCP_API_GENERATION + 1};
 export function createClaudeRuntime() {
   fs.writeFileSync(${JSON.stringify(marker)}, "called");
   return { list_agents() { return {}; } };
@@ -563,15 +564,28 @@ export function createClaudeRuntime() {
         context: { cwd: root, envFile: path.join(root, "config", "runtime.env"), env: {} },
         runtimeModuleUrl: pathToFileURL(runtimeFile),
       }),
-      (error) => error?.code === "CC_MCP_RESTART_REQUIRED" && /release:local.*new Codex task/i.test(error.message),
+      (error) => error?.code === "HARNESSDOCK_MCP_RESTART_REQUIRED" && /release:local.*new Codex task/i.test(error.message),
     );
     assert.equal(fs.existsSync(marker), false);
   });
 
   it("starts through the descriptor bootstrap and preserves stdio framing", async () => {
+    const canonicalManifestFile = "/data/CoordExp/cc-plugin-codex/plugins/codex-harnessdock/.codex-plugin/plugin.json";
+    if (!fs.existsSync(canonicalManifestFile)) {
+      // The production checkout is intentionally not cut over by Phase 0
+      // candidate tests. The fixed bootstrap must fail closed rather than
+      // silently loading the old production identity.
+      const result = spawnSync(process.execPath, ["--", path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs")], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      assert.notEqual(result.status, 0);
+      assert.match(`${result.stderr}\n${result.stdout}`, /Fixed HarnessDock MCP checkout is invalid|Unexpected HarnessDock MCP Plugin identity/i);
+      return;
+    }
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["--", path.join(pluginRoot, "bootstrap", "cc-mcp.mjs")],
+      args: ["--", path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs")],
       cwd: root,
       stderr: "pipe",
     });
@@ -579,6 +593,6 @@ export function createClaudeRuntime() {
     closers.push(() => client.close());
     await client.connect(transport);
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map((tool) => tool.name), CC_MCP_TOOL_NAMES);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), HARNESSDOCK_MCP_TOOL_NAMES);
   });
 });

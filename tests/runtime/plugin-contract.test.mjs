@@ -33,16 +33,16 @@ describe("native plugin contract", () => {
   ];
 
   it("publishes only the seven canonical Agent skills and no Codex hook", () => {
-    const pluginRoot = path.join(root, "plugins", "cc-for-pein");
+    const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
-    assert.equal(manifest.name, "cc-for-pein");
+    assert.equal(manifest.name, "codex-harnessdock");
     assert.match(manifest.version, pluginVersionPattern);
     assert.equal(manifest.hooks, undefined);
     assert.equal(manifest.mcpServers, "./.mcp.json");
-    assert.equal(manifest.author.name, "Pein");
+    assert.equal(manifest.author.name, "Pein2017");
     assert.equal(manifest.interface.brandColor, "#312E81");
-    assert.equal(manifest.interface.composerIcon, "./assets/cc-for-pein-icon.svg");
-    assert.equal(manifest.interface.logo, "./assets/cc-for-pein-logo.svg");
+    assert.equal(manifest.interface.composerIcon, "./assets/harnessdock-icon.svg");
+    assert.equal(manifest.interface.logo, "./assets/harnessdock-logo.svg");
     for (const asset of [manifest.interface.composerIcon, manifest.interface.logo]) {
       assert.match(asset, /^\.\/assets\/[A-Za-z0-9._-]+\.svg$/);
       const source = fs.readFileSync(path.join(pluginRoot, asset), "utf8");
@@ -88,7 +88,7 @@ describe("native plugin contract", () => {
         ...process.env,
         CODEX_THREAD_ID: "plugin-contract-root",
         CC_TRUSTED_OWNER_ROOT_ID: "plugin-contract-root",
-        CC_RUNTIME_HOME: path.join(root, ".test-runtime-contract"),
+        CODEX_HARNESSDOCK_RUNTIME_HOME: path.join(root, ".test-runtime-contract"),
         CC_RUNTIME_ENV_FILE: path.join(root, "config", "runtime.env"),
       },
     });
@@ -106,28 +106,28 @@ describe("native plugin contract", () => {
       ["list-agents", "list_agents"],
       ["read-agent-messages", "read_agent_messages"],
     ]) {
-      const text = fs.readFileSync(path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"), "utf8");
-      assert.match(text, new RegExp(`mcp__cc_for_pein__${operation}`));
+      const text = fs.readFileSync(path.join(root, "plugins", "codex-harnessdock", "skills", name, "SKILL.md"), "utf8");
+      assert.match(text, new RegExp(`mcp__codex_harnessdock__${operation}`));
       assert.match(text, /Trusted Codex\s+metadata owns cwd\/root/i);
       assert.match(
         text,
         /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin\s+startup or\s+discovery failure/i,
       );
       assert.match(text, /never use[\s\S]*shell/i);
-      assert.doesNotMatch(text, /cc-runtime\.mjs|runtime\/cli\.mjs|node --/);
+      assert.doesNotMatch(text, /harnessdock-runtime\.mjs|runtime\/cli\.mjs|node --/);
 
       const metadata = fs.readFileSync(
-        path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
+        path.join(root, "plugins", "codex-harnessdock", "skills", name, "agents", "openai.yaml"),
         "utf8",
       );
-      assert.match(metadata, new RegExp(`mcp__cc_for_pein__${operation}`));
+      assert.match(metadata, new RegExp(`mcp__codex_harnessdock__${operation}`));
       assert.match(metadata, /never fall back to (?:a )?shell(?: command)?/i);
     }
   });
 
   it("keeps single-target progress discoverable through the existing wait skill", () => {
     const text = fs.readFileSync(
-      path.join(root, "plugins", "cc-for-pein", "skills", "wait-agent", "SKILL.md"),
+      path.join(root, "plugins", "codex-harnessdock", "skills", "wait-agent", "SKILL.md"),
       "utf8",
     );
     assert.match(text, /wake_on_progress: true[\s\S]*exactly one target/i);
@@ -136,13 +136,13 @@ describe("native plugin contract", () => {
   });
 
   it("publishes one checkout-owned stdio MCP server with the one-hour timeout margin", () => {
-    const pluginRoot = path.join(root, "plugins", "cc-for-pein");
+    const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
     const config = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".mcp.json"), "utf8"));
-    assert.deepEqual(Object.keys(config.mcpServers), ["cc_for_pein"]);
-    assert.deepEqual(config.mcpServers.cc_for_pein, {
+    assert.deepEqual(Object.keys(config.mcpServers), ["codex_harnessdock"]);
+    assert.deepEqual(config.mcpServers.codex_harnessdock, {
       type: "stdio",
       command: "node",
-      args: ["--", "/data/CoordExp/cc-plugin-codex/plugins/cc-for-pein/bootstrap/cc-mcp.mjs"],
+      args: ["--", "/data/CoordExp/cc-plugin-codex/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs"],
       cwd: "/data/CoordExp/cc-plugin-codex",
       required: true,
       supports_parallel_tool_calls: true,
@@ -151,14 +151,14 @@ describe("native plugin contract", () => {
       default_tools_approval_mode: "approve",
     });
 
-    const bootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "cc-mcp.mjs"), "utf8");
+    const bootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs"), "utf8");
     assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/cc-plugin-codex"/);
     assert.match(bootstrap, /runtime["',\s]+"mcp-server\.mjs"/);
     assert.match(bootstrap, /stdio: "inherit"/);
     assert.doesNotMatch(bootstrap, /plugins\/cache|sendbird\/cc-plugin-codex/);
     assert.match(bootstrap, /assertCheckoutDependencies\(checkout\)/);
 
-    const lifecycleBootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "cc-runtime.mjs"), "utf8");
+    const lifecycleBootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "harnessdock-runtime.mjs"), "utf8");
     assert.match(lifecycleBootstrap, /assertCheckoutDependencies\(checkout\)/);
 
     const server = fs.readFileSync(path.join(root, "runtime", "mcp-server.mjs"), "utf8");
@@ -172,7 +172,7 @@ describe("native plugin contract", () => {
 
   it("pins the installed bootstrap and Claude envelope to the canonical checkout", () => {
     const bootstrap = fs.readFileSync(
-      path.join(root, "plugins", "cc-for-pein", "bootstrap", "cc-runtime.mjs"),
+      path.join(root, "plugins", "codex-harnessdock", "bootstrap", "harnessdock-runtime.mjs"),
       "utf8",
     );
     assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/cc-plugin-codex"/);
@@ -195,7 +195,7 @@ describe("native plugin contract", () => {
   it("keeps every lifecycle skill eligible for model-visible discovery", () => {
     for (const name of canonicalSkills) {
       const metadata = fs.readFileSync(
-        path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
+        path.join(root, "plugins", "codex-harnessdock", "skills", name, "agents", "openai.yaml"),
         "utf8",
       );
       assert.doesNotMatch(metadata, /allow_implicit_invocation:\s*false/);
@@ -204,7 +204,7 @@ describe("native plugin contract", () => {
 
   it("keeps spawn success concise and routes internal evidence to operator diagnostics", () => {
     const text = fs.readFileSync(
-      path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
+      path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
     assert.match(text, /one sentence[\s\S]*`model`[\s\S]*`agent_name`[\s\S]*authority[\s\S]*`status`/i);
@@ -216,7 +216,7 @@ describe("native plugin contract", () => {
 
   it("documents exact admitted model and effort identifiers without invented fallback", () => {
     const text = fs.readFileSync(
-      path.join(root, "plugins", "cc-for-pein", "skills", "spawn-agent", "SKILL.md"),
+      path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
     for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
@@ -252,7 +252,7 @@ describe("native plugin contract", () => {
 
   it("documents follow-up write inheritance and explicit authority changes", () => {
     const text = fs.readFileSync(
-      path.join(root, "plugins", "cc-for-pein", "skills", "followup-task", "SKILL.md"),
+      path.join(root, "plugins", "codex-harnessdock", "skills", "followup-task", "SKILL.md"),
       "utf8",
     );
     assert.match(text, /Omitted `write` inherits[\s\S]*latest behavioral authority/i);
@@ -262,7 +262,7 @@ describe("native plugin contract", () => {
   });
 
   it("keeps send-message receipts and presentation compact", () => {
-    const skillRoot = path.join(root, "plugins", "cc-for-pein", "skills", "send-message");
+    const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills", "send-message");
     const text = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
     assert.match(text, /one concise sentence[\s\S]*`agent_name`[\s\S]*`delivery`/i);
     assert.match(text, /Do not repeat the message or JSON/i);
@@ -277,7 +277,7 @@ describe("native plugin contract", () => {
   it("keeps list and wait guidance intentional by default", () => {
     for (const name of ["list-agents", "wait-agent"]) {
       const text = fs.readFileSync(
-        path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
+        path.join(root, "plugins", "codex-harnessdock", "skills", name, "SKILL.md"),
         "utf8",
       );
       assert.doesNotMatch(text, /Present the runtime receipt exactly as returned/);
@@ -288,7 +288,7 @@ describe("native plugin contract", () => {
         assert.match(text, /call `wait_agent` again directly/i);
 
         const metadata = fs.readFileSync(
-          path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
+          path.join(root, "plugins", "codex-harnessdock", "skills", name, "agents", "openai.yaml"),
           "utf8",
         );
         assert.match(metadata, /solely to recheck completion after a quiet wait_agent timeout/i);
@@ -306,7 +306,7 @@ describe("native plugin contract", () => {
         assert.match(text, /call `wait_agent` again directly/i);
 
         const metadata = fs.readFileSync(
-          path.join(root, "plugins", "cc-for-pein", "skills", name, "agents", "openai.yaml"),
+          path.join(root, "plugins", "codex-harnessdock", "skills", name, "agents", "openai.yaml"),
           "utf8",
         );
         assert.match(metadata, /critical-path[\s\S]*one-hour completion-first/i);
@@ -320,7 +320,7 @@ describe("native plugin contract", () => {
     let words = 0;
     for (const name of canonicalSkills) {
       const text = fs.readFileSync(
-        path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
+        path.join(root, "plugins", "codex-harnessdock", "skills", name, "SKILL.md"),
         "utf8",
       );
       words += text.trim().split(/\s+/u).length;
@@ -332,7 +332,7 @@ describe("native plugin contract", () => {
 
   it("marks all seven skill prompts and discovery descriptions Experimental", () => {
     for (const name of canonicalSkills) {
-      const skillRoot = path.join(root, "plugins", "cc-for-pein", "skills", name);
+      const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills", name);
       assert.match(fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8"), /Experimental/i);
       const metadata = fs.readFileSync(path.join(skillRoot, "agents", "openai.yaml"), "utf8");
       assert.match(metadata, /Experimental/i);
@@ -343,12 +343,12 @@ describe("native plugin contract", () => {
   it("teaches every lifecycle Skill the bounded release-drift boundary", () => {
     for (const name of canonicalSkills) {
       const text = fs.readFileSync(
-        path.join(root, "plugins", "cc-for-pein", "skills", name, "SKILL.md"),
+        path.join(root, "plugins", "codex-harnessdock", "skills", name, "SKILL.md"),
         "utf8",
       );
       assert.match(text, /exact retained Skill path/i);
       assert.match(text, /latest-version instructions\s+are emergency-only/i);
-      assert.match(text, /CC_MCP_RESTART_REQUIRED[\s\S]*new Codex task/i);
+      assert.match(text, /HARNESSDOCK_MCP_RESTART_REQUIRED[\s\S]*new Codex task/i);
       assert.match(text, /Never repair Plugin Cache/i);
     }
   });
@@ -357,7 +357,7 @@ describe("native plugin contract", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
     const manifest = JSON.parse(
-      fs.readFileSync(path.join(root, "plugins", "cc-for-pein", ".codex-plugin", "plugin.json"), "utf8"),
+      fs.readFileSync(path.join(root, "plugins", "codex-harnessdock", ".codex-plugin", "plugin.json"), "utf8"),
     );
     const marketplace = JSON.parse(fs.readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
     assert.equal(packageJson.version, releaseMetadata.version);
@@ -365,6 +365,6 @@ describe("native plugin contract", () => {
     assert.equal(lockfile.packages[""].version, packageJson.version);
     assert.equal(manifest.version.split("+")[0], packageJson.version);
     assert.match(manifest.version, pluginVersionPattern);
-    assert.doesNotMatch(marketplace.plugins.find((plugin) => plugin.name === "cc-for-pein").description, /v0\.4\.0/);
+    assert.doesNotMatch(marketplace.plugins.find((plugin) => plugin.name === "codex-harnessdock").description, /v0\.4\.0/);
   });
 });

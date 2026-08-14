@@ -21,11 +21,11 @@ import {
 } from "../../runtime/job-store.mjs";
 
 const roots = [];
-const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
+const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 
 afterEach(() => {
-  if (originalRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = originalRuntimeHome;
+  if (originalRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = originalRuntimeHome;
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
@@ -33,7 +33,7 @@ function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-job-linkage-"));
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace);
-  process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
   roots.push(root);
   return { workspace, ownerRootId: "codex-root-agent-linkage", agentId: "agent-7f2a" };
 }

@@ -16,14 +16,14 @@ import {
 
 /** @type {string[]} */
 const roots = [];
-const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
+const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-message-runtime-home-"));
 
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 
 afterEach(() => {
-  if (originalRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = originalRuntimeHome;
+  if (originalRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = originalRuntimeHome;
   while (roots.length) {
     const root = roots.pop();
     if (root) fs.rmSync(root, { recursive: true, force: true });
@@ -39,14 +39,14 @@ function setup() {
   fs.mkdirSync(workspace);
   fs.mkdirSync(claudeConfigDir);
   fs.writeFileSync(envFile, `CLAUDE_CONFIG_DIR=${claudeConfigDir}\n`);
-  process.env.CC_RUNTIME_HOME = sharedRuntimeHome;
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = sharedRuntimeHome;
   roots.push(root);
   const runtime = createAgentRuntime({
     cwd: workspace,
     envFile,
     env: {
       CODEX_THREAD_ID: ownerRootId,
-      CC_RUNTIME_HOME: sharedRuntimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });

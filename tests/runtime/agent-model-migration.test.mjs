@@ -74,7 +74,7 @@ function setup(model) {
     envFile,
     env: {
       CODEX_THREAD_ID: "root-agent-model-migration",
-      CC_RUNTIME_HOME: sharedRuntimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
     },
   });
   const agent = runtime.store.createAgent({ task_name: "legacy" });

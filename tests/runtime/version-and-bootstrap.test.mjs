@@ -11,7 +11,7 @@ import {
 import {
   REQUIRED_CHECKOUT_DEPENDENCIES,
   assertCheckoutDependencies,
-} from "../../plugins/cc-for-pein/bootstrap/dependency-preflight.mjs";
+} from "../../plugins/codex-harnessdock/bootstrap/dependency-preflight.mjs";
 
 describe("package-owned version metadata", () => {
   it("derives plugin expressions from the package base", () => {

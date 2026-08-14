@@ -17,7 +17,7 @@ function parseArguments(argv) {
 }
 
 function renderHuman(report) {
-  const lines = [`CC for Pein doctor: ${report.status.toUpperCase()}`];
+  const lines = [`HarnessDock for Codex doctor: ${report.status.toUpperCase()}`];
   for (const check of report.checks) {
     lines.push(`${check.status.toUpperCase().padEnd(4)} ${check.id}: ${check.summary}`);
     if (check.recovery) lines.push(`     recovery: ${check.recovery}`);

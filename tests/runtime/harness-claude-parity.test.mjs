@@ -186,7 +186,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
 
   it("normalizes a completed turn into exact session evidence and Claude-owned receipts", async () => {
     const root = scratch("completed");
-    process.env.CC_RUNTIME_HOME = root;
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = root;
     try {
       const { result } = await captureTurn(
         { model: "opus", write: false, delegationMode: "leaf" },
@@ -242,16 +242,16 @@ describe("claude-code Driver preserves established Claude execution semantics", 
       assert.equal(result.driverReceipt.harnessId, "claude-code");
       assert.equal(result.driverReceipt.driverVersion, CLAUDE_CODE_DRIVER_VERSION);
     } finally {
-      delete process.env.CC_RUNTIME_HOME;
+      delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
     }
   });
 
   it("persists sanitized native-team compatibility evidence for clean and drift turns only", async () => {
     const root = scratch("native-team-observations");
-    const priorRuntimeHome = process.env.CC_RUNTIME_HOME;
+    const priorRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
     const claudeConfigDir = path.join(root, ".claude");
     fs.mkdirSync(claudeConfigDir);
-    process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
     const nativeTeamSurface = {
       observed: true,
       delegationMode: "claude_orchestrator",
@@ -337,8 +337,8 @@ describe("claude-code Driver preserves established Claude execution semantics", 
       assert.equal(absent.result.runtime.nativeTeamCompatibilityObservation, null);
       assert.equal(getConfig(root).claudeCliCompatibility.nativeTeamObservations.length, 2);
     } finally {
-      if (priorRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-      else process.env.CC_RUNTIME_HOME = priorRuntimeHome;
+      if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+      else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorRuntimeHome;
     }
   });
 

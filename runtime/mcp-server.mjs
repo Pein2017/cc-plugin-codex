@@ -16,12 +16,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { CC_MCP_API_GENERATION } from "./mcp-api.mjs";
+import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
-export const CC_MCP_TOOL_NAMES = Object.freeze([
+export const HARNESSDOCK_MCP_TOOL_NAMES = Object.freeze([
   "spawn_agent",
   "send_message",
   "followup_task",
@@ -39,7 +39,7 @@ const RUNTIME_MODULE_URL = pathToFileURL(path.join(SOURCE_ROOT, "runtime", "inde
 const MCP_CALL_WORKER_URL = new URL("./mcp-call-worker.mjs", import.meta.url);
 const PROMOTION_GATE_DIRECTORY = path.join(
   resolveGitCommonDirectory(SOURCE_ROOT),
-  "cc-for-pein-promotion-gate",
+  "codex-harnessdock-promotion-gate",
 );
 const MODEL_IDS = [
   "claude-haiku-4-5",
@@ -80,13 +80,13 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   send_message: {
     description:
-      "Experimental: deliver to a running CC Agent or queue for idle; never activates it.",
+      "Experimental: deliver to a running Claude Agent or queue for idle; never activates it.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   followup_task: {
     description:
-      "Experimental: deliver work or activate one proven CC Agent continuation asynchronously.",
+      "Experimental: deliver work or activate one proven Claude Agent continuation asynchronously.",
     inputSchema: z.object({ target: exactTarget, message, ...executionFields, write: optionalWrite }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -121,7 +121,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   interrupt_agent: {
     description:
-      "Experimental: stop only the current CC Agent turn; preserve identity and proven continuation.",
+      "Experimental: stop only the current Claude Agent turn; preserve identity and proven continuation.",
     inputSchema: z.object({ target: exactTarget }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
@@ -133,7 +133,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   read_agent_messages: {
     description:
-      "Experimental: read complete recent outer-assistant text from a CC Agent native Claude history without activation.",
+      "Experimental: read complete recent outer-assistant text from a Claude Agent native history without activation.",
     inputSchema: z.object({
       target: exactTarget,
       before: z.string().trim().min(1).optional(),
@@ -145,8 +145,8 @@ const TOOL_DEFINITIONS = Object.freeze({
 
 function contextError(detail) {
   return new Error(
-    `CC MCP requires trusted Codex thread and local sandbox workspace metadata: ${detail}. ` +
-    "Start a new Codex task with the installed cc-for-pein Plugin enabled."
+    `HarnessDock MCP requires trusted Codex thread and local sandbox workspace metadata: ${detail}. ` +
+    "Start a new Codex task with the installed codex-harnessdock Plugin enabled."
   );
 }
 
@@ -186,7 +186,7 @@ export function redactMcpErrorMessage(value) {
     });
   }
   message = redactAbsolutePaths(message);
-  return message.slice(0, 8_000) || "CC MCP tool call failed.";
+  return message.slice(0, 8_000) || "HarnessDock MCP tool call failed.";
 }
 
 export function resolveCodexMcpContext(meta, signal = null) {
@@ -202,7 +202,7 @@ export function resolveCodexMcpContext(meta, signal = null) {
     if (uri.protocol !== "file:") throw contextError("sandboxCwd is not a local file URI");
     cwd = fileURLToPath(uri);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("CC MCP requires")) throw error;
+    if (error instanceof Error && error.message.startsWith("HarnessDock MCP requires")) throw error;
     throw contextError("sandboxCwd is not a valid local file URI");
   }
   if (!path.isAbsolute(cwd)) throw contextError("sandboxCwd is not absolute");
@@ -247,7 +247,7 @@ export function sanitizedError(error) {
 }
 
 function workerError(payload) {
-  const error = new Error(payload?.message || "CC MCP isolated runtime call failed.");
+  const error = new Error(payload?.message || "HarnessDock MCP isolated runtime call failed.");
   error.name = payload?.name || "Error";
   if (typeof payload?.code === "string") /** @type {any} */ (error).code = payload.code;
   return error;
@@ -259,7 +259,7 @@ export function invokeIsolatedRuntimeOperation(options) {
     input,
     context,
     signal = null,
-    expectedGeneration = CC_MCP_API_GENERATION,
+    expectedGeneration = HARNESSDOCK_MCP_API_GENERATION,
     runtimeModuleUrl = RUNTIME_MODULE_URL,
     workerUrl = MCP_CALL_WORKER_URL,
   } = options;
@@ -296,7 +296,7 @@ export function invokeIsolatedRuntimeOperation(options) {
       worker.postMessage({ type: "abort" });
       if (operation === "wait_agent") {
         abortTimer = setTimeout(() => {
-          const error = new Error("CC MCP wait observation was cancelled.");
+          const error = new Error("HarnessDock MCP wait observation was cancelled.");
           error.name = "AbortError";
           finish(reject, error);
         }, 1_000);
@@ -309,7 +309,7 @@ export function invokeIsolatedRuntimeOperation(options) {
     });
     worker.once("error", (error) => finish(reject, error));
     worker.once("exit", (code) => {
-      if (!settled) finish(reject, new Error(`CC MCP isolated runtime worker exited with code ${code}.`));
+      if (!settled) finish(reject, new Error(`HarnessDock MCP isolated runtime worker exited with code ${code}.`));
     });
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
@@ -320,7 +320,7 @@ export function createCcMcpServer(options = {}) {
   const runtimeFactory = options.runtimeFactory;
   const runtimeInvoker = options.runtimeInvoker ?? invokeIsolatedRuntimeOperation;
   const server = new McpServer(
-    { name: "cc-for-pein", version: PACKAGE_VERSION },
+    { name: "codex-harnessdock", version: PACKAGE_VERSION },
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
@@ -328,7 +328,7 @@ export function createCcMcpServer(options = {}) {
     }
   );
 
-  for (const name of CC_MCP_TOOL_NAMES) {
+  for (const name of HARNESSDOCK_MCP_TOOL_NAMES) {
     const definition = TOOL_DEFINITIONS[name];
     /** @type {any} */ (server).registerTool(name, definition, async (input, extra) => {
       try {
@@ -352,7 +352,7 @@ export async function runCcMcpServer() {
   const server = createCcMcpServer();
   const transport = new StdioServerTransport();
   transport.onerror = (error) => {
-    process.stderr.write(`CC MCP transport error: ${error.message}\n`);
+    process.stderr.write(`HarnessDock MCP transport error: ${error.message}\n`);
   };
   await server.connect(transport);
   const close = async () => {

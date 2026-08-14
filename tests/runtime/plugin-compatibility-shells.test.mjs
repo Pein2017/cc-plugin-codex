@@ -13,7 +13,7 @@ import {
 } from "../../runtime/plugin-compatibility-shells.mjs";
 
 const SOURCE_ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
-const PLUGIN_ROOT = path.join(SOURCE_ROOT, "plugins", "cc-for-pein");
+const PLUGIN_ROOT = path.join(SOURCE_ROOT, "plugins", "codex-harnessdock");
 const temporaryDirectories = [];
 
 function temporaryDirectory() {
@@ -25,7 +25,7 @@ function temporaryDirectory() {
 function snapshot(codexHome, version) {
   const root = path.join(
     codexHome,
-    "plugins", "cache", "pein-local", "cc-for-pein", version,
+    "plugins", "cache", "pein-local", "codex-harnessdock", version,
   );
   fs.mkdirSync(path.dirname(root), { recursive: true });
   fs.cpSync(PLUGIN_ROOT, root, { recursive: true });
@@ -86,7 +86,7 @@ describe("durable Plugin compatibility shells", () => {
     });
     fs.rmSync(path.join(codexHome, "plugins", "cache"), { recursive: true, force: true });
     fs.rmSync(
-      path.join(codexHome, "plugins", "data", "cc", "compatibility-shells", "v1", "versions", previousVersion),
+      path.join(codexHome, "plugins", "data", "codex-harnessdock", "compatibility-shells", "v1", "versions", previousVersion),
       { recursive: true, force: true },
     );
 
@@ -118,7 +118,7 @@ describe("durable Plugin compatibility shells", () => {
       codexHome,
       currentVersion: previousVersion,
       currentSnapshotRoot: path.join(
-        codexHome, "plugins", "cache", "pein-local", "cc-for-pein", previousVersion,
+        codexHome, "plugins", "cache", "pein-local", "codex-harnessdock", previousVersion,
       ),
     });
     assert.deepEqual(report.managedVersions, [previousVersion]);
@@ -133,7 +133,7 @@ describe("durable Plugin compatibility shells", () => {
     finalizeCompatibilityInstall({ plan, installedSnapshotRoot: currentSnapshot });
 
     const archiveRoot = path.join(
-      codexHome, "plugins", "data", "cc", "compatibility-shells", "v1",
+      codexHome, "plugins", "data", "codex-harnessdock", "compatibility-shells", "v1",
     );
     assert.equal(fs.statSync(archiveRoot).mode & 0o777, 0o700);
     assert.equal(fs.statSync(path.join(archiveRoot, "coverage.json")).mode & 0o777, 0o600);
@@ -156,7 +156,7 @@ describe("durable Plugin compatibility shells", () => {
     const currentSnapshot = snapshot(codexHome, version);
     finalizeCompatibilityInstall({ plan, installedSnapshotRoot: currentSnapshot });
     fs.rmSync(path.join(
-      codexHome, "plugins", "data", "cc", "compatibility-shells", "v1", "versions", version,
+      codexHome, "plugins", "data", "codex-harnessdock", "compatibility-shells", "v1", "versions", version,
     ), { recursive: true, force: true });
 
     const report = inspectCompatibilityCoverage({ codexHome, currentVersion: version });

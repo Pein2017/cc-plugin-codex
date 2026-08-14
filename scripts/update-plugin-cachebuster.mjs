@@ -12,7 +12,7 @@ const DEFAULT_PLUGIN_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "plugins",
-  "cc-for-pein",
+  "codex-harnessdock",
 );
 
 function usage() {

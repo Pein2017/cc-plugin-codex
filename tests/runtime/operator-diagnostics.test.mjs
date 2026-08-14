@@ -37,7 +37,7 @@ function writeJson(file, value) {
 describe("operator storage diagnosis", () => {
   it("reports aggregate control state and conservative dry-run candidates without changing files", () => {
     const root = temporaryDirectory("cc-doctor-storage-");
-    const pluginDataRoot = path.join(root, "cc");
+    const pluginDataRoot = path.join(root, "codex-harnessdock");
     const workspace = path.join(pluginDataRoot, "state", "workspace");
     const jobsDirectory = path.join(workspace, "jobs");
     const owner = "owner-root";
@@ -118,8 +118,8 @@ describe("operator doctor", () => {
     const root = temporaryDirectory("cc-doctor-native-surface-");
     const workspace = path.join(root, "workspace");
     fs.mkdirSync(workspace);
-    const previous = process.env.CC_RUNTIME_HOME;
-    process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+    const previous = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
     try {
       const { recordNativeTeamCompatibilityObservation } = await import("../../runtime/claude-version-compatibility.mjs");
       recordNativeTeamCompatibilityObservation(workspace, { fingerprint: "doctor-fingerprint" }, "claude_orchestrator", {
@@ -152,21 +152,21 @@ describe("operator doctor", () => {
       assert.equal(noCurrentFingerprint.modes.every((mode) => mode.observed === false), true);
       assert.equal(noCurrentFingerprint.modes.every((mode) => mode.canonicalToolNames.length === 0), true);
     } finally {
-      if (previous == null) delete process.env.CC_RUNTIME_HOME;
-      else process.env.CC_RUNTIME_HOME = previous;
+      if (previous == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+      else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = previous;
     }
   });
 
   it("returns redacted health across a matching synthetic installation", async () => {
     const codexHome = temporaryDirectory("cc-doctor-codex-home-");
-    const pluginRoot = path.join(SOURCE_ROOT, "plugins", "cc-for-pein");
+    const pluginRoot = path.join(SOURCE_ROOT, "plugins", "codex-harnessdock");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
     const snapshotRoot = path.join(
       codexHome,
       "plugins",
       "cache",
       "pein-local",
-      "cc-for-pein",
+      "codex-harnessdock",
       manifest.version,
     );
     fs.mkdirSync(path.dirname(snapshotRoot), { recursive: true });
@@ -183,8 +183,8 @@ describe("operator doctor", () => {
           status: 0,
           stdout: JSON.stringify({
             installed: [{
-              pluginId: "cc-for-pein@pein-local",
-              name: "cc-for-pein",
+              pluginId: "codex-harnessdock@pein-local",
+              name: "codex-harnessdock",
               marketplaceName: "pein-local",
               version: manifest.version,
               enabled: true,
@@ -270,7 +270,7 @@ describe("operator doctor", () => {
     assert.match(compatibilityShells.summary, /first install.*no distinct predecessor/i);
     assert.doesNotMatch(JSON.stringify(report), new RegExp(secretEmail));
     assert.doesNotMatch(JSON.stringify(report), /private-org/);
-    assert.equal(fs.existsSync(path.join(codexHome, "plugins", "data", "cc", "state")), false);
+    assert.equal(fs.existsSync(path.join(codexHome, "plugins", "data", "codex-harnessdock", "state")), false);
   });
 
   it("warns on locally expired OAuth and fails on unavailable credential metadata without claiming liveness", async () => {

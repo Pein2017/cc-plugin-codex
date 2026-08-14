@@ -9,16 +9,16 @@ export const COMPATIBILITY_SHELL_LIMIT = 2;
 const COVERAGE_HISTORY_LIMIT = COMPATIBILITY_SHELL_LIMIT + 1;
 const COVERAGE_SCHEMA_VERSION = 1;
 const MARKETPLACE = "pein-local";
-const PLUGIN = "cc-for-pein";
+const PLUGIN = "codex-harnessdock";
 const VERSION_PATTERN = /^[A-Za-z0-9.+_-]+$/;
 
 export const COMPATIBILITY_DISCOVERY_FILES = Object.freeze([
   ".codex-plugin/plugin.json",
   ".mcp.json",
-  "assets/cc-for-pein-icon.svg",
-  "assets/cc-for-pein-logo.svg",
-  "bootstrap/cc-mcp.mjs",
-  "bootstrap/cc-runtime.mjs",
+  "assets/harnessdock-icon.svg",
+  "assets/harnessdock-logo.svg",
+  "bootstrap/harnessdock-mcp.mjs",
+  "bootstrap/harnessdock-runtime.mjs",
   "bootstrap/dependency-preflight.mjs",
   "skills/followup-task/SKILL.md",
   "skills/followup-task/agents/openai.yaml",
@@ -45,7 +45,7 @@ function assertVersion(version) {
 
 function resolvePaths(codexHome) {
   const home = path.resolve(codexHome || process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
-  const archiveRoot = path.join(home, "plugins", "data", "cc", "compatibility-shells", "v1");
+  const archiveRoot = path.join(home, "plugins", "data", "codex-harnessdock", "compatibility-shells", "v1");
   return {
     codexHome: home,
     versionsRoot: path.join(home, "plugins", "cache", MARKETPLACE, PLUGIN),
@@ -87,17 +87,17 @@ function collectRelativeFiles(root) {
 function validCanonicalRoute(root) {
   try {
     const descriptor = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"))
-      ?.mcpServers?.cc_for_pein;
+      ?.mcpServers?.codex_harnessdock;
     const expectedBootstrap = path.join(
       CANONICAL_RUNTIME_CHECKOUT,
-      "plugins", PLUGIN, "bootstrap", "cc-mcp.mjs",
+      "plugins", PLUGIN, "bootstrap", "harnessdock-mcp.mjs",
     );
     const descriptorRoutesToCheckout = (
       descriptor?.cwd === CANONICAL_RUNTIME_CHECKOUT &&
       descriptor?.args?.[1] === expectedBootstrap
     );
-    const mcpBootstrap = fs.readFileSync(path.join(root, "bootstrap", "cc-mcp.mjs"), "utf8");
-    const runtimeBootstrap = fs.readFileSync(path.join(root, "bootstrap", "cc-runtime.mjs"), "utf8");
+    const mcpBootstrap = fs.readFileSync(path.join(root, "bootstrap", "harnessdock-mcp.mjs"), "utf8");
+    const runtimeBootstrap = fs.readFileSync(path.join(root, "bootstrap", "harnessdock-runtime.mjs"), "utf8");
     return (
       descriptorRoutesToCheckout &&
       mcpBootstrap.includes(`FIXED_RUNTIME_CHECKOUT = "${CANONICAL_RUNTIME_CHECKOUT}"`) &&

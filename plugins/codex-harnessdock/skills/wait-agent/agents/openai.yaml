@@ -1,0 +1,4 @@
+interface:
+  display_name: "CC Wait Agent"
+  short_description: "Experimental: join one Agent turn or a fixed completion barrier"
+  default_prompt: "Experimental: use $codex-harnessdock:wait-agent and invoke mcp__codex_harnessdock__wait_agent only for a blocked critical-path current-root Agent join; when dependencies are known, pass one to eight exact targets for one fixed turn or all-settled barrier. Never combine targets with wake_on_progress and never fall back to a shell command. Do meaningful work after spawn, then use the fixed one-hour completion-first wait. Set wake_on_progress only for one intentional intermediate observation per Agent turn; never repeat it by reflex. After a quiet timeout, call wait_agent again directly without narration or a list_agents/read_agent_messages probe. Synthesize required completion before final because waiting cannot reactivate an idle Codex parent."

@@ -1,0 +1,34 @@
+---
+name: list-agents
+description: 'Experimental: list durable CC Agents in the current Codex root, including nonresident terminal history.'
+---
+
+# List Agents
+
+> **Experimental.** This is a logical state snapshot, not progress or
+> completion delivery, and it cannot reactivate Codex.
+
+Call `mcp__codex_harnessdock__list_agents` with no fields, or optional `path_prefix`
+for the flat `/root/<task_name>` tree. Exact `/root` is the same unfiltered
+current-root view as omitting the field; use `/root/...` only to narrow it.
+Trusted Codex metadata owns cwd/root. If
+unavailable, report Plugin startup or discovery failure; never use shell.
+
+Release drift: use the exact retained Skill path. Latest-version instructions
+are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+
+The list includes nonresident current-root Agents. Each Agent Card has retained
+model/effort, behavioral authority (`write: false` is not a process sandbox),
+delegation mode, safe phase, and nullable timing evidence. Elapsed time is not
+liveness or attention evidence; hook and unknown activity remain private.
+Cross-root `all` remains
+operator-only; completion comes from `$codex-harnessdock:wait-agent`. Never call this
+solely to recheck completion after a quiet `wait_agent` timeout; if required
+work remains unresolved, call `wait_agent` again directly instead. Present
+names, model, immutable delegation mode, and only `starting`, `working`,
+`completed`, `failed`, or `interrupted`; omit JSON, tokens, and final output
+unless debug was explicitly requested.
+
+An exact Opus/Fable `claude_orchestrator` is an experimental Native Agent Team
+lead, but only its durable parent Card appears here. Native teammate roster,
+messages, memory, effective model/effort, and cost are not observable Cards.

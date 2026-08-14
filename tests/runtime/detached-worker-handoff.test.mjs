@@ -104,7 +104,7 @@ function setup(launchDependencies = {}) {
   roots.push(root);
   const env = {
     CODEX_THREAD_ID: "root-detached-worker-handoff",
-    CC_RUNTIME_HOME: sharedRuntimeHome,
+    CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
     CLAUDE_CONFIG_DIR: claudeConfigDir,
   };
   const runtime = createInternalClaudeRuntime({

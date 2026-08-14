@@ -1,0 +1,443 @@
+/**
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Operator-only identity/data transition helpers.  The normal runtime never
+ * calls these functions: Phase 0 prepares a reversible cutover and leaves the
+ * actual installed activation behind an explicit operator authorization.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+export const IDENTITY_CUTOVER_VERSION = 1;
+export const CURRENT_DATA_NAMESPACE = "codex-harnessdock";
+export const LEGACY_DATA_NAMESPACE = "cc";
+
+const ACTIVE_STATUSES = new Set([
+  "active",
+  "queued",
+  "running",
+  "pending",
+  "awaiting_handoff",
+  "waiting",
+]);
+
+function asPath(value, label) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a path.`);
+  return path.resolve(value);
+}
+
+function codexHomeFrom(env = process.env) {
+  return path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
+}
+
+function rejectRetiredOverride(env = process.env) {
+  if (String(env.CC_RUNTIME_HOME ?? "").trim()) {
+    throw new Error(
+      "CC_RUNTIME_HOME is retired; use CODEX_HARNESSDOCK_RUNTIME_HOME for operator/test-only runtime isolation.",
+    );
+  }
+}
+
+function resolveRoots(options = {}) {
+  const env = options.env ?? process.env;
+  rejectRetiredOverride(env);
+  const dataRoot = path.join(options.codexHome
+    ? asPath(options.codexHome, "CODEX_HOME")
+    : codexHomeFrom(env), "plugins", "data");
+  const oldRoot = asPath(options.oldRoot ?? path.join(dataRoot, LEGACY_DATA_NAMESPACE), "oldRoot");
+  const newRoot = asPath(options.newRoot ?? path.join(dataRoot, CURRENT_DATA_NAMESPACE), "newRoot");
+  const receiptFile = asPath(
+    options.receiptFile ?? path.join(newRoot, "operator", "identity-cutover.json"),
+    "receiptFile",
+  );
+  return { env, dataRoot, oldRoot, newRoot, receiptFile };
+}
+
+export function defaultIdentityCutoverFile(env = process.env) {
+  rejectRetiredOverride(env);
+  return path.join(codexHomeFrom(env), "plugins", "data", CURRENT_DATA_NAMESPACE, "operator", "identity-cutover.json");
+}
+
+function exists(directory) {
+  try {
+    return fs.existsSync(directory);
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(directory) {
+  try {
+    return fs.statSync(directory).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isEmpty(directory) {
+  return isDirectory(directory) && fs.readdirSync(directory).length === 0;
+}
+
+// Compatibility discovery shells share the new data namespace but are not
+// lifecycle state. Their presence must not make an uninstalled candidate look
+// like a half-completed durable-data migration.
+function hasManagedIdentityData(directory) {
+  if (!isDirectory(directory)) return false;
+  try {
+    return fs.readdirSync(directory).some((entry) => entry !== "compatibility-shells");
+  } catch {
+    return true;
+  }
+}
+
+function ensurePrivateDirectory(directory) {
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(directory, 0o700); } catch {}
+  }
+}
+
+function writePrivateJson(filePath, value) {
+  ensurePrivateDirectory(path.dirname(filePath));
+  const temporary = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now().toString(36)}.tmp`,
+  );
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(temporary, 0o600); } catch {}
+  }
+  fs.renameSync(temporary, filePath);
+}
+
+function readJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readAcceptedReceipt(filePath) {
+  if (!exists(filePath)) return null;
+  const value = readJson(filePath);
+  if (
+    !value ||
+    value.version !== IDENTITY_CUTOVER_VERSION ||
+    value.status !== "accepted" ||
+    typeof value.cutover_at !== "string" ||
+    !Number.isFinite(Date.parse(value.cutover_at)) ||
+    !/[zZ]$/.test(value.cutover_at) ||
+    new Date(value.cutover_at).toISOString() !== value.cutover_at ||
+    (value.old_root != null && typeof value.old_root !== "string") ||
+    (value.new_root != null && typeof value.new_root !== "string") ||
+    (value.backup_root != null && typeof value.backup_root !== "string")
+  ) return null;
+  return value;
+}
+
+export function readIdentityCutoverReceipt(options = {}) {
+  const roots = resolveRoots(options);
+  return readAcceptedReceipt(roots.receiptFile);
+}
+
+function visitFiles(root, visitor) {
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`State contains an unsupported symlink: ${target}`);
+      if (entry.isDirectory()) visit(target);
+      else if (entry.isFile()) visitor(target);
+      else throw new Error(`State contains an unsupported entry: ${target}`);
+    }
+  };
+  visit(root);
+}
+
+function validateState(root) {
+  try {
+    visitFiles(root, (filePath) => {
+      const basename = path.basename(filePath);
+      if (basename.endsWith(".json")) {
+        JSON.parse(fs.readFileSync(filePath, "utf8"));
+      } else if (basename.endsWith(".jsonl")) {
+        for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+          if (line.trim()) JSON.parse(line);
+        }
+      }
+    });
+  } catch (error) {
+    throw new Error("Durable state contains a malformed durable state record.", { cause: error });
+  }
+}
+
+function ownershipFromState(root) {
+  const ownership = { activeTurn: false, pendingHandoff: false, unknownSettlement: false };
+  if (!isDirectory(root)) return ownership;
+  const inspectRecord = (record) => {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return;
+    const status = String(record.status ?? record.state ?? record.phase ?? "").toLowerCase();
+    if (ACTIVE_STATUSES.has(status)) ownership.activeTurn = true;
+    if (record.pendingHandoff === true || status === "pending_handoff") ownership.pendingHandoff = true;
+    if (
+      status === "unknown" ||
+      String(record.settlement ?? record.settlementState ?? "").toLowerCase() === "unknown" ||
+      record.handoffDisposition === "ownership_uncertain"
+    ) ownership.unknownSettlement = true;
+  };
+  try {
+    visitFiles(root, (filePath) => {
+      if (filePath.endsWith(".json")) {
+        inspectRecord(readJson(filePath));
+      } else if (filePath.endsWith(".jsonl")) {
+        for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+          if (!line.trim()) continue;
+          try { inspectRecord(JSON.parse(line)); } catch { ownership.unknownSettlement = true; }
+        }
+      }
+    });
+  } catch {
+    // The validation pass reports malformed state separately; ownership scan
+    // remains conservative when it cannot inspect a path.
+    ownership.unknownSettlement = true;
+  }
+  return ownership;
+}
+
+function assertSettled(options, roots) {
+  const observed = options.ownership
+    ?? (typeof options.inspectOwnership === "function" ? options.inspectOwnership(roots) : ownershipFromState(roots.oldRoot));
+  const active = observed?.activeTurn === true || observed?.active === true;
+  const pending = observed?.pendingHandoff === true || observed?.pending === true;
+  const unknown = observed?.unknownSettlement === true || observed?.unknown === true;
+  if (active || pending || unknown) {
+    const reasons = [
+      active ? "active Agent turn" : null,
+      pending ? "pending handoff" : null,
+      unknown ? "unknown settlement" : null,
+    ].filter(Boolean).join(", ");
+    const error = new Error(`Identity cutover is blocked by ${reasons}.`);
+    /** @type {any} */ (error).code = unknown ? "IDENTITY_CUTOVER_UNKNOWN" : "IDENTITY_CUTOVER_ACTIVE";
+    throw error;
+  }
+}
+
+function assertNoMcpRace(options, roots) {
+  const observed = options.mcpOwnership
+    ?? (typeof options.inspectMcpOwnership === "function" ? options.inspectMcpOwnership(roots) : null);
+  if (!observed) {
+    const error = new Error("Identity cutover requires an explicit old/new MCP process ownership witness.");
+    /** @type {any} */ (error).code = "IDENTITY_CUTOVER_MCP_RACE_UNPROVEN";
+    throw error;
+  }
+  const oldActive = observed.oldActive === true || observed.oldRunning === true;
+  const newActive = observed.newActive === true || observed.newRunning === true;
+  if (oldActive || newActive) {
+    const error = new Error("Identity cutover is blocked while an old or new MCP process is active.");
+    /** @type {any} */ (error).code = "IDENTITY_CUTOVER_MCP_RACE";
+    throw error;
+  }
+}
+
+function deviceId(root, options, key) {
+  if (options.deviceIds && Object.hasOwn(options.deviceIds, key)) return options.deviceIds[key];
+  return fs.statSync(root).dev;
+}
+
+function timestamp(options) {
+  const raw = options.now ?? new Date();
+  const value = raw instanceof Date ? raw.toISOString() : String(raw);
+  if (!Number.isFinite(Date.parse(value))) throw new Error("Identity cutover timestamp must be valid UTC text.");
+  return new Date(value).toISOString();
+}
+
+function backupName(newRoot, cutoverAt) {
+  const token = cutoverAt.replace(/[^0-9]/g, "").slice(0, 14) || String(Date.now());
+  return path.join(path.dirname(newRoot), ".codex-harnessdock-backups", `${LEGACY_DATA_NAMESPACE}-${token}`);
+}
+
+function makeReadonly(root) {
+  if (process.platform === "win32") return;
+  try { fs.chmodSync(root, 0o500); } catch {}
+}
+
+export function inspectIdentityCutover(options = {}) {
+  const roots = resolveRoots(options);
+  const oldPresent = exists(roots.oldRoot);
+  const newPresent = hasManagedIdentityData(roots.newRoot);
+  if (oldPresent && newPresent) {
+    return { state: "conflicting", ...roots, old_present: true, new_present: true };
+  }
+  if (newPresent) {
+    const receipt = readAcceptedReceipt(roots.receiptFile);
+    return receipt
+      ? { state: "migrated", ...roots, receipt, old_present: false, new_present: true }
+      : { state: "rollback_required", ...roots, old_present: false, new_present: true };
+  }
+  if (oldPresent) return { state: "pending", ...roots, old_present: true, new_present: false };
+  return { state: "absent", ...roots, old_present: false, new_present: false };
+}
+
+export function cutoverPluginIdentity(options = {}) {
+  const roots = resolveRoots(options);
+  const current = inspectIdentityCutover(options);
+  if (current.state === "migrated" && "receipt" in current) return { ...current.receipt, idempotent: true };
+  if (current.state === "conflicting") throw new Error("Identity cutover destination is non-empty or conflicting and cannot be made writable.");
+  if (!isDirectory(roots.oldRoot)) throw new Error(`Legacy data root is unavailable: ${roots.oldRoot}`);
+  if (exists(roots.newRoot) && !isEmpty(roots.newRoot)) {
+    throw new Error("Identity cutover destination is non-empty.");
+  }
+
+  assertSettled(options, roots);
+  assertNoMcpRace(options, roots);
+  validateState(roots.oldRoot);
+
+  const oldStat = fs.statSync(roots.oldRoot);
+  const destinationParent = path.dirname(roots.newRoot);
+  ensurePrivateDirectory(destinationParent);
+  if (deviceId(roots.oldRoot, options, "old") !== deviceId(destinationParent, options, "destination")) {
+    throw new Error("Identity cutover refuses a cross-device move; old and new roots must share a filesystem.");
+  }
+
+  const cutoverAt = timestamp(options);
+  const backupRoot = asPath(options.backupRoot ?? backupName(roots.newRoot, cutoverAt), "backupRoot");
+  if (exists(backupRoot)) throw new Error(`Identity cutover backup already exists: ${backupRoot}`);
+  ensurePrivateDirectory(path.dirname(backupRoot));
+  const copyDirectory = options.copyDirectory ?? ((source, target) => fs.cpSync(source, target, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+    preserveTimestamps: true,
+  }));
+  copyDirectory(roots.oldRoot, backupRoot);
+  const pendingFile = path.join(path.dirname(backupRoot), `.pending-${path.basename(backupRoot)}.json`);
+  writePrivateJson(pendingFile, {
+    version: IDENTITY_CUTOVER_VERSION,
+    status: "pending",
+    cutover_at: cutoverAt,
+    old_root: roots.oldRoot,
+    new_root: roots.newRoot,
+    backup_root: backupRoot,
+  });
+
+  const renameDirectory = options.renameDirectory ?? ((source, target) => fs.renameSync(source, target));
+  try {
+    renameDirectory(roots.oldRoot, roots.newRoot);
+  } catch (error) {
+    throw new Error(`Identity cutover move was interrupted: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+
+  const newStat = fs.statSync(roots.newRoot);
+  const expectedMode = oldStat.mode & 0o777;
+  const observedMode = newStat.mode & 0o777;
+  if (newStat.uid !== oldStat.uid || newStat.gid !== oldStat.gid || observedMode !== expectedMode) {
+    throw new Error("Identity cutover did not preserve owner/mode metadata.");
+  }
+  const receipt = {
+    version: IDENTITY_CUTOVER_VERSION,
+    status: "accepted",
+    cutover_at: cutoverAt,
+    old_namespace: LEGACY_DATA_NAMESPACE,
+    new_namespace: CURRENT_DATA_NAMESPACE,
+    old_root: roots.oldRoot,
+    new_root: roots.newRoot,
+    backup_root: backupRoot,
+    old_mode: oldStat.mode & 0o777,
+    mcp_race_checked: true,
+    writable_roots: [roots.newRoot],
+    state_preserved: true,
+  };
+  try {
+    writePrivateJson(roots.receiptFile, receipt);
+    fs.rmSync(pendingFile, { force: true });
+  } catch (error) {
+    throw new Error("Identity cutover completed but its receipt is unavailable; rollback is required.", { cause: error });
+  }
+  makeReadonly(backupRoot);
+  return receipt;
+}
+
+export function rollbackPluginIdentity(options = {}) {
+  const roots = resolveRoots(options);
+  const receipt = options.receipt ?? readAcceptedReceipt(roots.receiptFile);
+  if (!receipt) throw new Error("No accepted identity cutover receipt is available for rollback.");
+  try {
+    assertSettled(options, roots);
+  } catch (error) {
+    return { status: "blocked", reason: error.message, code: error.code };
+  }
+  const backupRoot = asPath(options.backupRoot ?? receipt.backup_root, "backupRoot");
+  if (!isDirectory(backupRoot)) throw new Error(`Identity cutover backup is unavailable: ${backupRoot}`);
+  if (exists(roots.oldRoot) && !isEmpty(roots.oldRoot)) {
+    throw new Error("Identity rollback destination is non-empty.");
+  }
+  const quarantineRoot = options.quarantineRoot
+    ? asPath(options.quarantineRoot, "quarantineRoot")
+    : `${roots.newRoot}.rollback-${Date.now().toString(36)}`;
+  if (exists(roots.newRoot)) fs.renameSync(roots.newRoot, quarantineRoot);
+  fs.renameSync(backupRoot, roots.oldRoot);
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(roots.oldRoot, receipt.old_mode ?? 0o700); } catch {}
+  }
+  return {
+    status: "rolled_back",
+    old_root: roots.oldRoot,
+    new_root: roots.newRoot,
+    quarantine_root: quarantineRoot,
+    backup_root: backupRoot,
+  };
+}
+
+/**
+ * Coordinate an installed rollback without guessing at Codex's enabled-record
+ * format.  The caller supplies explicit, operator-owned callbacks for the
+ * external Plugin record and legacy doctor; state movement remains owned by
+ * this module.  Ownership is checked before any callback can disable the new
+ * identity, so an active or unknown new turn is never rolled back across.
+ */
+export function rollbackInstalledIdentity(options = {}) {
+  const roots = resolveRoots(options);
+  try {
+    assertSettled(options, roots);
+    assertNoMcpRace(options, roots);
+  } catch (error) {
+    return { status: "blocked", reason: error.message, code: error.code };
+  }
+  for (const [name, callback] of [
+    ["disableCurrent", options.disableCurrent],
+    ["restoreLegacyEnabledRecord", options.restoreLegacyEnabledRecord],
+    ["runLegacyDoctor", options.runLegacyDoctor],
+  ]) {
+    if (typeof callback !== "function") {
+      throw new Error(`Evidence-gated rollback requires an explicit ${name} callback.`);
+    }
+  }
+
+  const disabled = options.disableCurrent({
+    currentNamespace: CURRENT_DATA_NAMESPACE,
+    legacyNamespace: LEGACY_DATA_NAMESPACE,
+  });
+  const state = rollbackPluginIdentity({ ...options, ownership: {} });
+  if (state.status !== "rolled_back") return state;
+  const restored = options.restoreLegacyEnabledRecord({
+    currentNamespace: CURRENT_DATA_NAMESPACE,
+    legacyNamespace: LEGACY_DATA_NAMESPACE,
+  });
+  const doctor = options.runLegacyDoctor({
+    namespace: LEGACY_DATA_NAMESPACE,
+    state,
+  });
+  return {
+    status: "rolled_back",
+    disabled: disabled ?? true,
+    state,
+    restored: restored ?? true,
+    doctor: doctor ?? null,
+  };
+}
+
+// Names used by operator scripts and tests can remain explicit aliases while
+// this module stays the single implementation owner.
+export const migratePluginIdentity = cutoverPluginIdentity;
+export const migratePluginDataNamespace = cutoverPluginIdentity;

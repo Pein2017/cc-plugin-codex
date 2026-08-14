@@ -16,7 +16,7 @@ import {
 } from "../../runtime/job-store.mjs";
 
 const sourceRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
-const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
+const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 let fixture;
 
 before(() => {
@@ -31,13 +31,13 @@ before(() => {
     `CC_RUNTIME_CHECKOUT=${sourceRoot}`,
     "",
   ].join("\n"));
-  process.env.CC_RUNTIME_HOME = runtimeHome;
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = runtimeHome;
   fixture = { root, codexHome, runtimeHome, claudeConfigDir };
 });
 
 after(() => {
-  if (originalRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = originalRuntimeHome;
+  if (originalRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = originalRuntimeHome;
   if (fixture) fs.rmSync(fixture.root, { recursive: true, force: true });
   fixture = null;
 });
@@ -59,7 +59,7 @@ function setup(label) {
       ...inheritedEnv,
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
-      CC_RUNTIME_HOME: runtimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
     };
   };
   const ownerA = `root-${label}-a`;

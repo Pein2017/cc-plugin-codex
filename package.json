@@ -1,19 +1,19 @@
 {
-  "name": "cc-for-pein-runtime",
+  "name": "codex-harnessdock-runtime",
   "version": "0.18.1",
-  "description": "Checkout-owned durable Claude Agent runtime for Codex",
+  "description": "HarnessDock for Codex is an unofficial third-party durable Claude Agent runtime; it is not affiliated with or endorsed by OpenAI.",
   "private": true,
   "type": "module",
   "author": {
-    "name": "Pein",
-    "email": "852128461@qq.com"
+    "name": "Pein2017",
+    "url": "https://github.com/Pein2017"
   },
   "bin": {
-    "cc-for-pein-runtime": "plugins/cc-for-pein/bootstrap/cc-runtime.mjs"
+    "codex-harnessdock-runtime": "plugins/codex-harnessdock/bootstrap/harnessdock-runtime.mjs"
   },
   "license": "Apache-2.0",
   "files": [
-    "plugins/cc-for-pein",
+    "plugins/codex-harnessdock",
     "config",
     "LICENSE",
     "NOTICE",

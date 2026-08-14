@@ -24,12 +24,12 @@ const HARNESS = {
 };
 
 const roots = [];
-const priorRuntimeHome = process.env.CC_RUNTIME_HOME;
+const priorRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 
 afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
-  if (priorRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = priorRuntimeHome;
+  if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorRuntimeHome;
 });
 
 function setup(ownerRootId = "codex-root-harness-migration") {
@@ -39,7 +39,7 @@ function setup(ownerRootId = "codex-root-harness-migration") {
   const claudeConfigDir = path.join(root, "claude");
   fs.mkdirSync(workspace);
   fs.mkdirSync(claudeConfigDir);
-  process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
   return {
     root,
     workspace,
@@ -50,7 +50,7 @@ function setup(ownerRootId = "codex-root-harness-migration") {
 }
 
 function registryFile(root) {
-  const pending = [process.env.CC_RUNTIME_HOME];
+  const pending = [process.env.CODEX_HARNESSDOCK_RUNTIME_HOME];
   while (pending.length > 0) {
     const directory = pending.pop();
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -517,7 +517,7 @@ describe("Harness-neutral durable state migration", () => {
   it("refuses a native session lease that belongs to another Harness", () => {
     const { workspace, claudeConfigDir } = setup();
     const leaseFile = path.join(
-      process.env.CC_RUNTIME_HOME,
+      process.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
       "state",
       "session-leases",
       `${harnessSessionKey({

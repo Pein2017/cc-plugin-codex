@@ -1,15 +1,15 @@
 {
   "name": "pein-local",
   "interface": {
-    "displayName": "Pein Local"
+    "displayName": "HarnessDock for Codex Local"
   },
   "plugins": [
     {
-      "name": "cc-for-pein",
-      "description": "CC for Pein Experimental durable local Claude Agent orchestration",
+      "name": "codex-harnessdock",
+      "description": "HarnessDock for Codex Experimental durable local Claude Agent orchestration; unofficial third-party project not affiliated with or endorsed by OpenAI",
       "source": {
         "source": "local",
-        "path": "./plugins/cc-for-pein"
+        "path": "./plugins/codex-harnessdock"
       },
       "policy": {
         "installation": "AVAILABLE",

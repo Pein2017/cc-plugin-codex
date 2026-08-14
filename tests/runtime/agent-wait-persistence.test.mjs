@@ -60,7 +60,7 @@ function setup(label) {
     env: {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
-      CC_RUNTIME_HOME: runtimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
       CC_RUNTIME_CHECKOUT: "",
       CC_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
@@ -123,7 +123,7 @@ function startProjectionRepairWorker(workspace, jobId, barrierFile, readyFile) {
       env: {
         ...process.env,
         CODEX_HOME: codexHome,
-        CC_RUNTIME_HOME: runtimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

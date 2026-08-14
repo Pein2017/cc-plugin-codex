@@ -9,11 +9,11 @@ import {
   validateExecutionProfileOptions,
 } from "../../runtime/execution-profile.mjs";
 
-const previousRuntimeHome = process.env.CC_RUNTIME_HOME;
+const previousRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const roots = [];
 afterEach(() => {
-  if (previousRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = previousRuntimeHome;
+  if (previousRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = previousRuntimeHome;
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
@@ -197,7 +197,7 @@ describe("execution profiles", () => {
   it("makes safe read-only policy explicit and removable", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-profile-"));
     roots.push(root);
-    process.env.CC_RUNTIME_HOME = root;
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = root;
     const profile = createExecutionProfile({ profile: "safe", model: "sonnet", write: false, env: {} });
     assert.equal(profile.claudeOptions.permissionMode, "dontAsk");
     assert.ok(profile.claudeOptions.allowedTools.includes("Read"));

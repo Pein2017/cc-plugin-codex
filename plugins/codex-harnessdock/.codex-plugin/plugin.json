@@ -1,0 +1,40 @@
+{
+  "name": "codex-harnessdock",
+  "version": "0.18.1+codex.20260813024404",
+  "description": "HarnessDock for Codex is an unofficial third-party checkout-owned Claude Code Agent runtime with bounded leaf and Opus/Fable native-team delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up; it is not affiliated with or endorsed by OpenAI.",
+  "author": {
+    "name": "Pein2017",
+    "url": "https://github.com/Pein2017"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "headless-runtime",
+    "durable-agents",
+    "agent-orchestration"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "HarnessDock for Codex",
+    "shortDescription": "Experimental durable local Claude Agents for Codex",
+    "longDescription": "Experimentally run the host Claude Code CLI through a checkout-owned Agent runtime with bounded leaf/Fable delegation, durable messages, bounded progress, complete completion delivery, fixed Agent-turn joins and all-settled barriers, recent native message history, interruption, exact-session continuation, and terminal-parity execution.",
+    "developerName": "Pein2017",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "brandColor": "#312E81",
+    "composerIcon": "./assets/harnessdock-icon.svg",
+    "logo": "./assets/harnessdock-logo.svg",
+    "defaultPrompt": [
+      "Use $codex-harnessdock:spawn-agent with mcp__codex_harnessdock__spawn_agent to create an Experimental named Claude Agent and retain required join obligations",
+      "Use $codex-harnessdock:followup-task with mcp__codex_harnessdock__followup_task to continue a Claude Agent",
+      "Use $codex-harnessdock:list-agents with mcp__codex_harnessdock__list_agents to inspect local Claude Agent work",
+      "Use $codex-harnessdock:wait-agent with mcp__codex_harnessdock__wait_agent for one exact Agent turn or a fixed all-settled barrier when the dependency set is known",
+      "Use $codex-harnessdock:read-agent-messages with mcp__codex_harnessdock__read_agent_messages to retrieve an earlier native Claude message without activating the Agent"
+    ]
+  }
+}

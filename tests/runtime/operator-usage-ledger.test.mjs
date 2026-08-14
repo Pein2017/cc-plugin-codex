@@ -42,7 +42,7 @@ function okResult(receipt, fallback = receipt) {
 function callEnd({
   timestamp,
   callId,
-  server = "cc_for_pein",
+  server = "codex_harnessdock",
   tool,
   args = {},
   result = okResult({ status: "ok" }),
@@ -315,7 +315,7 @@ describe("operator usage ledger", () => {
       callEnd({
         timestamp: "2026-08-06T01:00:00.000Z",
         callId: "foreign-server",
-        server: "cc_for_pein_extra",
+        server: "codex_harnessdock_extra",
         tool: "spawn_agent",
         args: { model: "claude-opus-5", write: true },
       }),
@@ -325,7 +325,7 @@ describe("operator usage ledger", () => {
         tool: "spawn_agent",
         args: { model: "claude-opus-5", write: true },
       }),
-      "mcp_tool_call_end cc_for_pein not-json",
+      "mcp_tool_call_end codex_harnessdock not-json",
     ];
     writeJsonl(path.join(sessionsRoot, "2026", "08", "first.jsonl"), firstFileRecords);
     writeJsonl(path.join(sessionsRoot, "2026", "07", "original.jsonl"), [
@@ -502,6 +502,66 @@ describe("operator usage ledger", () => {
     );
   });
 
+  it("admits retained legacy calls only before an accepted identity cutover", async () => {
+    const root = temporaryDirectory("cc-usage-identity-");
+    const sessionsRoot = path.join(root, "sessions");
+    const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
+    writeJsonl(path.join(sessionsRoot, "identity.jsonl"), [
+      sessionMeta({ timestamp: "2026-08-01T00:00:00.000Z", id: "identity-primary" }),
+      callEnd({
+        timestamp: "2026-08-02T00:00:00.000Z",
+        callId: "legacy-before-cutover",
+        server: "cc_for_pein",
+        tool: "list_agents",
+      }),
+      callEnd({
+        timestamp: "2026-08-05T00:00:00.000Z",
+        callId: "legacy-after-cutover",
+        server: "cc_for_pein",
+        tool: "list_agents",
+      }),
+      callEnd({
+        timestamp: "2026-08-06T00:00:00.000Z",
+        callId: "current-after-cutover",
+        server: "codex_harnessdock",
+        tool: "list_agents",
+      }),
+    ]);
+
+    const report = await buildUsageReport({
+      sessionsRoot,
+      ledgerFile,
+      days: 7,
+      until: "2026-08-08T00:00:00.000Z",
+      identityCutoverAt: "2026-08-04T00:00:00.000Z",
+    });
+    assert.equal(report.identity_cutover_at, "2026-08-04T00:00:00.000Z");
+    assert.deepEqual(report.namespaces, { codex_harnessdock: 1, cc_for_pein: 1 });
+    assert.deepEqual(report.identity.qualifying_calls, { codex_harnessdock: 1, cc_for_pein: 1 });
+    assert.equal(report.identity.legacy_coverage, "admitted_pre_cutover");
+    assert.equal(report.identity.identity_drift_events, 1);
+    assert.equal(report.source.qualifying_calls, 2);
+
+    const unavailable = await buildUsageReport({
+      sessionsRoot,
+      ledgerFile,
+      days: 7,
+      until: "2026-08-08T00:00:00.000Z",
+    });
+    assert.equal(unavailable.identity_cutover_at, null);
+    assert.equal(unavailable.identity.legacy_coverage, "unavailable");
+    assert.equal(unavailable.identity.identity_drift_events, 0);
+    assert.deepEqual(unavailable.namespaces, { codex_harnessdock: 1, cc_for_pein: 0 });
+    await assert.rejects(
+      buildUsageReport({
+        sessionsRoot,
+        ledgerFile,
+        identityCutoverAt: "2026-08-04T00:00:00+00:00",
+      }),
+      /ending in Z/,
+    );
+  });
+
   it("fails closed for malformed IDs and contradictory wait evidence", async () => {
     const root = temporaryDirectory("cc-usage-malformed-");
     const sessionsRoot = path.join(root, "sessions");
@@ -580,7 +640,7 @@ describe("operator usage CLI", () => {
   function run(codexHome, args) {
     return spawnSync(process.execPath, [OPERATOR_CLI, ...args], {
       cwd: SOURCE_ROOT,
-      env: { ...process.env, CODEX_HOME: codexHome, CC_RUNTIME_HOME: "" },
+      env: { ...process.env, CODEX_HOME: codexHome, CODEX_HARNESSDOCK_RUNTIME_HOME: "" },
       encoding: "utf8",
     });
   }
@@ -604,7 +664,7 @@ describe("operator usage CLI", () => {
 
   it("redacts the absolute ledger path when disposition append fails", () => {
     const codexHome = temporaryDirectory("PRIVATE_CODEX_HOME-");
-    const blockingFile = path.join(codexHome, "plugins", "data", "cc", "operator");
+    const blockingFile = path.join(codexHome, "plugins", "data", "codex-harnessdock", "operator");
     fs.mkdirSync(path.dirname(blockingFile), { recursive: true });
     fs.writeFileSync(blockingFile, "not-a-directory", "utf8");
     const token = "private-failing-token";

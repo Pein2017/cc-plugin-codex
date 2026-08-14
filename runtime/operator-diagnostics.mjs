@@ -25,6 +25,7 @@ import {
   inspectCompatibilityShells,
   inspectInstalledPluginParity,
 } from "./plugin-installation.mjs";
+import { inspectIdentityCutover } from "./plugin-identity-cutover.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, PACKAGE_VERSION, SOURCE_ROOT } from "./version.mjs";
 
 export const CANONICAL_CHECKOUT = CANONICAL_RUNTIME_CHECKOUT;
@@ -141,7 +142,7 @@ function inspectClaudeHistory(claudeConfigDir, nowMs) {
 export function inspectOperatorStorage(options = {}) {
   const env = options.env ?? process.env;
   const codexHome = path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
-  const pluginDataRoot = path.resolve(options.pluginDataRoot ?? path.join(codexHome, "plugins", "data", "cc"));
+  const pluginDataRoot = path.resolve(options.pluginDataRoot ?? path.join(codexHome, "plugins", "data", "codex-harnessdock"));
   const stateRoot = path.join(pluginDataRoot, "state");
   const runtimeRoot = path.join(pluginDataRoot, "runtime");
   const nowMs = options.nowMs ?? Date.now();
@@ -635,6 +636,39 @@ export async function runDoctor(options = {}) {
   } else {
     checks.push(makeCheck("claude-cli", "fail", "Claude CLI check skipped because the fixed environment is invalid."));
     checks.push(makeCheck("claude-auth", "fail", "Claude auth check skipped because the fixed environment is invalid."));
+  }
+
+  try {
+    const identity = options.identityCutover ?? inspectIdentityCutover({ env: options.env ?? process.env });
+    const status = identity.state === "conflicting" || identity.state === "rollback_required"
+      ? "fail"
+      : identity.state === "pending"
+        ? "warn"
+        : "pass";
+    const summary = identity.state === "migrated"
+      ? "HarnessDock data namespace is migrated with one accepted cutover receipt."
+      : identity.state === "pending"
+        ? "Legacy data namespace is pending explicit identity cutover; no migration was executed."
+        : identity.state === "absent"
+          ? "No identity cutover receipt is present; installed migration remains unexecuted."
+          : identity.state === "conflicting"
+            ? "Both legacy and HarnessDock data namespaces exist; writable ownership is split."
+            : "HarnessDock data namespace exists without an accepted cutover receipt; rollback inspection is required.";
+    checks.push(makeCheck(
+      "identity-cutover",
+      status,
+      summary,
+      {
+        state: identity.state,
+        currentNamespace: "codex-harnessdock",
+        legacyNamespace: "cc",
+        cutoverAt: identity.receipt?.cutover_at ?? null,
+        backupRoot: identity.receipt?.backup_root ?? null,
+      },
+      status === "pass" ? null : "Stop lifecycle work and inspect the identity cutover receipt before migration or rollback.",
+    ));
+  } catch (error) {
+    checks.push(failedCheck("identity-cutover", error, "Inspect legacy/new data roots and the identity cutover receipt."));
   }
 
   try {

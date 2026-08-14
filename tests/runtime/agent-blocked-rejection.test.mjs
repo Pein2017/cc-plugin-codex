@@ -28,7 +28,7 @@ function setup() {
     envFile,
     env: {
       CODEX_THREAD_ID: "root-agent-blocked-rejection",
-      CC_RUNTIME_HOME: sharedRuntimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });

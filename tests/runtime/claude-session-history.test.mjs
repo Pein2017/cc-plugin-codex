@@ -65,7 +65,7 @@ function setup(label = "history") {
     env: {
       CODEX_THREAD_ID: ownerRootId,
       CODEX_HOME: sharedCodexHome,
-      CC_RUNTIME_HOME: runtimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });
@@ -273,7 +273,7 @@ describe("native Claude Agent message history", () => {
       env: {
         CODEX_THREAD_ID: "root-b",
         CODEX_HOME: sharedCodexHome,
-        CC_RUNTIME_HOME: fixture.runtimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: fixture.runtimeHome,
         CLAUDE_CONFIG_DIR: fixture.claudeConfigDir,
       },
     });

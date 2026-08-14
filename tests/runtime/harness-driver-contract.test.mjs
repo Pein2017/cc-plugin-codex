@@ -438,7 +438,7 @@ describe("Harness Driver contract", () => {
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-generic-turn",
-        CC_RUNTIME_HOME: sharedRuntimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
         CC_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
@@ -574,7 +574,7 @@ describe("Harness Driver contract", () => {
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-job-driver",
-        CC_RUNTIME_HOME: sharedRuntimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
         CC_RUNTIME_CHECKOUT: "",
         CC_RUNTIME_SOURCE_ROOT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
@@ -662,7 +662,7 @@ describe("Harness Driver contract", () => {
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-agent-driver",
-        CC_RUNTIME_HOME: sharedRuntimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
         CC_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
@@ -715,7 +715,7 @@ describe("Harness Driver contract", () => {
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-v1-worker-fence",
-        CC_RUNTIME_HOME: sharedRuntimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
         CC_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },

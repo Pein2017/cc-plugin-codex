@@ -41,7 +41,7 @@ function setup() {
     ...process.env,
     CODEX_HOME: codexHome,
     CODEX_THREAD_ID: "root-agent-reconciliation",
-    CC_RUNTIME_HOME: runtimeHome,
+    CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
   };
   return { workspace, env, claudeConfigDir };
 }

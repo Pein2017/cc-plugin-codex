@@ -3,7 +3,7 @@ import { parentPort, workerData } from "node:worker_threads";
 
 import { withRuntimeLoadGate } from "./promotion-gate.mjs";
 
-if (!parentPort) throw new Error("CC MCP call worker requires a parent port.");
+if (!parentPort) throw new Error("HarnessDock MCP call worker requires a parent port.");
 
 const abortController = new AbortController();
 parentPort.on("message", (message) => {
@@ -26,13 +26,13 @@ try {
     markerPath: workerData.loaderMarkerPath,
     load: () => import(workerData.runtimeModuleUrl),
   });
-  if (runtimeModule.CC_MCP_API_GENERATION !== workerData.expectedGeneration) {
+  if (runtimeModule.HARNESSDOCK_MCP_API_GENERATION !== workerData.expectedGeneration) {
     const error = new Error(
-      `CC_MCP_RESTART_REQUIRED: CC MCP API generation changed from ${workerData.expectedGeneration} to ` +
-      `${runtimeModule.CC_MCP_API_GENERATION ?? "unknown"}. Run npm run release:local in ` +
+      `HARNESSDOCK_MCP_RESTART_REQUIRED: HarnessDock MCP API generation changed from ${workerData.expectedGeneration} to ` +
+      `${runtimeModule.HARNESSDOCK_MCP_API_GENERATION ?? "unknown"}. Run npm run release:local in ` +
       "/data/CoordExp/cc-plugin-codex and start a new Codex task."
     );
-    /** @type {any} */ (error).code = "CC_MCP_RESTART_REQUIRED";
+    /** @type {any} */ (error).code = "HARNESSDOCK_MCP_RESTART_REQUIRED";
     throw error;
   }
   if (typeof runtimeModule.createClaudeRuntime !== "function") {
@@ -45,10 +45,10 @@ try {
   const operation = runtime?.[workerData.operation];
   if (typeof operation !== "function") {
     const error = new Error(
-      `CC_MCP_RESTART_REQUIRED: checkout runtime does not implement MCP operation ${workerData.operation}. ` +
+      `HARNESSDOCK_MCP_RESTART_REQUIRED: checkout runtime does not implement MCP operation ${workerData.operation}. ` +
       "Run npm run release:local and start a new Codex task."
     );
-    /** @type {any} */ (error).code = "CC_MCP_RESTART_REQUIRED";
+    /** @type {any} */ (error).code = "HARNESSDOCK_MCP_RESTART_REQUIRED";
     throw error;
   }
   const receipt = await operation(workerData.input);

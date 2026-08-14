@@ -39,7 +39,7 @@ function setup(ownerRootId = "root-agent-completion-projection") {
     env: {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
-      CC_RUNTIME_HOME: sharedRuntimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
       CC_RUNTIME_CHECKOUT: "",
       CC_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
@@ -304,7 +304,7 @@ describe("Agent completion projection", () => {
       env: {
         CODEX_HOME: context.codexHome,
         CODEX_THREAD_ID: context.ownerRootId,
-        CC_RUNTIME_HOME: sharedRuntimeHome,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
         CC_RUNTIME_CHECKOUT: "",
         CC_RUNTIME_SOURCE_ROOT: "",
         CLAUDE_CONFIG_DIR: context.claudeConfigDir,

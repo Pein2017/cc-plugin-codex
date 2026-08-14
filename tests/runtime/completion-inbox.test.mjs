@@ -18,11 +18,11 @@ import {
 } from "../../runtime/completion-inbox.mjs";
 
 const roots = [];
-const originalRuntimeHome = process.env.CC_RUNTIME_HOME;
+const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 
 afterEach(() => {
-  if (originalRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = originalRuntimeHome;
+  if (originalRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = originalRuntimeHome;
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
@@ -30,7 +30,7 @@ function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-completion-inbox-"));
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace);
-  process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
   roots.push(root);
   return { workspace, ownerRootId: "codex-root-test" };
 }
@@ -85,7 +85,7 @@ function runWriter(moduleUrl, workspace, ownerRootId, start, count, runtimeHome)
   ].join("\n");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", source, workspace, ownerRootId, String(start), String(count)], {
-      env: { ...process.env, CC_RUNTIME_HOME: runtimeHome },
+      env: { ...process.env, CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome },
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
@@ -104,7 +104,7 @@ function readFromFreshProcess(workspace, ownerRootId, runtimeHome) {
   ].join("\n");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", source, workspace, ownerRootId], {
-      env: { ...process.env, CC_RUNTIME_HOME: runtimeHome },
+      env: { ...process.env, CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -560,7 +560,7 @@ describe("completion inbox", () => {
     assert.equal(first.event.eventId, deterministicCompletionEventId(ownerRootId, "job-1"));
 
     const initial = readUnreadCompletionEvents(workspace, ownerRootId);
-    const afterRestart = await readFromFreshProcess(workspace, ownerRootId, process.env.CC_RUNTIME_HOME);
+    const afterRestart = await readFromFreshProcess(workspace, ownerRootId, process.env.CODEX_HARNESSDOCK_RUNTIME_HOME);
     assert.deepEqual(afterRestart.events, initial.events);
     assert.equal(afterRestart.events.length, 1);
     assert.match(afterRestart.events[0].deliveryToken, /^delivery-/);
@@ -634,7 +634,7 @@ describe("completion inbox", () => {
       ownerRootId,
       index * perWriter,
       perWriter,
-      process.env.CC_RUNTIME_HOME
+      process.env.CODEX_HARNESSDOCK_RUNTIME_HOME
     )));
     const unread = readUnreadCompletionEvents(workspace, ownerRootId, { limit: 100 });
     assert.equal(unread.events.length, writers * perWriter);

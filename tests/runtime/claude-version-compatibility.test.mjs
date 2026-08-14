@@ -21,12 +21,12 @@ import {
   readJobFile,
 } from "../../runtime/job-store.mjs";
 
-const priorRuntimeHome = process.env.CC_RUNTIME_HOME;
+const priorRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const roots = [];
 
 afterEach(() => {
-  if (priorRuntimeHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = priorRuntimeHome;
+  if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorRuntimeHome;
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
@@ -36,7 +36,7 @@ function setup() {
   const executable = path.join(root, "claude");
   fs.mkdirSync(workspace);
   fs.writeFileSync(executable, "fake-v1\n", { mode: 0o755 });
-  process.env.CC_RUNTIME_HOME = path.join(root, "runtime-home");
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");
   roots.push(root);
   return { workspace, executable };
 }
@@ -238,7 +238,7 @@ describe("Claude Code version compatibility", () => {
     });
     assert.equal(receipt.status, "statically-compatible");
     assert.equal(receipt.staticCompatible, true);
-    assert.equal(fs.existsSync(process.env.CC_RUNTIME_HOME), false);
+    assert.equal(fs.existsSync(process.env.CODEX_HARNESSDOCK_RUNTIME_HOME), false);
     assert.equal(fake.calls.filter(([arg]) => arg === "--help").length, 1);
   });
 
@@ -390,7 +390,7 @@ describe("Claude Code version compatibility", () => {
       envFile,
       env: {
         CODEX_THREAD_ID: "root-compat-worker-drift",
-        CC_RUNTIME_HOME: process.env.CC_RUNTIME_HOME,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: process.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
         ANTHROPIC_API_KEY: "test-only",
       },
     });

@@ -16,7 +16,7 @@ import {
 } from "../runtime/plugin-compatibility-shells.mjs";
 
 const MARKETPLACE = "pein-local";
-const PLUGIN = "cc-for-pein";
+const PLUGIN = "codex-harnessdock";
 const sourceRoot = fs.realpathSync.native(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 );

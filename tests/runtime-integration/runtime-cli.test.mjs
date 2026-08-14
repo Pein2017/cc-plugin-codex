@@ -10,7 +10,7 @@ import { afterEach, describe, it } from "node:test";
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const cli = path.join(root, "runtime", "cli.mjs");
 const operatorCli = path.join(root, "runtime", "operator-cli.mjs");
-const bootstrap = path.join(root, "plugins", "cc-for-pein", "bootstrap", "cc-runtime.mjs");
+const bootstrap = path.join(root, "plugins", "codex-harnessdock", "bootstrap", "harnessdock-runtime.mjs");
 const cleanups = [];
 const COMMON_DENIED_TOOLS = [
   "Workflow", "ListAgents", "ListPeers", "ScheduleWakeup", "CronCreate", "CronDelete",
@@ -211,7 +211,7 @@ function fixture(ownerRootId = "owner-1") {
       ...inheritedEnv,
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
-      CC_RUNTIME_HOME: runtimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
       CC_RUNTIME_ENV_FILE: envFile,
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       CC_FAKE_INVOCATION_FILE: invocation,
@@ -267,7 +267,7 @@ function agent(test, target, options = {}) {
     .digest("hex")
     .slice(0, 32);
   const registryFile = path.join(
-    environment.CC_RUNTIME_HOME,
+    environment.CODEX_HARNESSDOCK_RUNTIME_HOME,
     "state",
     workspaceHash,
     "agent-registry",
@@ -338,7 +338,7 @@ function waitForJob(test, jobId, predicate, options = {}) {
 function readInternalJob(test, jobId) {
   const canonicalWorkspace = fs.realpathSync.native(test.workspace);
   const workspaceHash = createHash("sha256").update(canonicalWorkspace).digest("hex").slice(0, 12);
-  const jobFile = path.join(test.env.CC_RUNTIME_HOME, "state", workspaceHash, "jobs", `${jobId}.json`);
+  const jobFile = path.join(test.env.CODEX_HARNESSDOCK_RUNTIME_HOME, "state", workspaceHash, "jobs", `${jobId}.json`);
   try {
     return JSON.parse(fs.readFileSync(jobFile, "utf8"));
   } catch {
@@ -657,7 +657,7 @@ describe("canonical Agent runtime CLI", () => {
     const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     const before = fs.readFileSync(
       path.join(
-        test.env.CC_RUNTIME_HOME,
+        test.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
         "state",
         createHash("sha256").update(fs.realpathSync.native(test.workspace)).digest("hex").slice(0, 16),
         "agent-registry",
@@ -726,7 +726,7 @@ describe("canonical Agent runtime CLI", () => {
 
     const after = fs.readFileSync(
       path.join(
-        test.env.CC_RUNTIME_HOME,
+        test.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
         "state",
         createHash("sha256").update(fs.realpathSync.native(test.workspace)).digest("hex").slice(0, 16),
         "agent-registry",
@@ -935,6 +935,22 @@ describe("canonical Agent runtime CLI", () => {
 
   it("preserves full-access terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
     const test = fixture();
+    const canonicalManifest = path.join(
+      "/data/CoordExp/cc-plugin-codex",
+      "plugins",
+      "codex-harnessdock",
+      ".codex-plugin",
+      "plugin.json",
+    );
+    if (!fs.existsSync(canonicalManifest) || JSON.parse(fs.readFileSync(canonicalManifest, "utf8")).name !== "codex-harnessdock") {
+      // The Phase 0 candidate is intentionally uninstalled. Its fixed
+      // production bootstrap must fail closed while the production checkout
+      // still carries the predecessor identity.
+      const rejected = command(test, ["list_agents", "--json"], { program: bootstrap });
+      assert.equal(rejected.status, 1);
+      assert.match(`${rejected.stderr}\n${rejected.stdout}`, /Fixed HarnessDock runtime checkout is invalid|Unexpected plugin identity/i);
+      return;
+    }
     const spawned = run(test, [
       "spawn_agent", "--write=false", "--task-name", "parity", "--model", "opus",
       "--json", "session=parity delay=60",
@@ -965,7 +981,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.env.CC_RUNTIME_SOURCE_ROOT, root);
 
     const fakeCache = path.join(path.dirname(test.workspace), "fake-cache", "cc", "0.1.0");
-    const fakeBootstrap = path.join(fakeCache, "bootstrap", "cc-runtime.mjs");
+    const fakeBootstrap = path.join(fakeCache, "bootstrap", "harnessdock-runtime.mjs");
     const poisonMarker = path.join(fakeCache, "poison-ran");
     fs.mkdirSync(path.dirname(fakeBootstrap), { recursive: true });
     fs.copyFileSync(bootstrap, fakeBootstrap);

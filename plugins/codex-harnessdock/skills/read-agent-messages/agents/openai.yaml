@@ -1,0 +1,4 @@
+interface:
+  display_name: "Read CC Agent Messages"
+  short_description: "Experimental: read bound native Claude messages"
+  default_prompt: "Experimental: use $codex-harnessdock:read-agent-messages and invoke mcp__codex_harnessdock__read_agent_messages only for retrospective outer-assistant history from an exact current-root CC Agent; never fall back to a shell command. Current completion should come directly from wait-agent, and this skill cannot reactivate an idle Codex parent."

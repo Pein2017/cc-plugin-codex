@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { CC_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
+import { HARNESSDOCK_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
 import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
 import { createExecutionProfile } from "./execution-profile.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
@@ -377,7 +377,7 @@ export async function runNativeTeamWitness(options = {}) {
 }
 
 function exactTools(tools) {
-  return JSON.stringify(tools) === JSON.stringify(CC_MCP_TOOL_NAMES);
+  return JSON.stringify(tools) === JSON.stringify(HARNESSDOCK_MCP_TOOL_NAMES);
 }
 
 function toolError(result, operation) {
@@ -474,16 +474,16 @@ export async function runPaidSmoke(client, meta, options = {}) {
 export async function probeInstalledMcp(options = {}) {
   const snapshotRoot = fs.realpathSync.native(options.snapshotRoot);
   const workspace = fs.realpathSync.native(options.workspace ?? SOURCE_ROOT);
-  const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-for-pein-release-smoke-"));
+  const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-harnessdock-release-smoke-"));
   const threadId = `cc-release-smoke-${randomBytes(12).toString("hex")}`;
   const meta = {
     threadId,
     [CODEX_SANDBOX_META_KEY]: { sandboxCwd: pathToFileURL(workspace).href },
   };
-  const descriptor = JSON.parse(fs.readFileSync(path.join(snapshotRoot, ".mcp.json"), "utf8"))?.mcpServers?.cc_for_pein;
+  const descriptor = JSON.parse(fs.readFileSync(path.join(snapshotRoot, ".mcp.json"), "utf8"))?.mcpServers?.codex_harnessdock;
   if (
     descriptor?.cwd !== CANONICAL_RUNTIME_CHECKOUT ||
-    descriptor?.args?.[1] !== path.join(CANONICAL_RUNTIME_CHECKOUT, "plugins", "cc-for-pein", "bootstrap", "cc-mcp.mjs")
+    descriptor?.args?.[1] !== path.join(CANONICAL_RUNTIME_CHECKOUT, "plugins", "codex-harnessdock", "bootstrap", "harnessdock-mcp.mjs")
   ) {
     throw new Error("Installed MCP descriptor does not launch the canonical checkout bootstrap directly.");
   }
@@ -493,11 +493,11 @@ export async function probeInstalledMcp(options = {}) {
     cwd: descriptor.cwd,
     env: {
       ...(options.env ?? process.env),
-      CC_RUNTIME_HOME: runtimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "cc-for-pein-release-smoke", version: "1.0.0" });
+  const client = new Client({ name: "codex-harnessdock-release-smoke", version: "1.0.0" });
   let paidStarted = false;
   let paidCompleted = false;
   try {

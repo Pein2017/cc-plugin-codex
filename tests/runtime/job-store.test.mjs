@@ -25,11 +25,11 @@ import { getProcessIdentity } from "../../runtime/process-control.mjs";
 
 const writerFixture = fileURLToPath(new URL("./fixtures/job-store-writer.mjs", import.meta.url));
 
-const priorHome = process.env.CC_RUNTIME_HOME;
+const priorHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const roots = [];
 afterEach(() => {
-  if (priorHome == null) delete process.env.CC_RUNTIME_HOME;
-  else process.env.CC_RUNTIME_HOME = priorHome;
+  if (priorHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorHome;
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
@@ -38,7 +38,7 @@ function setup() {
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace);
   roots.push(root);
-  process.env.CC_RUNTIME_HOME = path.join(root, "state-home");
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "state-home");
   writeJobFile(workspace, "cc-1", {
     id: "cc-1",
     workspaceRoot: workspace,

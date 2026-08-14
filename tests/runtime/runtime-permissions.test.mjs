@@ -16,7 +16,7 @@ import {
 const temporaryRoots = [];
 
 afterEach(() => {
-  delete process.env.CC_RUNTIME_HOME;
+  delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
   while (temporaryRoots.length) {
     fs.rmSync(temporaryRoots.pop(), { recursive: true, force: true });
   }
@@ -33,7 +33,7 @@ describe("runtime evidence permissions", () => {
     const workspace = path.join(root, "workspace");
     const runtimeHome = path.join(root, "runtime-home");
     fs.mkdirSync(workspace);
-    process.env.CC_RUNTIME_HOME = runtimeHome;
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = runtimeHome;
 
     ensureStateDir(workspace);
     fs.chmodSync(resolveStateDir(workspace), 0o755);

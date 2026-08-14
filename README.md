@@ -1,18 +1,22 @@
-# CC for Pein: durable Claude Agents for Codex
+# HarnessDock for Codex: durable Claude Agents for Codex
 
 The Plugin visual identity uses two interlocking relay tracks around one signal
 node: the Codex lead and Claude worker remain distinct while exchanging durable,
 recoverable work. The manifest declares a compact composer icon and a larger
-matching logo from `plugins/cc-for-pein/assets/` with brand color `#312E81`.
+matching logo from `plugins/codex-harnessdock/assets/` with brand color `#312E81`.
 
-CC for Pein is a checkout-owned Codex Plugin with one durable Agent supervisor
+HarnessDock for Codex is an unofficial third-party project and is not affiliated
+with or endorsed by OpenAI. The public maintainer is Pein2017:
+https://github.com/Pein2017.
+
+HarnessDock for Codex is a checkout-owned Codex Plugin with one durable Agent supervisor
 and a static Harness Driver seam. Claude Code is the only admitted production
 Harness and runs in headless stream-json mode. Claude Code remains responsible
 for authentication, configuration, hooks, skills/MCP surfaces, sessions, and
 tool execution. Future Harnesses require their own accepted OpenSpec and Driver;
 they are not public placeholders in the current API.
 
-> **Experimental feature:** the seven CC Agent skills are an evolving local
+> **Experimental feature:** the seven HarnessDock Agent skills are an evolving local
 > orchestration surface. They preserve durable Claude work, but cannot make an
 > idle Codex parent start a new model turn after it has already ended. A parent
 > that needs a child result must keep the join obligation inside its active
@@ -38,7 +42,7 @@ compatibility or release guarantee.
 
 ## Typed MCP lifecycle
 
-The Plugin exposes one stdio MCP server named `cc_for_pein`. Its seven typed
+The Plugin exposes one stdio MCP server named `codex_harnessdock`. Its seven typed
 tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 
 ```text
@@ -54,26 +58,26 @@ list_agents({ path_prefix? })
 Codex sees the tools as:
 
 ```text
-mcp__cc_for_pein__spawn_agent
-mcp__cc_for_pein__send_message
-mcp__cc_for_pein__followup_task
-mcp__cc_for_pein__wait_agent
-mcp__cc_for_pein__interrupt_agent
-mcp__cc_for_pein__read_agent_messages
-mcp__cc_for_pein__list_agents
+mcp__codex_harnessdock__spawn_agent
+mcp__codex_harnessdock__send_message
+mcp__codex_harnessdock__followup_task
+mcp__codex_harnessdock__wait_agent
+mcp__codex_harnessdock__interrupt_agent
+mcp__codex_harnessdock__read_agent_messages
+mcp__codex_harnessdock__list_agents
 ```
 
 The installed Plugin also exposes the same seven namespaced skills as
 orchestration guidance:
 
 ```text
-$cc-for-pein:spawn-agent
-$cc-for-pein:send-message
-$cc-for-pein:followup-task
-$cc-for-pein:wait-agent
-$cc-for-pein:interrupt-agent
-$cc-for-pein:read-agent-messages
-$cc-for-pein:list-agents
+$codex-harnessdock:spawn-agent
+$codex-harnessdock:send-message
+$codex-harnessdock:followup-task
+$codex-harnessdock:wait-agent
+$codex-harnessdock:interrupt-agent
+$codex-harnessdock:read-agent-messages
+$codex-harnessdock:list-agents
 ```
 
 Successful `spawn-agent` calls return a compact Agent Card: `agent_name`,
@@ -216,7 +220,7 @@ wait on, or acknowledge foreign Agents.
 The public names and core semantics align with Codex Multi-Agent V2 where the
 native Claude process permits it:
 
-| Surface | Codex Multi-Agent V2 | CC for Pein v0.14 |
+| Surface | Codex Multi-Agent V2 | HarnessDock for Codex v0.18 |
 | --- | --- | --- |
 | Operations | Six built-in snake_case tools | The same six lifecycle names plus the `read_agent_messages` native-history extension, exposed as namespaced hyphenated skills |
 | Spawn | `task_name`, `message`, `fork_turns` | `task_name`, self-contained `message`, exact `model`, and explicit `write`; the runtime never inherits Codex turns |
@@ -403,7 +407,7 @@ Active-turn steering continues to target its already-running admitted process.
 Inspect the current evidence without a model call with:
 
 ```bash
-node plugins/cc-for-pein/bootstrap/cc-runtime.mjs readiness
+node plugins/codex-harnessdock/bootstrap/harnessdock-runtime.mjs readiness
 ```
 
 ## Operator doctor and release smoke
@@ -438,7 +442,7 @@ Plugin cleanup candidate. Claude history older than 30 days is an observation,
 not deletion authority.
 
 The separate operator usage report reads Codex's persisted rollout events and
-selects only completed MCP calls whose server is exactly `cc_for_pein`. It is
+selects only completed MCP calls whose server is exactly `codex_harnessdock`. It is
 not a Skill or MCP tool, performs no Claude call, defaults to the preceding
 seven 24-hour periods, and requires explicit cross-task scope:
 
@@ -483,7 +487,7 @@ npm run smoke:release
 npm run smoke:release -- --json
 ```
 
-It resolves the enabled `cc-for-pein@pein-local` installation, requires an exact
+It resolves the enabled `codex-harnessdock@pein-local` installation, requires an exact
 checkout/snapshot match, discovers exactly seven installed Skills, launches the
 absolute canonical-checkout descriptor bootstrap, lists exactly seven MCP
 tools, verifies at most two discovery-only compatibility shells plus the durable
@@ -626,7 +630,7 @@ npm run install:local
 npm run smoke:release
 ```
 
-`runtime/cli.mjs` and `plugins/cc-for-pein/bootstrap/cc-runtime.mjs` remain
+`runtime/cli.mjs` and `plugins/codex-harnessdock/bootstrap/harnessdock-runtime.mjs` remain
 operator/debug surfaces. Model-facing lifecycle calls use the typed MCP tools;
 there is no automatic shell fallback.
 
@@ -639,7 +643,7 @@ to run `npm install` in `/data/CoordExp/cc-plugin-codex` instead of relying on a
 generic Node module-loader stack.
 
 The repository-local marketplace is `.agents/plugins/marketplace.json`; its
-plugin source is the intentionally small `plugins/cc-for-pein/` subtree.
+plugin source is the intentionally small `plugins/codex-harnessdock/` subtree.
 `npm run install:local` performs the one-time local-marketplace binding and may
 explicitly rebind a mismatched `pein-local` root to this independent clone. It
 does not remove the plugin. After that:
@@ -655,13 +659,13 @@ does not remove the plugin. After that:
   task when accepting those discovery changes.
 - Public tool schema, adapter/runtime call-contract, or release changes use
   `npm run release:local`. It advances one cachebuster and installs a versioned
-  snapshot. Increase `CC_MCP_API_GENERATION` for an incompatible public call
-  contract; a stale task then receives `CC_MCP_RESTART_REQUIRED` before any
+  snapshot. Increase `HARNESSDOCK_MCP_API_GENERATION` for an incompatible public call
+  contract; a stale task then receives `HARNESSDOCK_MCP_RESTART_REQUIRED` before any
   lifecycle operation and must start a new Codex task.
 
 During local installation, the installer first stages the current and recent valid
 discovery files into the owner-only archive
-`$CODEX_HOME/plugins/data/cc/compatibility-shells/v1`. After Codex replaces its
+`$CODEX_HOME/plugins/data/codex-harnessdock/compatibility-shells/v1`. After Codex replaces its
 Cache entry, the installer restores at most two non-current versions as exact,
 discovery-only compatibility shells and records the successful current version plus
 two predecessors. A known predecessor missing from both Cache and archive stops the
@@ -674,11 +678,11 @@ An already-running Codex task should keep using the exact versioned Skill path i
 resolved. If that path is unexpectedly missing, reading the latest Skill is an
 emergency aid, not proof that its schema or generation matches. Run `npm run doctor`,
 repair coverage with `npm run release:local`, and start a new Codex task whenever the
-MCP returns `CC_MCP_RESTART_REQUIRED`. Versions older than the two retained
+MCP returns `HARNESSDOCK_MCP_RESTART_REQUIRED`. Versions older than the two retained
 predecessors are outside this bounded compatibility promise.
 
 Verify the installed snapshot has exactly the seven Experimental skills and
-one `cc_for_pein` MCP server whose descriptor-only bootstrap delegates only to
+one `codex_harnessdock` MCP server whose descriptor-only bootstrap delegates only to
 `/data/CoordExp/cc-plugin-codex`.
 
 ## Provenance

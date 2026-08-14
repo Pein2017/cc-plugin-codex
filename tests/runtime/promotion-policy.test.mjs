@@ -23,7 +23,7 @@ describe("local promotion path policy", () => {
   it("requires restart for static, discovery, environment, and dependency surfaces", () => {
     const result = classifyPromotionPaths([
       "runtime/mcp-server.mjs",
-      "plugins/cc-for-pein/skills/spawn-agent/SKILL.md",
+      "plugins/codex-harnessdock/skills/spawn-agent/SKILL.md",
       "config/runtime.env",
       "package-lock.json",
     ]);
@@ -32,7 +32,7 @@ describe("local promotion path policy", () => {
     assert.deepEqual(result.decisivePaths, [
       "config/runtime.env",
       "package-lock.json",
-      "plugins/cc-for-pein/skills/spawn-agent/SKILL.md",
+      "plugins/codex-harnessdock/skills/spawn-agent/SKILL.md",
       "runtime/mcp-server.mjs",
     ]);
   });

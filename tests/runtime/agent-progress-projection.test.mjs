@@ -38,7 +38,7 @@ function setup(options = {}) {
     env: {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
-      CC_RUNTIME_HOME: sharedRuntimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
       CC_RUNTIME_CHECKOUT: "",
       CC_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,

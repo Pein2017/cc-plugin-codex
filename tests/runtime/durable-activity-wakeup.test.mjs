@@ -41,7 +41,7 @@ function runtimeFixture(label) {
     cwd: workspace,
     env: {
       CODEX_HOME: codexHome,
-      CC_RUNTIME_HOME: runtimeHome,
+      CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
       CODEX_THREAD_ID: ownerRootId,
       CLAUDE_CONFIG_DIR: claudeConfig,
       CC_RUNTIME_CHECKOUT: "",

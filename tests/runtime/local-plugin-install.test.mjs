@@ -19,7 +19,7 @@ const cachebusterScript = path.join(root, "scripts", "update-plugin-cachebuster.
 const temporaryDirectories = [];
 
 function temporaryDirectory() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-for-pein-install-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-harnessdock-install-"));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -42,8 +42,8 @@ if (args.join(" ") === "plugin marketplace list --json") {
   const root = process.env.FAKE_MARKETPLACE_ROOT;
   process.stdout.write(JSON.stringify({ marketplaces: root ? [{ name: "pein-local", root }] : [] }));
 } else if (args.join(" ") === "plugin list --json") {
-  process.stdout.write(JSON.stringify({ installed: [{ pluginId: "cc-for-pein@pein-local", version: process.env.FAKE_PLUGIN_VERSION, enabled: true }] }));
-} else if (args.join(" ") === "plugin add cc-for-pein@pein-local --json") {
+  process.stdout.write(JSON.stringify({ installed: [{ pluginId: "codex-harnessdock@pein-local", version: process.env.FAKE_PLUGIN_VERSION, enabled: true }] }));
+} else if (args.join(" ") === "plugin add codex-harnessdock@pein-local --json") {
   if (process.env.FAKE_DELETE_CACHE === "1") {
     fs.rmSync(process.env.FAKE_PLUGIN_CACHE_ROOT, { recursive: true, force: true });
   }
@@ -63,12 +63,12 @@ if (args.join(" ") === "plugin marketplace list --json") {
 function invokeInstall({ mode, marketplaceRoot, configure = () => ({}) }) {
   const directory = temporaryDirectory();
   const codexHome = path.join(directory, "codex-home");
-  const pluginCacheRoot = path.join(codexHome, "plugins", "cache", "pein-local", "cc-for-pein");
+  const pluginCacheRoot = path.join(codexHome, "plugins", "cache", "pein-local", "codex-harnessdock");
   fs.mkdirSync(pluginCacheRoot, { recursive: true });
   const logFile = path.join(directory, "calls.jsonl");
   const binDirectory = fakeCodex(directory);
   const manifest = JSON.parse(
-    fs.readFileSync(path.join(root, "plugins", "cc-for-pein", ".codex-plugin", "plugin.json"), "utf8"),
+    fs.readFileSync(path.join(root, "plugins", "codex-harnessdock", ".codex-plugin", "plugin.json"), "utf8"),
   );
   const result = spawnSync(process.execPath, [installScript, mode], {
     cwd: root,
@@ -79,7 +79,7 @@ function invokeInstall({ mode, marketplaceRoot, configure = () => ({}) }) {
       FAKE_MARKETPLACE_ROOT: marketplaceRoot ?? "",
       FAKE_PLUGIN_VERSION: manifest.version,
       FAKE_PLUGIN_CACHE_ROOT: pluginCacheRoot,
-      FAKE_PLUGIN_SOURCE: path.join(root, "plugins", "cc-for-pein"),
+      FAKE_PLUGIN_SOURCE: path.join(root, "plugins", "codex-harnessdock"),
       CODEX_HOME: codexHome,
       PATH: `${binDirectory}:${process.env.PATH}`,
       ...configure({ directory, codexHome, pluginCacheRoot, manifest }),
@@ -93,10 +93,10 @@ function invokeInstall({ mode, marketplaceRoot, configure = () => ({}) }) {
 
 function managedSnapshot(codexHome, version) {
   const rootPath = path.join(
-    codexHome, "plugins", "cache", "pein-local", "cc-for-pein", version,
+    codexHome, "plugins", "cache", "pein-local", "codex-harnessdock", version,
   );
   fs.mkdirSync(path.dirname(rootPath), { recursive: true });
-  fs.cpSync(path.join(root, "plugins", "cc-for-pein"), rootPath, { recursive: true });
+  fs.cpSync(path.join(root, "plugins", "codex-harnessdock"), rootPath, { recursive: true });
   const manifestFile = path.join(rootPath, ".codex-plugin", "plugin.json");
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
   fs.writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
@@ -117,7 +117,7 @@ describe("local plugin installation", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(calls, [
       ["plugin", "marketplace", "list", "--json"],
-      ["plugin", "add", "cc-for-pein@pein-local", "--json"],
+      ["plugin", "add", "codex-harnessdock@pein-local", "--json"],
       ["plugin", "list", "--json"],
     ]);
     assert.equal(calls.some((args) => args[0] === "plugin" && args[1] === "remove"), false);
@@ -140,7 +140,7 @@ describe("local plugin installation", () => {
       ["plugin", "marketplace", "list", "--json"],
       ["plugin", "marketplace", "remove", "pein-local", "--json"],
       ["plugin", "marketplace", "add", root, "--json"],
-      ["plugin", "add", "cc-for-pein@pein-local", "--json"],
+      ["plugin", "add", "codex-harnessdock@pein-local", "--json"],
       ["plugin", "list", "--json"],
     ]);
     assert.equal(calls.some((args) => args[0] === "plugin" && args[1] === "remove"), false);
@@ -154,7 +154,7 @@ describe("local plugin installation", () => {
       ["plugin", "marketplace", "list", "--json"],
       ["plugin", "marketplace", "remove", "pein-local", "--json"],
       ["plugin", "marketplace", "add", root, "--json"],
-      ["plugin", "add", "cc-for-pein@pein-local", "--json"],
+      ["plugin", "add", "codex-harnessdock@pein-local", "--json"],
       ["plugin", "list", "--json"],
     ]);
   });
@@ -209,7 +209,7 @@ describe("local plugin installation", () => {
         seedManagedVersion(codexHome, previousVersion);
         fs.rmSync(pluginCacheRoot, { recursive: true, force: true });
         fs.rmSync(
-          path.join(codexHome, "plugins", "data", "cc", "compatibility-shells", "v1", "versions", previousVersion),
+          path.join(codexHome, "plugins", "data", "codex-harnessdock", "compatibility-shells", "v1", "versions", previousVersion),
           { recursive: true, force: true },
         );
         return {};
@@ -266,7 +266,7 @@ describe("local plugin installation", () => {
     fs.mkdirSync(manifestDirectory, { recursive: true });
     fs.writeFileSync(
       path.join(manifestDirectory, "plugin.json"),
-      `${JSON.stringify({ name: "cc-for-pein", version: "0.3.0+other.build" }, null, 2)}\n`,
+      `${JSON.stringify({ name: "codex-harnessdock", version: "0.3.0+other.build" }, null, 2)}\n`,
     );
 
     const result = spawnSync(process.execPath, [cachebusterScript, pluginRoot, "--cachebuster", "test-123"], {

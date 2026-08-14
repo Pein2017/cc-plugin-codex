@@ -20,7 +20,7 @@ import {
   finalizeCompatibilityInstall,
   prepareCompatibilityInstall,
 } from "../../runtime/plugin-compatibility-shells.mjs";
-import { SOURCE_ROOT } from "../../runtime/version.mjs";
+import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "../../runtime/version.mjs";
 import { runReleaseSmokeCli } from "../../scripts/release-smoke.mjs";
 
 const temporaryDirectories = [];
@@ -34,10 +34,10 @@ afterEach(() => {
 function matchingSnapshot() {
   const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-release-snapshot-"));
   temporaryDirectories.push(codexHome);
-  const pluginRoot = path.join(SOURCE_ROOT, "plugins", "cc-for-pein");
+  const pluginRoot = path.join(SOURCE_ROOT, "plugins", "codex-harnessdock");
   const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
   const snapshotRoot = path.join(
-    codexHome, "plugins", "cache", "pein-local", "cc-for-pein", manifest.version,
+    codexHome, "plugins", "cache", "pein-local", "codex-harnessdock", manifest.version,
   );
   fs.mkdirSync(path.dirname(snapshotRoot), { recursive: true });
   fs.cpSync(pluginRoot, snapshotRoot, { recursive: true });
@@ -45,7 +45,7 @@ function matchingSnapshot() {
     codexHome,
     snapshotRoot,
     installed: {
-      pluginId: "cc-for-pein@pein-local",
+      pluginId: "codex-harnessdock@pein-local",
       version: manifest.version,
       enabled: true,
       source: "local",
@@ -57,7 +57,7 @@ function matchingSnapshot() {
 
 function snapshotVersion(fixture, version) {
   const root = path.join(path.dirname(fixture.snapshotRoot), version);
-  fs.cpSync(path.join(SOURCE_ROOT, "plugins", "cc-for-pein"), root, { recursive: true });
+  fs.cpSync(path.join(SOURCE_ROOT, "plugins", "codex-harnessdock"), root, { recursive: true });
   const manifestFile = path.join(root, ".codex-plugin", "plugin.json");
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
   fs.writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
@@ -232,7 +232,7 @@ describe("release smoke", () => {
     establishCompatibilityCoverage(fixture, previousVersion);
     fs.rmSync(path.join(path.dirname(fixture.snapshotRoot), previousVersion), { recursive: true, force: true });
     fs.rmSync(path.join(
-      fixture.codexHome, "plugins", "data", "cc", "compatibility-shells", "v1", "versions", previousVersion,
+      fixture.codexHome, "plugins", "data", "codex-harnessdock", "compatibility-shells", "v1", "versions", previousVersion,
     ), { recursive: true, force: true });
 
     await assert.rejects(
@@ -265,8 +265,28 @@ describe("release smoke", () => {
   });
 
   it("launches the descriptor MCP with isolated list_agents and no model", async () => {
+    const canonicalManifest = path.join(
+      CANONICAL_RUNTIME_CHECKOUT,
+      "plugins",
+      "codex-harnessdock",
+      ".codex-plugin",
+      "plugin.json",
+    );
+    if (!fs.existsSync(canonicalManifest) || JSON.parse(fs.readFileSync(canonicalManifest, "utf8")).name !== "codex-harnessdock") {
+      // Phase 0 deliberately leaves the production checkout/Plugin untouched.
+      // The candidate descriptor must fail closed rather than silently loading
+      // the old production identity.
+      await assert.rejects(
+        () => probeInstalledMcp({
+          snapshotRoot: path.join(SOURCE_ROOT, "plugins", "codex-harnessdock"),
+          workspace: SOURCE_ROOT,
+          callListAgents: true,
+        }),
+      );
+      return;
+    }
     const report = await probeInstalledMcp({
-      snapshotRoot: path.join(SOURCE_ROOT, "plugins", "cc-for-pein"),
+      snapshotRoot: path.join(SOURCE_ROOT, "plugins", "codex-harnessdock"),
       workspace: SOURCE_ROOT,
       callListAgents: true,
     });

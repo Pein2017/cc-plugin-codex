@@ -9,11 +9,19 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PLUGIN_DATA_NAMESPACE = "cc";
-export const LEGACY_PLUGIN_DATA_NAMESPACES = [];
+export const PLUGIN_DATA_NAMESPACE = "codex-harnessdock";
+export const LEGACY_PLUGIN_DATA_NAMESPACES = ["cc"];
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let configuredPaths = null;
+
+function rejectLegacyRuntimeHome(env = process.env) {
+  if (String(env.CC_RUNTIME_HOME ?? "").trim()) {
+    throw new Error(
+      "CC_RUNTIME_HOME is retired; use CODEX_HARNESSDOCK_RUNTIME_HOME for operator/test-only runtime isolation.",
+    );
+  }
+}
 
 export function normalizePathSlashes(value) {
   return value.replace(/\\/g, "/");
@@ -36,10 +44,11 @@ export function samePath(a, b, platform = process.platform) {
 }
 
 export function configureRuntimePaths(env = process.env) {
+  rejectLegacyRuntimeHome(env);
   const next = {
     codexHome: path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex")),
-    runtimeHome: String(env.CC_RUNTIME_HOME ?? "").trim()
-      ? path.resolve(env.CC_RUNTIME_HOME)
+    runtimeHome: String(env.CODEX_HARNESSDOCK_RUNTIME_HOME ?? "").trim()
+      ? path.resolve(env.CODEX_HARNESSDOCK_RUNTIME_HOME)
       : null,
   };
   if (
@@ -48,7 +57,7 @@ export function configureRuntimePaths(env = process.env) {
       configuredPaths.runtimeHome !== next.runtimeHome)
   ) {
     throw new Error(
-      "Runtime path ownership is already configured with a different CODEX_HOME or CC_RUNTIME_HOME in this process."
+      "Runtime path ownership is already configured with a different CODEX_HOME or CODEX_HARNESSDOCK_RUNTIME_HOME in this process."
     );
   }
   configuredPaths = next;
@@ -68,11 +77,12 @@ export function resolveExpectedPluginDataRoot() {
 }
 
 export function resolvePluginDataRoot(namespace) {
+  rejectLegacyRuntimeHome();
   if (namespace !== undefined) {
     return path.join(resolvePluginsDataRoot(), namespace);
   }
 
-  const injectedRoot = configuredPaths?.runtimeHome ?? process.env.CC_RUNTIME_HOME?.trim();
+  const injectedRoot = configuredPaths?.runtimeHome ?? process.env.CODEX_HARNESSDOCK_RUNTIME_HOME?.trim();
   if (injectedRoot) {
     return path.resolve(injectedRoot);
   }

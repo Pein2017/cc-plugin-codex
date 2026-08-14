@@ -5,4 +5,4 @@
  * longer call the checkout runtime safely. Compatible runtime implementation
  * edits keep this generation and hot-load on the next isolated MCP call.
  */
-export const CC_MCP_API_GENERATION = 4;
+export const HARNESSDOCK_MCP_API_GENERATION = 5;

@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { assertCheckoutDependencies } from "../plugins/cc-for-pein/bootstrap/dependency-preflight.mjs";
+import { assertCheckoutDependencies } from "../plugins/codex-harnessdock/bootstrap/dependency-preflight.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 

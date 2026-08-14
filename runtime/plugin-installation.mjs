@@ -13,7 +13,7 @@ import {
 } from "./version.mjs";
 import { inspectCompatibilityCoverage } from "./plugin-compatibility-shells.mjs";
 
-export const PLUGIN_NAME = "cc-for-pein";
+export const PLUGIN_NAME = "codex-harnessdock";
 export const MARKETPLACE_NAME = "pein-local";
 export const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 
