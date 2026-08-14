@@ -13,15 +13,6 @@ export const IDENTITY_CUTOVER_VERSION = 1;
 export const CURRENT_DATA_NAMESPACE = "codex-harnessdock";
 export const LEGACY_DATA_NAMESPACE = "cc";
 
-const ACTIVE_STATUSES = new Set([
-  "active",
-  "queued",
-  "running",
-  "pending",
-  "awaiting_handoff",
-  "waiting",
-]);
-
 function asPath(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a path.`);
   return path.resolve(value);
@@ -137,6 +128,41 @@ function readAcceptedReceipt(filePath) {
   return value;
 }
 
+function validPendingReceipt(value, roots) {
+  return Boolean(
+    value &&
+    value.version === IDENTITY_CUTOVER_VERSION &&
+    value.status === "pending" &&
+    typeof value.cutover_at === "string" &&
+    Number.isFinite(Date.parse(value.cutover_at)) &&
+    path.resolve(value.old_root ?? "") === roots.oldRoot &&
+    path.resolve(value.new_root ?? "") === roots.newRoot &&
+    typeof value.backup_root === "string" &&
+    isDirectory(path.resolve(value.backup_root))
+  );
+}
+
+function readPendingReceipt(roots, options = {}) {
+  const candidateFiles = [];
+  if (options.backupRoot) {
+    const backupRoot = asPath(options.backupRoot, "backupRoot");
+    candidateFiles.push(path.join(path.dirname(backupRoot), `.pending-${path.basename(backupRoot)}.json`));
+  } else {
+    const backupDirectory = path.join(path.dirname(roots.newRoot), ".codex-harnessdock-backups");
+    if (isDirectory(backupDirectory)) {
+      for (const name of fs.readdirSync(backupDirectory)) {
+        if (name.startsWith(".pending-") && name.endsWith(".json")) {
+          candidateFiles.push(path.join(backupDirectory, name));
+        }
+      }
+    }
+  }
+  const receipts = candidateFiles
+    .map((filePath) => readJson(filePath))
+    .filter((value) => validPendingReceipt(value, roots));
+  return receipts.length === 1 ? receipts[0] : null;
+}
+
 export function readIdentityCutoverReceipt(options = {}) {
   const roots = resolveRoots(options);
   return readAcceptedReceipt(roots.receiptFile);
@@ -172,42 +198,40 @@ function validateState(root) {
   }
 }
 
-function ownershipFromState(root) {
-  const ownership = { activeTurn: false, pendingHandoff: false, unknownSettlement: false };
-  if (!isDirectory(root)) return ownership;
-  const inspectRecord = (record) => {
-    if (!record || typeof record !== "object" || Array.isArray(record)) return;
-    const status = String(record.status ?? record.state ?? record.phase ?? "").toLowerCase();
-    if (ACTIVE_STATUSES.has(status)) ownership.activeTurn = true;
-    if (record.pendingHandoff === true || status === "pending_handoff") ownership.pendingHandoff = true;
-    if (
-      status === "unknown" ||
-      String(record.settlement ?? record.settlementState ?? "").toLowerCase() === "unknown" ||
-      record.handoffDisposition === "ownership_uncertain"
-    ) ownership.unknownSettlement = true;
-  };
-  try {
-    visitFiles(root, (filePath) => {
-      if (filePath.endsWith(".json")) {
-        inspectRecord(readJson(filePath));
-      } else if (filePath.endsWith(".jsonl")) {
-        for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
-          if (!line.trim()) continue;
-          try { inspectRecord(JSON.parse(line)); } catch { ownership.unknownSettlement = true; }
-        }
-      }
+function ownershipWitness(options, roots, phase) {
+  let observed;
+  if (Object.hasOwn(options, "ownership")) {
+    observed = options.ownership;
+  } else if (typeof options.inspectOwnership === "function") {
+    observed = options.inspectOwnership({
+      ...roots,
+      phase,
+      stateRoot: phase === "rollback" ? roots.newRoot : roots.oldRoot,
     });
-  } catch {
-    // The validation pass reports malformed state separately; ownership scan
-    // remains conservative when it cannot inspect a path.
-    ownership.unknownSettlement = true;
+  } else {
+    const error = new Error("Identity cutover requires an explicit Agent ownership witness.");
+    /** @type {any} */ (error).code = "IDENTITY_CUTOVER_OWNERSHIP_UNPROVEN";
+    throw error;
   }
-  return ownership;
+  if (
+    !observed ||
+    typeof observed !== "object" ||
+    Array.isArray(observed) ||
+    typeof observed.activeTurn !== "boolean" ||
+    typeof observed.pendingHandoff !== "boolean" ||
+    typeof observed.unknownSettlement !== "boolean"
+  ) {
+    const error = new Error(
+      "Identity cutover requires a complete Agent ownership witness with activeTurn, pendingHandoff, and unknownSettlement booleans.",
+    );
+    /** @type {any} */ (error).code = "IDENTITY_CUTOVER_OWNERSHIP_UNPROVEN";
+    throw error;
+  }
+  return observed;
 }
 
-function assertSettled(options, roots) {
-  const observed = options.ownership
-    ?? (typeof options.inspectOwnership === "function" ? options.inspectOwnership(roots) : ownershipFromState(roots.oldRoot));
+function assertSettled(options, roots, phase = "cutover") {
+  const observed = ownershipWitness(options, roots, phase);
   const active = observed?.activeTurn === true || observed?.active === true;
   const pending = observed?.pendingHandoff === true || observed?.pending === true;
   const unknown = observed?.unknownSettlement === true || observed?.unknown === true;
@@ -273,7 +297,13 @@ export function inspectIdentityCutover(options = {}) {
     const receipt = readAcceptedReceipt(roots.receiptFile);
     return receipt
       ? { state: "migrated", ...roots, receipt, old_present: false, new_present: true }
-      : { state: "rollback_required", ...roots, old_present: false, new_present: true };
+      : {
+          state: "rollback_required",
+          ...roots,
+          recovery_receipt: readPendingReceipt(roots, options),
+          old_present: false,
+          new_present: true,
+        };
   }
   if (oldPresent) return { state: "pending", ...roots, old_present: true, new_present: false };
   return { state: "absent", ...roots, old_present: false, new_present: false };
@@ -319,6 +349,7 @@ export function cutoverPluginIdentity(options = {}) {
     old_root: roots.oldRoot,
     new_root: roots.newRoot,
     backup_root: backupRoot,
+    old_mode: oldStat.mode & 0o777,
   });
 
   const renameDirectory = options.renameDirectory ?? ((source, target) => fs.renameSync(source, target));
@@ -360,10 +391,13 @@ export function cutoverPluginIdentity(options = {}) {
 
 export function rollbackPluginIdentity(options = {}) {
   const roots = resolveRoots(options);
-  const receipt = options.receipt ?? readAcceptedReceipt(roots.receiptFile);
-  if (!receipt) throw new Error("No accepted identity cutover receipt is available for rollback.");
+  const receipt = options.receipt
+    ?? readAcceptedReceipt(roots.receiptFile)
+    ?? readPendingReceipt(roots, options);
+  if (!receipt) throw new Error("No accepted or uniquely recoverable pending identity cutover receipt is available for rollback.");
   try {
-    assertSettled(options, roots);
+    assertSettled(options, roots, "rollback");
+    assertNoMcpRace(options, roots);
   } catch (error) {
     return { status: "blocked", reason: error.message, code: error.code };
   }
@@ -399,7 +433,7 @@ export function rollbackPluginIdentity(options = {}) {
 export function rollbackInstalledIdentity(options = {}) {
   const roots = resolveRoots(options);
   try {
-    assertSettled(options, roots);
+    assertSettled(options, roots, "rollback");
     assertNoMcpRace(options, roots);
   } catch (error) {
     return { status: "blocked", reason: error.message, code: error.code };
@@ -418,7 +452,7 @@ export function rollbackInstalledIdentity(options = {}) {
     currentNamespace: CURRENT_DATA_NAMESPACE,
     legacyNamespace: LEGACY_DATA_NAMESPACE,
   });
-  const state = rollbackPluginIdentity({ ...options, ownership: {} });
+  const state = rollbackPluginIdentity(options);
   if (state.status !== "rolled_back") return state;
   const restored = options.restoreLegacyEnabledRecord({
     currentNamespace: CURRENT_DATA_NAMESPACE,

@@ -12,6 +12,7 @@ import {
   rollbackPluginIdentity,
 } from "../../runtime/plugin-identity-cutover.mjs";
 
+/** @type {string[]} */
 const temporaryDirectories = [];
 
 function temporaryDirectory(prefix = "harnessdock-cutover-") {
@@ -20,6 +21,16 @@ function temporaryDirectory(prefix = "harnessdock-cutover-") {
   return directory;
 }
 
+/**
+ * @returns {{
+ *   codexHome: string,
+ *   dataRoot: string,
+ *   oldRoot: string,
+ *   newRoot: string,
+ *   ownership?: {activeTurn: boolean, pendingHandoff: boolean, unknownSettlement: boolean},
+ *   mcpOwnership?: {oldActive: boolean, newActive: boolean},
+ * }}
+ */
 function roots() {
   const codexHome = temporaryDirectory();
   const dataRoot = path.join(codexHome, "plugins", "data");
@@ -32,6 +43,11 @@ function roots() {
     dataRoot,
     oldRoot,
     newRoot,
+    ownership: {
+      activeTurn: false,
+      pendingHandoff: false,
+      unknownSettlement: false,
+    },
     mcpOwnership: { oldActive: false, newActive: false },
   };
 }
@@ -101,6 +117,20 @@ describe("HarnessDock identity data cutover", () => {
   });
 
   it("refuses malformed state, active/unknown ownership, nonempty destination, backup failure, and cross-device moves", () => {
+    const noOwnershipWitness = roots();
+    delete noOwnershipWitness.ownership;
+    assert.throws(
+      () => cutoverPluginIdentity(noOwnershipWitness),
+      /explicit Agent ownership witness/i,
+    );
+
+    const incompleteOwnershipWitness = roots();
+    incompleteOwnershipWitness.ownership = /** @type {any} */ ({});
+    assert.throws(
+      () => cutoverPluginIdentity(incompleteOwnershipWitness),
+      /complete Agent ownership witness/i,
+    );
+
     const noWitness = roots();
     delete noWitness.mcpOwnership;
     assert.throws(() => cutoverPluginIdentity(noWitness), /MCP process ownership witness/i);
@@ -156,6 +186,13 @@ describe("HarnessDock identity data cutover", () => {
     assert.equal(rollback.status, "blocked");
     assert.equal(fs.existsSync(target.newRoot), true);
 
+    const noRollbackWitness = { ...target };
+    delete noRollbackWitness.ownership;
+    const unproven = rollbackPluginIdentity({ ...noRollbackWitness, receipt });
+    assert.equal(unproven.status, "blocked");
+    assert.equal(unproven.code, "IDENTITY_CUTOVER_OWNERSHIP_UNPROVEN");
+    assert.equal(fs.existsSync(target.newRoot), true);
+
     const restored = rollbackPluginIdentity({ ...target, receipt });
     assert.equal(restored.status, "rolled_back");
     assert.equal(fs.existsSync(target.oldRoot), true);
@@ -163,9 +200,34 @@ describe("HarnessDock identity data cutover", () => {
     assert.equal(fs.existsSync(target.newRoot), false);
   });
 
+  it("restores from the pending receipt after post-move metadata verification fails", () => {
+    if (process.platform === "win32") return;
+    const target = roots();
+    assert.throws(
+      () => cutoverPluginIdentity({
+        ...target,
+        now: "2026-08-14T02:30:00.000Z",
+        renameDirectory(source, destination) {
+          fs.renameSync(source, destination);
+          fs.chmodSync(destination, 0o755);
+        },
+      }),
+      /preserve owner\/mode metadata/i,
+    );
+    assert.equal(fs.existsSync(target.oldRoot), false);
+    assert.equal(fs.existsSync(target.newRoot), true);
+    assert.equal(inspectIdentityCutover(target).state, "rollback_required");
+
+    const restored = rollbackPluginIdentity(target);
+    assert.equal(restored.status, "rolled_back");
+    assert.equal(fs.existsSync(target.oldRoot), true);
+    assert.equal(fs.existsSync(target.newRoot), false);
+  });
+
   it("evidence-gates installed rollback callbacks before restoring the legacy record", () => {
     const target = roots();
     const receipt = cutoverPluginIdentity({ ...target, now: "2026-08-14T03:00:00.000Z" });
+    /** @type {string[]} */
     const blockedCalls = [];
     const blocked = rollbackInstalledIdentity({
       ...target,
@@ -178,6 +240,7 @@ describe("HarnessDock identity data cutover", () => {
     assert.equal(blocked.status, "blocked");
     assert.deepEqual(blockedCalls, []);
 
+    /** @type {Array<[string, string]>} */
     const calls = [];
     const restored = rollbackInstalledIdentity({
       ...target,
