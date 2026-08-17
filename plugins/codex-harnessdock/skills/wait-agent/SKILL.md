@@ -18,12 +18,12 @@ discovery failure; never use shell.
 Release drift: use the exact retained Skill path. Latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
-After spawn, do non-overlapping work; wait only on the critical path. For an
-ordinary join, omit progress; use a fixed 3600000 ms (one-hour) upper bound. Set
-`wake_on_progress: true` only when one intermediate update per active Agent job
-changes scheduling. Add exactly one target to scope that wake; unrelated root
-activity remains available to its proper consumer. Then work, steer, or join
-completion-first; never repeat progress waiting for that job.
+An untargeted call observes current-root completion; a targeted call observes
+only the fixed selected turn(s). Use a fixed 3600000 ms (one-hour) upper bound
+when waiting for completion. Set `wake_on_progress: true` only with exactly one
+target when an intermediate update is useful; unrelated root activity remains
+available to its proper consumer. Do not repeat progress waiting for the same
+job after its update has been consumed.
 
 - A later call may acknowledge prior delivered `delivery_token` values
   independently. Pass each consumed token once on a later wait if one is made;
@@ -44,8 +44,8 @@ completion-first; never repeat progress waiting for that job.
   Do not narrate unchanged timeouts, use list as progress, or treat timeout
   as failure, cancellation, health, or progress. If work remains unresolved,
   call `wait_agent` again directly; use progress wake only intentionally.
-- Never finalize with an unresolved required or parallel-then-join result.
-  Synthesize the complete message; quote it verbatim only when requested.
+- Synthesize the complete stored message when completion is returned; quote it
+  verbatim only when requested.
 - A targeted barrier returns ordered `targets` entries. Settled unread turns
   include completion fields and token; acknowledged turns report
   `already_consumed` without a reconstructed message or token. Timeout is
@@ -53,11 +53,10 @@ completion-first; never repeat progress waiting for that job.
 - A completion carries `blocking`: `null` for `completed`, and `null` for an
   parent-requested `interrupted` status that proved a safe flush; that Agent
   stays resumable via `$codex-harnessdock:followup-task`. Otherwise `blocking` is a closed
-  `{reason, scope, retry}`; branch on `retry` per the spawn Skill's join
-  policy. A `completed` turn asking a question is still `blocking: null`:
+  `{reason, scope, retry}`; branch on `retry` per the spawn Skill's blocking
+  semantics. A `completed` turn asking a question is still `blocking: null`:
   answer with follow-up on that Agent, never infer status from message text.
 
-Waiting joins only the durable parent. An experimental exact Opus/Fable Native
-Agent Team lead must use Claude-native same-team settle signals before its own
-parent synthesis; no teammate wait, roster, memory, effective model/effort, or
-cost surface is added here.
+Waiting observes only the durable parent. An experimental exact Opus/Fable Native
+Agent Team lead has Claude-native same-team settle signals; no teammate wait,
+roster, memory, effective model/effort, or cost surface is added here.

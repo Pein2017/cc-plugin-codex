@@ -30,7 +30,7 @@
     "composerIcon": "./assets/harnessdock-icon.svg",
     "logo": "./assets/harnessdock-logo.svg",
     "defaultPrompt": [
-      "Use $codex-harnessdock:spawn-agent with mcp__codex_harnessdock__spawn_agent to create an Experimental named Claude Agent and retain required join obligations",
+      "Use $codex-harnessdock:spawn-agent with mcp__codex_harnessdock__spawn_agent to create an Experimental named Claude Agent asynchronously",
       "Use $codex-harnessdock:followup-task with mcp__codex_harnessdock__followup_task to continue a Claude Agent",
       "Use $codex-harnessdock:list-agents with mcp__codex_harnessdock__list_agents to inspect local Claude Agent work",
       "Use $codex-harnessdock:wait-agent with mcp__codex_harnessdock__wait_agent for one exact Agent turn or a fixed all-settled barrier when the dependency set is known",

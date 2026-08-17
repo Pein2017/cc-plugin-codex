@@ -324,7 +324,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn is asynchronous: do non-overlapping work first and join with wait_agent only at a critical dependency. Model-facing waits are completion-first, wake promptly on durable activity, have a fixed one-hour upper bound, and take no timeout argument. Known dependencies use one exact targeted join or all-settled barrier; only one target may opt into progress wakeup. Opt into one progress update only when it changes scheduling; do not repeat it by reflex. After a quiet timeout on required work, call wait_agent again directly, not list_agents or read_agent_messages as a completion/progress recheck. A completion token is acknowledged exactly once on a later wait only if needed. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
+        "Use the seven Experimental Agent tools. Spawn starts a Claude Agent asynchronously. wait_agent has implementation-defined completion-priority, wakes on durable activity, has a fixed one-hour upper bound, and takes no timeout argument. Targets form one to eight exact targets joined as either one exact turn or an all-settled barrier; only one target may opt into one progress update. A completion token is acknowledged exactly once on a later wait only if needed. After a quiet timeout, call wait_agent again instead of list_agents or read_agent_messages. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

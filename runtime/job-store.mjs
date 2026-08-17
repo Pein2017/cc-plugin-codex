@@ -23,6 +23,10 @@ import {
   reconcileTerminalJobCompletion,
 } from "./completion-inbox.mjs";
 import {
+  assertUnderstoodJobRecord,
+  isUnderstoodJobRecord,
+} from "./durable-state-v3.mjs";
+import {
   V1_HARNESS_ID,
   assertHarnessId,
   canonicalNativeSessionRef,
@@ -592,9 +596,31 @@ export function generateJobId(prefix = "job") {
   return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
+/**
+ * The durable record currently stored for a job, or null when there is none or
+ * it cannot be parsed. Used only to decide whether this runtime may overwrite.
+ */
+function storedJobRecord(jobFile) {
+  try {
+    return JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create or replace one durable job record.
+ *
+ * A brand new file may be written freely: that is how a raw record or fixture
+ * comes into existence. Replacing an existing record is a rewrite, so a
+ * durable generation this runtime does not understand is refused here too —
+ * and that refusal lifts by itself once its version joins the understood set.
+ */
 export function writeJobFile(cwd, jobId, payload) {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
+  const existing = storedJobRecord(jobFile);
+  if (existing) assertUnderstoodJobRecord(existing, "overwrite");
   writeAtomic(jobFile, { ...payload, updatedAt: nowIso() });
   return jobFile;
 }
@@ -833,6 +859,7 @@ export function reconcileCompletionEvents(cwd, jobs = readAllJobs(cwd)) {
   const receipts = [];
   for (let index = 0; index < jobs.length; index += 1) {
     const job = jobs[index];
+    if (!isUnderstoodJobRecord(job)) continue;
     if (!TERMINAL_JOB_STATUSES.has(job.status)) continue;
     // A pre-Claude activation fact belongs to the launcher, not yet to an
     // Agent turn. It may already be attached to an Agent, but it has not
@@ -921,6 +948,10 @@ function isWithinReapGracePeriod(job, now = Date.now()) {
  */
 export function reapStaleJobs(cwd, jobs) {
   return jobs.map((job) => {
+    // A record from a durable generation this runtime does not own may name a
+    // worker, lease, or native turn whose liveness cannot be judged here. It
+    // keeps its owner and its state until its own runtime settles it.
+    if (!isUnderstoodJobRecord(job)) return job;
     if (!REAPABLE_STATUSES.has(job.status)) return job;
     if (inspectJobResidency(job).active) return job;
 
@@ -967,6 +998,7 @@ export function reapStaleJobs(cwd, jobs) {
 
 export function upsertJob(cwd, jobPatch) {
   const existing = jobPatch.id ? readJobFile(cwd, jobPatch.id) : null;
+  if (existing) assertUnderstoodJobRecord(existing, "rewrite");
   const timestamp = nowIso();
   const job = existing
     ? { ...existing, ...jobPatch, updatedAt: timestamp }
@@ -1001,6 +1033,7 @@ export function markAgentProjectionReconciled(cwd, jobId) {
       if (error?.code === "ENOENT") return { updated: false, job: null };
       throw error;
     }
+    assertUnderstoodJobRecord(job, "rewrite");
     if (job.agentProjectionReconciledAt) {
       return { updated: false, job };
     }
@@ -1024,6 +1057,7 @@ export function mutateJob(cwd, jobId, updater) {
   const fd = acquireJobLock(lockFile);
   try {
     const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+    assertUnderstoodJobRecord(job, "rewrite");
     const next = updater(job);
     if (!next || typeof next !== "object" || Array.isArray(next)) {
       throw new Error(`Job mutation for ${jobId} did not return a job object.`);
@@ -1066,6 +1100,7 @@ export function claimJobPublicProgress(cwd, jobId) {
   const fd = acquireJobLock(lockFile);
   try {
     const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+    assertUnderstoodJobRecord(job, "claim progress delivery for");
     if (!isJobPublicProgressDeliveryEligible(job)) {
       return { claimed: false, job };
     }
@@ -1430,6 +1465,7 @@ export function transitionJob(cwd, jobId, expectedStatuses, next, extra = {}, op
   let outcome;
   try {
     const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+    assertUnderstoodJobRecord(job, "transition");
     const statusMatches = expectedList.includes(job.status);
     const predicateMatches = statusMatches && (!predicate || predicate(job));
     if (!predicateMatches) {
@@ -1538,6 +1574,9 @@ export function cleanupOldJobs(cwd) {
   );
   const { pruned: toRemove } = partitionJobsForRetention(jobs);
   for (const job of toRemove) {
+    // Retention never deletes a record whose generation this runtime cannot
+    // read: its completion projection and ownership evidence are not ours.
+    if (!isUnderstoodJobRecord(job)) continue;
     const ownerRootId = ownerRootIdOf(job);
     const completion = completionByJobId.get(job.id);
     const preClaudeDiagnostic = isPreClaudeJob(job);

@@ -10,12 +10,20 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { types } from "node:util";
 
 import { assertAgentBlocking, deriveAgentBlocking } from "./agent-blocking.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
 import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 import { normalizeTerminalMetrics } from "./terminal-metrics.mjs";
+import {
+  UNREADABLE_TURN_EVIDENCE,
+  assertPublishableTerminal,
+  carriesTurnSettlementAxes,
+  classifyTurnSettlement,
+  isPublishableTerminal,
+} from "./turn-settlement.mjs";
 
 export const COMPLETION_INBOX_VERSION = 2;
 export const LEGACY_COMPLETION_INBOX_VERSION = 1;
@@ -481,10 +489,77 @@ function withInboxLock(cwd, ownerRootId, operation) {
   }
 }
 
+/**
+ * Where a caller may attach normalized turn evidence to a completion input or
+ * a terminal job. This is a closed internal path, not a public field: the
+ * seven public operations and their schemas are unchanged, and the evidence
+ * itself is never stored in or projected from an event.
+ */
+const TURN_EVIDENCE_FIELDS = Object.freeze(["normalizedTerminalResult", "result"]);
+
+/**
+ * True when `field` sits anywhere above `owner` in the prototype chain --
+ * present but not readable as `owner`'s own data property. Never uses `in`:
+ * a Proxy anywhere above `owner`, not just directly above it, can lie to
+ * `in`'s `[[HasProperty]]` walk through its `has` trap. Each link's
+ * Proxy-ness is decided before it is queried in any way, so a Proxy anywhere
+ * in the chain is treated as presence rather than asked whether it has the
+ * field, and `Object.getPrototypeOf` is only called on a link already proven
+ * not to be a Proxy.
+ */
+function fieldInheritedUnreadably(owner, field) {
+  let link = Object.getPrototypeOf(owner);
+  while (link != null) {
+    if (types.isProxy(link)) return true;
+    if (Object.hasOwn(link, field)) return true;
+    link = Object.getPrototypeOf(link);
+  }
+  return false;
+}
+
+/**
+ * Terminal evidence that declares the turn axes may publish a completion only
+ * when `runtime/turn-settlement.mjs` proves the native turn terminal and its
+ * turn-owned execution settlement is `settled`. A turn that owns no execution
+ * world states that as `continuity=not_applicable` with `settlement=settled`,
+ * not a fourth settlement value -- `not_applicable` lives only on continuity.
+ * Version-one results declare no axis, so this gate never sees them and their
+ * behavior is unchanged.
+ *
+ * Returns the offending evidence so exactly one owner -- the settlement
+ * module -- states the reason and the failure message.
+ */
+function unsettledTurnEvidence(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  // A container that can answer differently on each read cannot be gated at
+  // all: refuse it before a single trap runs, rather than checking one value
+  // and projecting another.
+  if (types.isProxy(source)) return UNREADABLE_TURN_EVIDENCE;
+  for (const field of TURN_EVIDENCE_FIELDS) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, field);
+    if (descriptor == null) {
+      // An inherited evidence field is present but unreadable, not absent --
+      // including one hidden behind a Proxy link further up the chain.
+      if (fieldInheritedUnreadably(source, field)) return UNREADABLE_TURN_EVIDENCE;
+      continue;
+    }
+    if (!Object.hasOwn(descriptor, "value")) return UNREADABLE_TURN_EVIDENCE;
+    const candidate = descriptor.value;
+    if (!carriesTurnSettlementAxes(candidate)) continue;
+    if (!isPublishableTerminal(candidate)) return candidate;
+  }
+  return null;
+}
+
 function normalizeCompletionInput(ownerRootId, completion) {
   if (!completion || typeof completion !== "object" || Array.isArray(completion)) {
     throw new Error("Completion event input must be an object.");
   }
+  // Fail closed before the first property read: an unreadable container must
+  // not be inspected at all, and no inbox read, lock, or event identity exists
+  // yet either.
+  const unsettled = unsettledTurnEvidence(completion);
+  if (unsettled) assertPublishableTerminal(unsettled, "Completion event");
   const jobId = assertText(completion.jobId, "job ID");
   const terminalStatus = assertText(completion.terminalStatus, "terminal completion status");
   if (!TERMINAL_STATUSES.has(terminalStatus)) {
@@ -1047,7 +1122,11 @@ function completionFromTerminalJob(job, options) {
     resumability,
     blocking,
     detailedResultAvailable: options.detailedResultAvailable ?? true,
-    resultPointer: options.resultPointer ?? job.id,
+    // An explicit `null` pointer means "no durable record the public detailed
+    // -result path can resolve", which is a different statement from "the
+    // caller did not say". `??` would collapse the two and re-advertise a
+    // pointer the caller deliberately withheld.
+    resultPointer: Object.hasOwn(options, "resultPointer") ? options.resultPointer : job.id,
     finalMessage:
       options.finalMessage ??
       job.result?.rawOutput ??
@@ -1083,6 +1162,14 @@ export function markCompletionDetailedResultUnavailable(cwd, ownerRootId, jobId)
 }
 
 export function reconcileTerminalJobCompletion(cwd, ownerRootId, job, options = {}) {
+  // Reconciliation is a batch, restart-time path: an unpublishable job is
+  // reported and skipped rather than thrown, so one unsettled turn cannot stop
+  // unrelated terminal receipts from being delivered. Nothing is read, locked,
+  // written, or acknowledged for it.
+  const unsettled = unsettledTurnEvidence(job);
+  if (unsettled) {
+    return { reconciled: false, reason: classifyTurnSettlement(unsettled).reason, event: null };
+  }
   const completion = completionFromTerminalJob(job, options);
   if (!completion) return { reconciled: false, reason: "not-terminal", event: null };
   const result = appendCompletionEvent(cwd, ownerRootId, completion, { reconcileExisting: true });

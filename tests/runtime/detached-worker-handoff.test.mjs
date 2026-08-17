@@ -135,6 +135,7 @@ function readiness(runtime) {
 
 function preparedResume(runtime, jobId, sessionId = `resume-${jobId}`) {
   return runtime.prepareStart("resume task", {
+    harnessId: runtime.driver.harnessId,
     readinessReceipt: readiness(runtime),
     jobId,
     model: "haiku",

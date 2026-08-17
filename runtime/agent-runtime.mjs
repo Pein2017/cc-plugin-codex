@@ -25,10 +25,7 @@ import {
   assertHarnessCapability,
   validateHarnessCapabilities,
 } from "./harness-capabilities.mjs";
-import {
-  DEFAULT_HARNESS_ID,
-  assertNoHarnessImplementationSelector,
-} from "./harness-registry.mjs";
+import { assertNoHarnessImplementationSelector } from "./harness-registry.mjs";
 import { createInternalClaudeRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
@@ -927,7 +924,7 @@ class AgentRuntime {
     // Validate the caller-owned model decision before readiness checks or any
     // durable Agent reservation. There is no implicit or fallback model.
     const requestedModel = requiredSpawnModel(input);
-    const driver = this.jobs.driverForHarness(DEFAULT_HARNESS_ID);
+    const driver = this.jobs.driverForHarness(this.jobs.generationHarnessId);
     const executionOptions = validatedInternalOptions(
       driver,
       { ...input, model: requestedModel },
@@ -1003,7 +1000,10 @@ class AgentRuntime {
    * read by whichever Driver this runtime happens to register.
    */
   assertAgentDriver(agent, options = {}) {
-    const driver = this.jobs.driverForHarness(agent.harnessId ?? DEFAULT_HARNESS_ID);
+    // Every Agent projection states its own Harness -- a version-one/two record
+    // through the legacy adapter, a version-three record from its frozen route.
+    // An Agent that states none is unroutable and is refused, never defaulted.
+    const driver = this.jobs.driverForHarness(agent.harnessId);
     if (agent.version === 2) {
       if (
         options.allowDriverVersionDrift !== true &&

@@ -99,8 +99,22 @@ describe("typed HarnessDock MCP server", () => {
     closers.push(() => client.close(), () => server.close());
     const instructions = client.getInstructions();
     assert.match(instructions, /fixed one-hour upper bound/i);
-    assert.match(instructions, /quiet timeout on required work[\s\S]*call wait_agent again directly/i);
-    assert.match(instructions, /not list_agents or read_agent_messages as a completion\/progress recheck/i);
+    assert.match(instructions, /no timeout argument/i);
+    assert.match(instructions, /implementation-defined completion-priority/i);
+    assert.match(instructions, /one to eight exact targets?[\s\S]*all-settled barrier/i);
+    assert.match(instructions, /only one target may opt into one progress update/i);
+    assert.match(instructions, /completion token is acknowledged exactly once on a later wait/i);
+    assert.match(instructions, /after a quiet timeout[\s\S]*call wait_agent again instead of list_agents or read_agent_messages/i);
+  });
+
+  it("keeps the server instructions free of mandatory scheduling/classification language", async () => {
+    const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
+    closers.push(() => client.close(), () => server.close());
+    const instructions = client.getInstructions();
+    assert.doesNotMatch(instructions, /do non-overlapping work first/i);
+    assert.doesNotMatch(instructions, /critical dependency/i);
+    assert.doesNotMatch(instructions, /required work/i);
+    assert.doesNotMatch(instructions, /completion-first/i);
   });
 
   it("injects the hidden one-hour timeout for wait_agent via runtimeFactory, still rejects caller timeout_ms, and forwards other tools unchanged", async () => {

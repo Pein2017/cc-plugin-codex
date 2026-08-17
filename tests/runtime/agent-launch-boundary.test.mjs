@@ -382,6 +382,7 @@ describe("Agent durable launch boundary", () => {
     const { runtime, workspace } = setup();
     assert.throws(
       () => runtime.jobs.prepareStart("must not prepare", {
+        harnessId: runtime.jobs.driver.harnessId,
         model: "sonnet",
         effort: "not-an-effort",
         readinessReceipt: readiness(runtime),
@@ -512,6 +513,7 @@ describe("Agent durable launch boundary", () => {
     const agent = runtime.store.createAgent({ task_name: "loser" });
     runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
     const prepared = runtime.jobs.prepareStart("losing concurrent follow-up", {
+      harnessId: runtime.jobs.driver.harnessId,
       readinessReceipt: readiness(runtime),
       jobId: "prepared-loser",
       agentId: agent.agentId,
@@ -539,6 +541,7 @@ describe("Agent durable launch boundary", () => {
     const agent = runtime.store.createAgent({ task_name: "crash_window" });
     runtime.store.updateAgent(agent.agentId, (current) => ({ ...current, status: "completed" }));
     const prepared = runtime.jobs.prepareStart("crash between reserve and attach", {
+      harnessId: runtime.jobs.driver.harnessId,
       readinessReceipt: readiness(runtime),
       jobId: "prepared-crash-window",
       agentId: agent.agentId,
@@ -590,6 +593,7 @@ describe("Agent durable launch boundary", () => {
       selectedModel: "claude-sonnet-5",
     });
     const prepared = runtime.jobs.prepareStart("initial prompt", {
+      harnessId: runtime.jobs.driver.harnessId,
       readinessReceipt: readiness(runtime),
       jobId: "prepared-initial-crash",
       agentId: agent.agentId,

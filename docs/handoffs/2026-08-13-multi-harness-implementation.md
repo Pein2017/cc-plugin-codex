@@ -45,11 +45,69 @@ Start the next fresh Codex task with cwd `/data/CoordExp/codex-harnessdock-dev` 
 
 Before freezing any phase implementation, run `openspec list` again. The currently active `add-targeted-barrier-agent-join`, `expose-actionable-agent-blocking`, `improve-agent-card-and-usage-receipts`, `replace-wait-polling-with-event-wakeup`, and `harden-native-background-task-completion` changes overlap public wait/blocking/card/usage/settlement requirements. If any has been accepted or archived, rebase this phase's copied MODIFIED/RENAMED requirements and file plan onto the new main specs before editing code; strict validation alone does not detect stale cross-change authority.
 
+## Phase A accepted candidate checkpoint — 2026-08-15
+
+- Phase A `generalize-multi-harness-agent-control-plane` is candidate-accepted,
+  uninstalled, unreleased, and uncommitted. `HEAD` remains
+  `e40e9f767a87893a6761fd4b59545231ed0da67f`; the exact reviewed
+  Git-visible implementation/test/guidance inventory uses domain
+  `codex-harnessdock-exact-git-visible-tree-v1`, 604 paths, 5,404,412 file
+  bytes, and SHA-256
+  `cd385d0e0da27f4b8de1028f01221b85b9991f7cf7abb879e5e12d6530cc9296`.
+  The subsequent tracked edits are acceptance bookkeeping in this handoff and
+  the OpenSpec task ledger, not implementation or test changes.
+- Final candidate gates on the corrected tree: `npm run check` passed runtime
+  **1135/1135** and integration **20/20**, with clean eslint/typecheck;
+  target strict validation passed; `openspec validate --all --strict` passed
+  **25/25**; `git diff --check` was clean.
+- One fresh `claude-opus-5/xhigh` read-only milestone review initially returned
+  HOLD for three reproducible gaps: scheduling policy remained in shared MCP
+  guidance, writer-lease release re-resolved a removed workspace, and the
+  interrupt Skill advertised the removed force-termination behavior. The lead
+  accepted all three; a bounded `claude-sonnet-5/high` TDD correction made
+  guidance mechanical, released writer leases from their stored canonical
+  key after proven settlement, and made interrupt guidance request-only. The
+  same reviewer rechecked only those corrections on the exact digest above and
+  returned **PASS with no findings**.
+- Closed settlement boundary: launch acceptance is fenced before native input;
+  request acknowledgement, effect, native state, and execution settlement are
+  independent; ambiguous acceptance/worker loss stays unknown and is never
+  replayed; completion and every matching lease release require native terminal
+  plus settled execution; release is idempotent and uses durable canonical
+  writer identity even after workspace teardown.
+- Retained unknown boundaries: Phase A has no public v3 caller or real second
+  Driver; unknown native acceptance/settlement intentionally holds leases and
+  publishes nothing; no operator force-clear exists; unclaimed-command
+  settlement and cross-attempt claim transfer remain deferred; a future
+  release caller must pass the stored canonical writer root, not an alias.
+  Installed Plugin activation, data cutover, loaded-runtime witness, and a real
+  OpenCode lifecycle remain unproven and unauthorized here.
+- The one authorized real Claude read-only leaf smoke is consumed and must not
+  be replayed. It used `claude-haiku-4-5/low`, `write=false`, one native attempt,
+  zero reconnects, and the production Driver/Supervisor/worker seam. Receipt:
+  acceptance proven, terminal completed/settled, completion observed, Agent
+  reconciled, leases released, disposed, source/workspace unchanged, runtime
+  state disposed, timeout false. Its mode-0600 fence remains consumed at
+  `/data/CoordExp/.codex/harnessdock-phase-a-leaf-2026-08-15.fence`.
+- `add-opencode-explorer-driver` is the sole next change authorized to activate
+  public v3 spawn. It must pin every external request to the exact full route
+  `opencode-go/deepseek-v4-flash`; Kimi/default selection/fallback is forbidden.
+  Phase B may begin directly in this worktree without an intermediate install,
+  restart, commit, or Plugin activation.
+
 ## Immediate next action and stop rule
 
 1. Bind Git/Serena to `/data/CoordExp/codex-harnessdock-dev`, inspect exact HEAD/status, and re-run `openspec list` before selecting work.
-2. Implement the remaining Phase A candidate with TDD, fresh focused/full receipts, review, and an exact-tree checkpoint. When that checkpoint passes, continue directly into Phase B in the same task/worktree; do not merge the two OpenSpec task ledgers or skip either review gate.
-3. Complete Phase B code, deterministic fake-Server coverage, compatibility probing that consumes no model request, release/evaluation tooling, documentation, and all checkout-level tests that the available local contract permits.
+2. Treat the accepted Phase A inventory above as the dependency baseline and
+   continue directly into `add-opencode-explorer-driver`; do not reopen the
+   Phase A task ledger or install/restart between phases unless a Phase B fact
+   proves the accepted boundary false.
+3. Complete Phase B code, deterministic fake-Server coverage, compatibility
+   probing that consumes no model request, release/evaluation tooling,
+   documentation, and all checkout-level tests that the available local
+   contract permits. Any authorized live request must explicitly resolve to
+   `opencode-go/deepseek-v4-flash` and fail closed before request submission on
+   route drift or fallback.
 4. Stop before the first operation that mutates installed state or requires the freshly loaded final Plugin: production-checkout promotion, durable data cutover, Plugin refresh/install, enabled-record changes, Codex restart/new loaded task, installed-smoke execution, or live Claude/OpenCode examples through that loaded Plugin. Present these as one operator runbook instead of performing a partial seven-operation installation.
 5. Also stop on an actual OpenCode contract mismatch requiring OpenSpec revision, unavailable required operator-owned Server evidence, secret/auth/account/quota failure, material paid-model authorization need, or a conclusion-changing review finding. Ordinary implementation details and failing tests are not pause conditions; diagnose and fix them.
 

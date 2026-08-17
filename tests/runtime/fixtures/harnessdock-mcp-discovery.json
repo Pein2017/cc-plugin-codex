@@ -1,0 +1,256 @@
+{
+  "generation": 5,
+  "tools": [
+    {
+      "name": "spawn_agent",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "claude-haiku-4-5",
+              "claude-sonnet-5",
+              "claude-opus-5",
+              "claude-fable-5"
+            ]
+          },
+          "write": {
+            "type": "boolean",
+            "description": "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
+          },
+          "delegation_mode": {
+            "type": "string",
+            "enum": [
+              "leaf",
+              "claude_orchestrator"
+            ]
+          },
+          "reasoning_effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        },
+        "required": [
+          "task_name",
+          "message",
+          "model",
+          "write"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "send_message",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "target",
+          "message"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "followup_task",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoning_effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "write": {
+            "description": "Behavioral authority: false is read/review-only, true permits task-scoped writes, omitted inherits. Process access is unchanged.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "target",
+          "message"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "wait_agent",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "description": "Fixed exact current-root Agent turns to join; one target may observe progress and multiple targets form a completion-only barrier.",
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+            }
+          },
+          "wake_on_progress": {
+            "description": "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit.",
+            "type": "boolean"
+          },
+          "acknowledge_tokens": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "interrupt_agent",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "list_agents",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path_prefix": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "read_agent_messages",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+          },
+          "before": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   cancelClaudeProcess,
   interruptClaudeProcess,
+  requestClaudeInterrupt,
 } from "../../runtime/claude-headless-adapter.mjs";
 import { getProcessIdentity } from "../../runtime/process-control.mjs";
 
@@ -119,5 +120,64 @@ describe("cross-platform process control", () => {
     const cancelled = await cancelClaudeProcess(42, "identity", options);
     assert.equal(cancelled.cancelled, true);
     assert.match(cancelled.note, /ESRCH/);
+  });
+
+  it("requests interruption without waiting for the process to exit", async () => {
+    let signalled = null;
+    const start = Date.now();
+    const receipt = await requestClaudeInterrupt(42, "identity", {
+      platform: "linux",
+      validateProcessIdentityImpl: () => true,
+      killImpl: (target, signal) => { signalled = { target, signal }; },
+    });
+    const elapsedMs = Date.now() - start;
+    assert.equal(receipt.requested, true);
+    assert.equal(receipt.requestFailure, null);
+    assert.deepEqual(signalled, { target: -42, signal: "SIGINT" });
+    // A request-only helper never runs the bounded observation window: it
+    // must not silently reuse `interruptClaudeProcess`'s 5-second wait.
+    assert.ok(elapsedMs < 200, `request-only interrupt took ${elapsedMs}ms`);
+  });
+
+  it("refuses missing/mismatched identity and unsupported platform as structured codes, never note text", async () => {
+    const missing = await requestClaudeInterrupt(42, null, { platform: "linux" });
+    assert.equal(missing.requested, false);
+    assert.equal(missing.requestFailure, "missing_identity");
+    assert.equal("note" in missing, false);
+
+    const mismatch = await requestClaudeInterrupt(42, "expected", {
+      platform: "linux",
+      validateProcessIdentityImpl: () => false,
+    });
+    assert.equal(mismatch.requested, false);
+    assert.equal(mismatch.requestFailure, "identity_mismatch");
+
+    const unsupported = await requestClaudeInterrupt(42, "identity", {
+      platform: "win32",
+      validateProcessIdentityImpl: () => true,
+    });
+    assert.equal(unsupported.requested, false);
+    assert.equal(unsupported.requestFailure, "unsupported_platform");
+  });
+
+  it("reports an already-absent process group and a real signal failure as distinct structured codes", async () => {
+    const absent = Object.assign(new Error("no such process"), { code: "ESRCH" });
+    const absentReceipt = await requestClaudeInterrupt(42, "identity", {
+      platform: "linux",
+      validateProcessIdentityImpl: () => true,
+      killImpl: () => { throw absent; },
+    });
+    assert.equal(absentReceipt.requested, false);
+    assert.equal(absentReceipt.requestFailure, "process_absent");
+
+    const denied = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    const deniedReceipt = await requestClaudeInterrupt(42, "identity", {
+      platform: "linux",
+      validateProcessIdentityImpl: () => true,
+      killImpl: () => { throw denied; },
+    });
+    assert.equal(deniedReceipt.requested, false);
+    assert.equal(deniedReceipt.requestFailure, "EPERM");
+    assert.equal(deniedReceipt.controlFailureCode, "EPERM");
   });
 });

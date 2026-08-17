@@ -14,6 +14,8 @@ import {
   resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
 
+import { versionThreeRoute } from "./fixtures/version-three-state.mjs";
+
 const roots = [];
 const sharedHarness = fs.mkdtempSync(path.join(os.tmpdir(), "cc-history-runtime-"));
 const sharedRuntimeHome = path.join(sharedHarness, "runtime-home");
@@ -280,6 +282,82 @@ describe("native Claude Agent message history", () => {
     assert.throws(
       () => foreign.readAgentMessages({ target: fixture.agent.agentId }),
       /No Agent with that exact ID, path, or name exists in this root/,
+    );
+  });
+});
+
+describe("native Claude history is legacy-only", () => {
+  it("refuses a version-three Agent instead of guessing a Claude transcript", () => {
+    const fixture = setup("version_three");
+    const future = {
+      ...fixture.agent,
+      version: 3,
+      route: versionThreeRoute(),
+      claudeSessionId: null,
+      claudeConfigDir: null,
+    };
+    assert.throws(
+      () => resolveBoundClaudeTranscript(future),
+      /not a legacy Claude Code Agent/,
+    );
+    assert.throws(
+      () => readBoundClaudeAgentMessages(future),
+      /not a legacy Claude Code Agent/,
+    );
+  });
+
+  it("refuses a version-two Agent bound to another Harness", () => {
+    const fixture = setup("foreign_harness");
+    const foreign = {
+      ...fixture.agent,
+      version: 2,
+      harnessId: "fake-service",
+      nativeSessionRef: {
+        harnessId: "fake-service",
+        instanceKey: "tenant-alpha",
+        nativeSessionId: "native-session-1",
+      },
+      claudeSessionId: null,
+      claudeConfigDir: null,
+    };
+    assert.throws(
+      () => resolveBoundClaudeTranscript(foreign),
+      /Harness fake-service|not bound to Claude Code/,
+    );
+    assert.throws(
+      () => readBoundClaudeAgentMessages(foreign),
+      /Harness fake-service|not bound to Claude Code/,
+    );
+  });
+
+  it("reads history from the adapter-resolved binding, not a projected field", () => {
+    const fixture = setup("adapter_binding");
+    writeTranscript(fixture.transcript, [
+      record({
+        uuid: "adapter-1",
+        text: "from the bound session",
+        sessionId: fixture.sessionId,
+        timestamp: "2026-07-01T00:00:00.000Z",
+      }),
+    ]);
+    // The durable record carries only the neutral reference; the Claude
+    // compatibility projection is absent.
+    const durable = {
+      ...fixture.agent,
+      version: 2,
+      harnessId: "claude-code",
+      nativeSessionRef: {
+        harnessId: "claude-code",
+        instanceKey: fixture.claudeConfigDir,
+        nativeSessionId: fixture.sessionId,
+      },
+      claudeSessionId: null,
+      claudeConfigDir: null,
+    };
+    assert.equal(resolveBoundClaudeTranscript(durable), fs.realpathSync.native(fixture.transcript));
+    assert.deepEqual(
+      readBoundClaudeAgentMessages(durable).messages.map((message) => message.text),
+      ["from the bound session"],
     );
   });
 });

@@ -34,10 +34,7 @@ const WRITE_AUTHORITY_PROMPT = [
   "Task-scoped workspace mutation is allowed; change only what is required and preserve unrelated work.",
 ].join(" ");
 
-const LEAF_DELEGATION_PROMPT = [
-  COMMON_DELEGATION_PROMPT,
-  "Act as a leaf: do not delegate or use Agent/Workflow.",
-].join(" ");
+const LEAF_TOPOLOGY_PROMPT = "Act as a leaf: do not delegate or use Agent/Workflow.";
 
 export function normalizeDelegationMode(value) {
   const mode = String(value ?? "leaf").trim().toLowerCase();
@@ -51,15 +48,21 @@ function isNativeAgentTool(value) {
   return /^Agent(?:\(|$)/.test(String(value ?? "").trim());
 }
 
-function delegationPrompt(policy, write) {
-  const rolePrompt = policy.role === "native_team_lead"
+/**
+ * The three bounded facts this owner adds around a caller's task text: the
+ * delegation framing and return contract, the topology boundary, and the
+ * behavioral authority. `delegationPrompt()` is exactly their concatenation, so
+ * a Driver that must publish its prompt envelope separately (Driver Contract
+ * v2) states the same bytes it sends and cannot become a second prompt owner.
+ */
+export function delegationEnvelopeFacts(policy, write) {
+  const topology = policy.role === "native_team_lead"
     ? [
-        COMMON_DELEGATION_PROMPT,
         policy.prompt,
         "Never use Workflow.",
         "The one-layer spawn depth is a hard topology boundary; the concurrency value is only a residual guard for a forbidden ordinary-subagent path.",
       ].join(" ")
-    : LEAF_DELEGATION_PROMPT;
+    : LEAF_TOPOLOGY_PROMPT;
   const readAuthority = policy.role === "native_team_lead"
     ? [
         READ_ONLY_AUTHORITY_PROMPT,
@@ -71,7 +74,16 @@ function delegationPrompt(policy, write) {
         "Do not mutate task, workspace, repository, or external state except Claude native Auto Memory or local-memory maintenance.",
         "This is behavioral authority, not a filesystem sandbox.",
       ].join(" ");
-  return [rolePrompt, write ? WRITE_AUTHORITY_PROMPT : readAuthority].join(" ");
+  return Object.freeze({
+    returnContract: COMMON_DELEGATION_PROMPT,
+    topology,
+    authority: write ? WRITE_AUTHORITY_PROMPT : readAuthority,
+  });
+}
+
+function delegationPrompt(policy, write) {
+  const facts = delegationEnvelopeFacts(policy, write);
+  return [facts.returnContract, facts.topology, facts.authority].join(" ");
 }
 
 function deterministicAgents(definitions) {

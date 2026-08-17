@@ -6,7 +6,7 @@ import process from "node:process";
 
 import { parseArgs, splitRawArgumentString } from "./args.mjs";
 import { readStdinIfPiped } from "./input.mjs";
-import { createClaudeRuntime } from "./index.mjs";
+import { createAgentRuntime } from "./index.mjs";
 import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
 
 const PUBLIC_COMMANDS = new Set([
@@ -99,7 +99,7 @@ async function spawnAgent(argv) {
   const message = options["prompt-file"]
     ? fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8")
     : messageFrom(options, positionals);
-  const receipt = await createClaudeRuntime(runtimeOptions(options)).spawn_agent({
+  const receipt = await createAgentRuntime(runtimeOptions(options)).spawn_agent({
     task_name: options["task-name"],
     message,
     description: options.description,
@@ -120,7 +120,7 @@ function targetAndMessage(options, positionals) {
 function sendMessage(argv) {
   rejectForbiddenPublicArgs(argv);
   const { options, positionals } = parse(argv, { valueOptions: ["target", "message"] });
-  const receipt = createClaudeRuntime(runtimeOptions(options)).send_message(
+  const receipt = createAgentRuntime(runtimeOptions(options)).send_message(
     targetAndMessage(options, positionals)
   );
   output(receipt, options.json);
@@ -136,7 +136,7 @@ async function followupTask(argv) {
     ],
     booleanOptions: ["write"],
   });
-  const receipt = await createClaudeRuntime(runtimeOptions(options)).followup_task({
+  const receipt = await createAgentRuntime(runtimeOptions(options)).followup_task({
     ...targetAndMessage(options, positionals),
     reasoning_effort: options["reasoning-effort"],
     write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
@@ -153,7 +153,7 @@ async function waitAgent(argv) {
   if (positionals.length > 0) {
     throw new Error("wait_agent is root-scoped and accepts Agent targets only through --targets <csv>.");
   }
-  const receipt = await createClaudeRuntime(runtimeOptions(options)).wait_agent({
+  const receipt = await createAgentRuntime(runtimeOptions(options)).wait_agent({
     timeout_ms: options["timeout-ms"],
     ...(Object.hasOwn(options, "targets")
       ? {
@@ -181,7 +181,7 @@ async function interruptAgent(argv) {
   if (positionals.length > (options.target ? 0 : 1)) {
     throw new Error("interrupt_agent accepts exactly one target.");
   }
-  const receipt = await createClaudeRuntime(runtimeOptions(options)).interrupt_agent({ target });
+  const receipt = await createAgentRuntime(runtimeOptions(options)).interrupt_agent({ target });
   output(receipt, options.json);
 }
 
@@ -189,7 +189,7 @@ function listAgents(argv) {
   rejectForbiddenPublicArgs(argv);
   const { options, positionals } = parse(argv, { valueOptions: ["path-prefix"] });
   if (positionals.length > 0) throw new Error("list_agents accepts only --path-prefix.");
-  const receipt = createClaudeRuntime(runtimeOptions(options)).list_agents({
+  const receipt = createAgentRuntime(runtimeOptions(options)).list_agents({
     path_prefix: options["path-prefix"],
   });
   output(receipt, options.json);
@@ -204,7 +204,7 @@ function readAgentMessages(argv) {
   if (positionals.length > (options.target ? 0 : 1)) {
     throw new Error("read_agent_messages accepts exactly one target plus optional --before/--limit.");
   }
-  const receipt = createClaudeRuntime(runtimeOptions(options)).read_agent_messages({
+  const receipt = createAgentRuntime(runtimeOptions(options)).read_agent_messages({
     target,
     before: options.before,
     limit: options.limit,

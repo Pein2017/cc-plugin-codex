@@ -1,10 +1,11 @@
 /**
  * SPDX-License-Identifier: Apache-2.0
  *
- * Sole public lifecycle seam. Jobs, Claude processes, persistence, completion
- * delivery, session binding, and mailbox details remain internal.
+ * Sole public lifecycle seam. Jobs, Harness Drivers, native processes,
+ * persistence, completion delivery, session binding, and mailbox details
+ * remain internal.
  */
-import { createAgentRuntime } from "./agent-runtime.mjs";
+import { createAgentRuntime as createInternalAgentRuntime } from "./agent-runtime.mjs";
 
 export { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 
@@ -19,9 +20,15 @@ export { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
  * @property {(input?: object) => object} list_agents
  */
 
-/** @returns {AgentRuntimeLifecycle} */
-export function createClaudeRuntime(options = {}) {
-  const runtime = createAgentRuntime(options);
+/**
+ * The neutral public factory. It owns no Harness identity of its own: the
+ * seven operations it exposes are the same seven this generation has always
+ * exposed, and which Harness serves them is an internal routing fact.
+ *
+ * @returns {AgentRuntimeLifecycle}
+ */
+export function createAgentRuntime(options = {}) {
+  const runtime = createInternalAgentRuntime(options);
   return Object.freeze({
     spawn_agent: runtime.spawnAgent.bind(runtime),
     send_message: runtime.sendMessage.bind(runtime),
@@ -32,3 +39,12 @@ export function createClaudeRuntime(options = {}) {
     list_agents: runtime.listAgents.bind(runtime),
   });
 }
+
+/**
+ * Bounded current-generation compatibility alias. It is the exact same
+ * function, not a second surface: an installed checkout, an isolated MCP call
+ * worker, or a Codex task discovered before the neutral name existed keeps
+ * calling this one without a public generation bump. New internal callers and
+ * the dependent multi-Harness generation use `createAgentRuntime()`.
+ */
+export { createAgentRuntime as createClaudeRuntime };

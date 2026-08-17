@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   diagnoseNativeTeamCompatibility,
+  inspectBlockedLeases,
   inspectOperatorStorage,
   runDoctor,
 } from "../../runtime/operator-diagnostics.mjs";
@@ -14,6 +15,9 @@ import {
   prepareCompatibilityInstall,
 } from "../../runtime/plugin-compatibility-shells.mjs";
 import { PACKAGE_VERSION, SOURCE_ROOT } from "../../runtime/version.mjs";
+import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
+import { acquireWorkspaceWriterLease } from "../../runtime/workspace-writer-lease.mjs";
+import { versionThreeRoute } from "./fixtures/version-three-state.mjs";
 
 const temporaryDirectories = [];
 
@@ -110,6 +114,61 @@ describe("operator storage diagnosis", () => {
     });
     assert.equal(report.runtime.malformedRecords, 1);
     assert.equal(fs.readFileSync(malformed, "utf8"), before);
+  });
+
+  it("excludes an aged lease-tree scratch file from cleanup candidates without hiding unrelated ones (F4)", () => {
+    const root = temporaryDirectory("cc-doctor-lease-cleanup-");
+    const pluginDataRoot = path.join(root, "codex-harnessdock");
+    const stateHome = path.join(pluginDataRoot, "state");
+    const old = new Date("2026-01-01T00:00:00.000Z");
+
+    // A real lease-tree layout (the exact directory shape
+    // `instance-admission-lease.mjs` creates), so the walk exercises the
+    // real relative-path shape this exclusion must match, not a stand-in.
+    const leaseKeyDir = path.join(stateHome, "leases", "v1", "instance", "some-key-digest");
+    fs.mkdirSync(leaseKeyDir, { recursive: true, mode: 0o700 });
+    // Simulate a crashed atomic write: a leftover `.tmp.*` scratch file, aged
+    // well past the stale-artifact window.
+    const agedLeaseTemp = path.join(leaseKeyDir, "digest.json.tmp.12345.abc.def");
+    fs.writeFileSync(agedLeaseTemp, "{}");
+    fs.utimesSync(agedLeaseTemp, old, old);
+    // Defensive: even a `.reserve`-suffixed file under the lease tree (never
+    // legitimately produced by this module) must be excluded the same way.
+    const agedLeaseReserve = path.join(leaseKeyDir, "stale.reserve");
+    fs.writeFileSync(agedLeaseReserve, "");
+    fs.utimesSync(agedLeaseReserve, old, old);
+
+    // An unrelated, genuinely stale job-tree reservation must still surface.
+    const jobsDirectory = path.join(stateHome, "workspace", "jobs");
+    fs.mkdirSync(jobsDirectory, { recursive: true });
+    const jobReservation = path.join(jobsDirectory, "stale.reserve");
+    fs.writeFileSync(jobReservation, "");
+    fs.utimesSync(jobReservation, old, old);
+
+    const report = inspectOperatorStorage({
+      pluginDataRoot,
+      claudeConfigDir: path.join(root, ".claude"),
+      nowMs: Date.parse("2026-07-28T00:00:00.000Z"),
+    });
+
+    const leaseCandidates = report.cleanup.candidates.filter((entry) => entry.path.includes("leases"));
+    assert.deepEqual(leaseCandidates, [], "no lease-tree scratch file is ever a cleanup candidate");
+    const jobCandidates = report.cleanup.candidates.filter((entry) => entry.path.includes("stale.reserve") && entry.path.includes("jobs"));
+    assert.equal(jobCandidates.length, 1, "an unrelated, genuinely stale job-tree candidate is still found");
+    assert.equal(report.cleanup.candidateCount, 1);
+
+    // Bytes are untouched either way: this is a dry-run inventory only.
+    assert.equal(fs.readFileSync(agedLeaseTemp, "utf8"), "{}");
+    assert.equal(fs.existsSync(agedLeaseReserve), true);
+    assert.equal(fs.existsSync(jobReservation), true);
+
+    // The exact condition `runDoctor()`'s "storage" check warns on: it must
+    // never trip due to the lease tree, only due to a real candidate/
+    // malformed-record/boundary-error finding.
+    const wouldWarn = report.runtime.malformedRecords > 0 || report.runtime.boundaryErrors > 0 || report.cleanup.candidateCount > 0;
+    assert.equal(wouldWarn, true, "the unrelated job candidate still legitimately warns");
+    assert.equal(report.runtime.malformedRecords, 0);
+    assert.equal(report.runtime.boundaryErrors, 0);
   });
 });
 
@@ -345,5 +404,123 @@ describe("operator doctor", () => {
     assert.equal(unavailableAuth.details.liveValidated, false);
     assert.match(unavailableAuth.summary, /provider liveness was not validated/);
     assert.doesNotMatch(JSON.stringify(unavailableAuth), /accessToken|refreshToken|private@/);
+  });
+});
+
+describe("blocked instance/session/writer lease diagnostics (OpenSpec 4.4)", () => {
+  const priorRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  const leaseTestRoots = [];
+
+  afterEach(() => {
+    if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+    else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorRuntimeHome;
+    while (leaseTestRoots.length) fs.rmSync(leaseTestRoots.pop(), { recursive: true, force: true });
+  });
+
+  function setupLeaseHome() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-doctor-leases-"));
+    leaseTestRoots.push(root);
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "state-home");
+    return root;
+  }
+
+  it("reports a blocked instance lease at capacity with bounded, non-secret evidence", () => {
+    setupLeaseHome();
+    acquireInstanceLease({
+      ownerRootId: "root-1",
+      agentId: "agent-1",
+      jobId: "job-1",
+      route: versionThreeRoute(),
+      harnessId: "fake-service",
+      instanceKey: "tenant-alpha",
+      capacityClass: "shared",
+      capacityLimit: 1,
+    });
+    const report = inspectBlockedLeases();
+    assert.equal(report.total, 1);
+    assert.equal(report.blocked.length, 1);
+    const [entry] = report.blocked;
+    assert.equal(entry.kind, "instance");
+    assert.equal(entry.atCapacity, true);
+    assert.equal(entry.evidenceClassNeeded, "native_terminal_and_settled_execution_evidence");
+    assert.equal(entry.holders[0].ownerRootId, "root-1");
+    // No force-clear/delete/mutation surface exists on this report at all.
+    assert.equal(report.clear, undefined);
+    assert.equal(report.forceClear, undefined);
+    assert.equal(report.delete, undefined);
+    assert.equal(typeof report, "object");
+  });
+
+  it("reports a blocked writer lease and does not report an unrelated read-only-admitting instance lease as blocked", () => {
+    const root = setupLeaseHome();
+    const workspaceRoot = fs.mkdtempSync(path.join(root, "worktree-"));
+    acquireWorkspaceWriterLease({
+      ownerRootId: "root-1",
+      agentId: "writer-agent",
+      jobId: "writer-job",
+      route: versionThreeRoute({ authority: "behavioral_write" }),
+      workspaceRoot,
+    });
+    acquireInstanceLease({
+      ownerRootId: "root-1",
+      agentId: "reader-agent",
+      jobId: "reader-job",
+      route: versionThreeRoute(),
+      harnessId: "fake-service",
+      instanceKey: "tenant-alpha",
+      capacityClass: "shared",
+      capacityLimit: 4, // one holder of four: not blocking anyone yet
+    });
+    const report = inspectBlockedLeases();
+    assert.equal(report.total, 2);
+    assert.equal(report.blocked.length, 1);
+    assert.equal(report.blocked[0].kind, "writer");
+  });
+
+  it("returns an empty report without creating any lease directory", () => {
+    const root = setupLeaseHome();
+    const report = inspectBlockedLeases();
+    assert.deepEqual(report.entries, []);
+    assert.equal(report.total, 0);
+    assert.equal(report.blocked.length, 0);
+    assert.equal(fs.existsSync(path.join(root, "state-home", "state", "leases")), false);
+  });
+
+  it("surfaces blocked leases through the established inspectOperatorStorage() operator surface", () => {
+    const root = temporaryDirectory("cc-doctor-leases-storage-");
+    const pluginDataRoot = path.join(root, "codex-harnessdock");
+    // The lease engine and `inspectOperatorStorage()` must resolve the exact
+    // same plugin state root for this to be a real integration, not two
+    // independently configured roots that merely look alike.
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = pluginDataRoot;
+    try {
+      acquireInstanceLease({
+        ownerRootId: "root-1",
+        agentId: "agent-1",
+        jobId: "job-1",
+        route: versionThreeRoute(),
+        harnessId: "fake-service",
+        instanceKey: "tenant-alpha",
+        capacityClass: "shared",
+        capacityLimit: 1,
+      });
+    } finally {
+      if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+      else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorRuntimeHome;
+    }
+
+    const report = inspectOperatorStorage({
+      pluginDataRoot,
+      env: { CODEX_HOME: root },
+      nowMs: Date.parse("2026-07-28T00:00:00.000Z"),
+    });
+    assert.equal(report.readOnly, true);
+    assert.equal(report.leases.total, 1);
+    assert.equal(report.leases.blocked.length, 1);
+    assert.equal(report.leases.blocked[0].kind, "instance");
+    assert.equal(report.leases.blocked[0].holders[0].ownerRootId, "root-1");
+    // Lease evidence is never folded into deletable cleanup candidates.
+    assert.equal(report.cleanup.candidateCount, 0);
+    assert.ok(!JSON.stringify(report.cleanup).includes("leases"));
   });
 });

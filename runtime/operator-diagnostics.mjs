@@ -26,6 +26,7 @@ import {
   inspectInstalledPluginParity,
 } from "./plugin-installation.mjs";
 import { inspectIdentityCutover } from "./plugin-identity-cutover.mjs";
+import { inspectLeaseInventory } from "./instance-admission-lease.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, PACKAGE_VERSION, SOURCE_ROOT } from "./version.mjs";
 
 export const CANONICAL_CHECKOUT = CANONICAL_RUNTIME_CHECKOUT;
@@ -51,6 +52,17 @@ function increment(target, key) {
 function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * `relativePath` is one `state.files[*].relative` entry, relative to
+ * `stateRoot`. The lease tree always lives at `<stateRoot>/leases/...`
+ * (`runtime/instance-admission-lease.mjs`'s `resolveLeaseRoot()`); nothing
+ * outside `stateRoot` can share that prefix, so this needs no additional
+ * root argument.
+ */
+function isWithinLeaseTree(relativePath) {
+  return relativePath === "leases" || relativePath.startsWith(`leases${path.sep}`);
 }
 
 function walkFiles(root, options = {}) {
@@ -139,6 +151,39 @@ function inspectClaudeHistory(claudeConfigDir, nowMs) {
   };
 }
 
+/**
+ * Read-only operator inventory of blocked instance/session/writer admission
+ * leases (OpenSpec `generalize-multi-harness-agent-control-plane` 4.4). This
+ * wraps `runtime/instance-admission-lease.mjs`'s bounded, non-secret
+ * inventory unchanged: it adds no force-clear, delete, mutation, or
+ * cleanup-on-read surface, and reports no arbitrary path, locator, endpoint,
+ * config, env, prompt, or output value. An entry is "blocked" when it is
+ * either at its declared capacity (no further admission possible) or an
+ * unreadable/corrupt record (admission at that key fails closed until an
+ * operator investigates); every entry names the one closed evidence class
+ * (`evidenceClassNeeded`) that can release it.
+ *
+ * `options.stateRoot` lets a caller (below, `inspectOperatorStorage()`) share
+ * the exact plugin state root it already resolved, rather than this function
+ * independently re-resolving one from `CODEX_HARNESSDOCK_RUNTIME_HOME`.
+ *
+ * `total`/`blockedTotal` and `truncated` are exactly
+ * `inspectLeaseInventory()`'s own bounded/truthful counts (see there): the
+ * displayed `entries`/`blocked` lists are hard-capped, but the counts always
+ * reflect the complete lease population, never just the displayed sample.
+ */
+export function inspectBlockedLeases(options = {}) {
+  const inventory = inspectLeaseInventory(options);
+  const blocked = inventory.entries.filter((entry) => entry.atCapacity === true || entry.unreadable === true);
+  return {
+    total: inventory.total,
+    blockedTotal: inventory.blockedTotal,
+    truncated: inventory.truncated,
+    blocked,
+    entries: inventory.entries,
+  };
+}
+
 export function inspectOperatorStorage(options = {}) {
   const env = options.env ?? process.env;
   const codexHome = path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
@@ -215,6 +260,11 @@ export function inspectOperatorStorage(options = {}) {
   const candidates = [];
   const allPluginFiles = [...state.files, ...runtime.files];
   for (const file of allPluginFiles) {
+    // OpenSpec 4.4: the version-three admission lease tree is never a
+    // cleanup candidate, including its own aged `.tmp.*`/`.reserve` scratch
+    // files -- a lease releases only through the settlement-gated predicate
+    // (`releaseLeasesOnSettlement()`), never a storage dry-run sweep.
+    if (isWithinLeaseTree(file.relative)) continue;
     const stale = nowMs - file.stat.mtimeMs > STALE_ARTIFACT_MS;
     if (!stale) continue;
     const reservation = file.relative.endsWith(".reserve");
@@ -288,6 +338,12 @@ export function inspectOperatorStorage(options = {}) {
       candidates: candidates.slice(0, MAX_CANDIDATE_DETAILS),
       truncated: candidates.length > MAX_CANDIDATE_DETAILS,
     },
+    // Read-only lease evidence, deliberately kept out of `cleanup`: a blocked
+    // instance/session/writer lease is never a deletable/reclaimable file --
+    // it is retained until the same settlement predicate that publishes a
+    // completion proves it releasable (`releaseLeasesOnSettlement()`), and
+    // this generation exposes no force-clear path for it at all.
+    leases: inspectBlockedLeases({ stateRoot }),
     claudeHistory: inspectClaudeHistory(claudeConfigDir, nowMs),
   };
 }

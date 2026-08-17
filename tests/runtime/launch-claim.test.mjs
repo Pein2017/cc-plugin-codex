@@ -1,0 +1,1081 @@
+/**
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * OpenSpec `generalize-multi-harness-agent-control-plane` task 5.3.
+ *
+ * `runtime/launch-claim.mjs` is the narrow single owner of the durable
+ * launch-claim/attempt state machine `design.md` decision 4 and the
+ * `durable-runtime-state` spec require before any possible native submission:
+ * one unique launch claim/attempt bound to the trusted root/Agent/job,
+ * immutable route/capability snapshot, authority lease bindings (proven
+ * against Task 4's own brand-gated acquisition evidence, never a caller's
+ * claim about them), a bounded ordered mailbox activation identity plus a
+ * module-owned digest (never caller-supplied, never prompt content), the
+ * closed acceptance axis `not_submitted|acceptance_proven|acceptance_rejected|
+ * acceptance_unknown`, whose only proof is Task 1's own `durableTurnEvidence()`
+ * brand seam, and a separate `submissionState` pre-submission fence gating
+ * rollback eligibility. It never calls a Driver, never acquires or releases
+ * a lease, never appends or acknowledges a mailbox message, and never
+ * publishes a completion.
+ *
+ * This test file, and the module it exercises, are the result of a lead
+ * review-driven correction pass over an earlier submission that returned
+ * FAIL. See `.superpowers/sdd/2026-08-13-multi-harness-control-plane/
+ * task-5b1-report.md` for the exact defects the review found and the
+ * corrections applied; this file's own comments do not restate that history.
+ */
+
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, it } from "node:test";
+
+import {
+  LAUNCH_ACCEPTANCE_VALUES,
+  LAUNCH_CLAIM_ROLLBACK_REASONS,
+  LAUNCH_CLAIM_SCHEMA_VERSION,
+  LOCK_ACQUIRE_TIMEOUT_MS,
+  MAX_ASSIGNED_MESSAGE_IDS,
+  SUBMISSION_STATES,
+  createLaunchClaim,
+  launchClaimRollbackEligibility,
+  markNativeSubmissionStarted,
+  readLaunchClaim,
+  recordLaunchAcceptanceProven,
+  recordLaunchAcceptanceRejected,
+  recordLaunchAcceptanceUnknown,
+  resolveLaunchClaimDirectory,
+} from "../../runtime/launch-claim.mjs";
+import { acquireInstanceLease, acquireNativeSessionLease, acquiredLeaseEvidence } from "../../runtime/instance-admission-lease.mjs";
+import { acquireWorkspaceWriterLease } from "../../runtime/workspace-writer-lease.mjs";
+import { validateLiveHarnessTurn } from "../../runtime/harness-contract.mjs";
+import { getProcessIdentity } from "../../runtime/process-control.mjs";
+import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
+import { V3_DRIVER_VERSION, V3_HARNESS_ID, V3_INSTANCE_KEY, versionThreeRoute } from "./fixtures/version-three-state.mjs";
+
+const contentionFixture = fileURLToPath(
+  new URL("./fixtures/launch-claim-contender.mjs", import.meta.url)
+);
+
+const priorHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+const roots = [];
+
+afterEach(() => {
+  if (priorHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+  else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorHome;
+  while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
+});
+
+function setup() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-launch-claim-"));
+  roots.push(root);
+  process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "state-home");
+  return { root };
+}
+
+function binding(overrides = {}) {
+  return {
+    ownerRootId: "root-1",
+    agentId: "agent-1",
+    jobId: "job-1",
+    ...overrides,
+  };
+}
+
+function instanceLease(overrides = {}) {
+  return acquireInstanceLease({
+    ...binding(),
+    route: versionThreeRoute(),
+    harnessId: V3_HARNESS_ID,
+    instanceKey: V3_INSTANCE_KEY,
+    capacityClass: "default",
+    capacityLimit: 4,
+    ...overrides,
+  });
+}
+
+function writerLease(overrides = {}) {
+  return acquireWorkspaceWriterLease({
+    ...binding(),
+    route: versionThreeRoute({ authority: "behavioral_write" }),
+    workspaceRoot: fs.mkdtempSync(path.join(os.tmpdir(), "cc-launch-claim-ws-")),
+    ...overrides,
+  });
+}
+
+/**
+ * `leaseBindings` is deliberately lazy: `instanceLease()` has a real
+ * side effect (it durably acquires a lease), so it must never run merely to
+ * compute a default value a caller is about to override -- doing so would
+ * silently plant a real matching lease behind an adversarial test's back.
+ */
+function claimInput(overrides = {}) {
+  const base = {
+    ...binding(),
+    attemptId: "attempt-1",
+    route: versionThreeRoute(),
+    assignedMessageIds: ["message-1"],
+    preparedInput: "hello world",
+    // Explicitly stated, never defaulted inside production: this fixture's
+    // route belongs to a Driver that owns no turn options.
+    turnOptions: null,
+    ...overrides,
+  };
+  if (!("leaseBindings" in overrides)) base.leaseBindings = [instanceLease({ route: base.route })];
+  return base;
+}
+
+/**
+ * The exact raw shape a Driver's `startTurn()` would return, before it is
+ * ever passed through `validateLiveHarnessTurn()`. Used both to build a real
+ * branded `liveHarnessTurn` (via `fakeLiveHarnessTurn()`) and, unbranded, as
+ * the negative "raw/fresh reference" attack case.
+ */
+function rawFakeLiveTurnShape(overrides = {}) {
+  return {
+    nativeTurnRef: {
+      version: 1, harnessId: V3_HARNESS_ID, driverVersion: V3_DRIVER_VERSION, instanceKey: V3_INSTANCE_KEY,
+      locatorVersion: 1, locator: { sessionId: "s-1", turnId: "t-1" },
+    },
+    nativeSessionRef: {
+      version: 1, harnessId: V3_HARNESS_ID, driverVersion: V3_DRIVER_VERSION, instanceKey: V3_INSTANCE_KEY,
+      locatorVersion: 1, locator: { sessionId: "s-1" },
+    },
+    result: Promise.resolve({}),
+    dispose: async () => {},
+    requestInterrupt: async () => ({}),
+    deliverActiveInput: async () => ({}),
+    ...overrides,
+  };
+}
+
+/** A genuinely branded `LiveHarnessTurn` wrapper: the only object `recordLaunchAcceptanceProven()` ever accepts. */
+function fakeLiveHarnessTurn({ route = versionThreeRoute(), live = {} } = {}) {
+  const { driver } = createFakeServiceDriver();
+  return validateLiveHarnessTurn(rawFakeLiveTurnShape(live), { driver, route });
+}
+
+const RECORD_FIELDS = [
+  "version", "ownerRootId", "agentId", "jobId", "attemptId",
+  "route", "leaseBindings", "assignedMessageIds", "inputDigest",
+  "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
+  "submissionState", "submissionStartedAt",
+  "createdAt", "updatedAt",
+];
+
+describe("launch claim: closed identity and durable binding", () => {
+  it("creates a launch claim as not_submitted/not_started with no native turn/session reference", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    assert.equal(record.version, LAUNCH_CLAIM_SCHEMA_VERSION);
+    assert.equal(record.ownerRootId, "root-1");
+    assert.equal(record.agentId, "agent-1");
+    assert.equal(record.jobId, "job-1");
+    assert.equal(record.attemptId, "attempt-1");
+    assert.deepEqual(record.route, versionThreeRoute());
+    assert.deepEqual(record.assignedMessageIds, ["message-1"]);
+    assert.match(record.inputDigest, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(record.acceptance, "not_submitted");
+    assert.equal(record.nativeTurnRef, null);
+    assert.equal(record.nativeSessionRef, null);
+    assert.equal(record.acceptanceEvidenceAt, null);
+    assert.equal(record.sanitizedDetail, null);
+    assert.equal(record.submissionState, "not_started");
+    assert.equal(record.submissionStartedAt, null);
+    assert.ok(record.createdAt);
+    assert.ok(record.updatedAt);
+    assert.equal(record.leaseBindings.length, 1);
+    assert.equal(record.leaseBindings[0].kind, "instance");
+    assert.deepEqual(Object.keys(record).sort(), [...RECORD_FIELDS].sort());
+  });
+
+  it("exposes exactly the closed acceptance and submission-state vocabularies", () => {
+    assert.deepEqual(LAUNCH_ACCEPTANCE_VALUES, [
+      "not_submitted", "acceptance_proven", "acceptance_rejected", "acceptance_unknown",
+    ]);
+    assert.deepEqual(SUBMISSION_STATES, ["not_started", "started"]);
+  });
+
+  it("is idempotent for a repeated identical create call", () => {
+    setup();
+    const first = createLaunchClaim(claimInput());
+    const second = createLaunchClaim(claimInput());
+    assert.deepEqual(first, second);
+  });
+
+  it("fails closed when a different attempt tries to claim a job that already has a launch claim", () => {
+    setup();
+    const original = createLaunchClaim(claimInput());
+    assert.throws(
+      () => createLaunchClaim(claimInput({ attemptId: "attempt-2" })),
+      /already claimed by a different attempt/
+    );
+    assert.deepEqual(readLaunchClaim(binding()), original);
+  });
+
+  it("fails closed on conflicting reuse of the same attemptId with a different route, without rewriting the stored record", () => {
+    setup();
+    const original = createLaunchClaim(claimInput());
+    const differentRoute = versionThreeRoute({ model: "a-different-model" });
+    assert.throws(
+      () => createLaunchClaim(claimInput({ route: differentRoute, leaseBindings: [instanceLease({ route: differentRoute })] })),
+      /identity mismatch/
+    );
+    assert.deepEqual(readLaunchClaim(binding()), original);
+  });
+
+  it("returns null for a job that has no launch claim yet", () => {
+    setup();
+    assert.equal(readLaunchClaim(binding()), null);
+  });
+
+  it("isolates distinct jobs: a different jobId never resolves another job's claim", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    assert.equal(readLaunchClaim(binding({ jobId: "job-2" })), null);
+  });
+
+  it("isolates distinct owner roots even for the same agentId/jobId text", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    assert.equal(readLaunchClaim(binding({ ownerRootId: "root-2" })), null);
+  });
+});
+
+describe("launch claim: lease binding authority is Task 4's brand-gated acquisition evidence, never a caller's claim", () => {
+  it("accepts a real acquired instance lease and projects kind/keyFields/capacity/routeDigest/holder/evidenceDigest", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const [receipt] = record.leaseBindings;
+    assert.deepEqual(
+      Object.keys(receipt).sort(),
+      ["kind", "keyFields", "capacity", "routeDigest", "ownerRootId", "agentId", "jobId", "evidenceDigest"].sort()
+    );
+    assert.equal(receipt.kind, "instance");
+    assert.deepEqual(receipt.keyFields, { harnessId: V3_HARNESS_ID, instanceKey: V3_INSTANCE_KEY });
+    assert.deepEqual(receipt.capacity, { class: "default", limit: 4 });
+    assert.match(receipt.routeDigest, /^[0-9a-f]{64}$/);
+    assert.equal(receipt.ownerRootId, "root-1");
+    assert.match(receipt.evidenceDigest, /^[0-9a-f]{64}$/);
+  });
+
+  it("accepts multiple distinct-kind lease bindings (instance plus writer)", () => {
+    setup();
+    const writeRoute = versionThreeRoute({ authority: "behavioral_write" });
+    const record = createLaunchClaim(claimInput({
+      route: writeRoute,
+      leaseBindings: [instanceLease({ route: writeRoute }), writerLease({ route: writeRoute })],
+    }));
+    const kinds = record.leaseBindings.map((entry) => entry.kind).sort();
+    assert.deepEqual(kinds, ["instance", "writer"]);
+  });
+
+  it("rejects an empty leaseBindings array: a launch claim always binds at least one authority lease", () => {
+    setup();
+    assert.throws(() => createLaunchClaim(claimInput({ leaseBindings: [] })), /at least one/);
+  });
+
+  it("rejects two lease bindings of the same kind", () => {
+    setup();
+    const second = instanceLease({ jobId: "job-1", capacityClass: "default" });
+    assert.throws(
+      () => createLaunchClaim(claimInput({ leaseBindings: [instanceLease(), second] })),
+      /more than one/
+    );
+  });
+
+  it("is byte-identical across an idempotent re-acquire of the same real lease, even though a new object reference is returned each time", () => {
+    setup();
+    const first = instanceLease();
+    const original = createLaunchClaim(claimInput({ leaseBindings: [first] }));
+    const second = instanceLease();
+    assert.notEqual(first, second, "expected a freshly re-validated object reference, not the identical one");
+    const replay = createLaunchClaim(claimInput({ leaseBindings: [second] }));
+    assert.deepEqual(replay, original);
+  });
+
+  it("REVIEWER ATTACK -- a workspace-A writer lease conflicts with a launch claim expecting workspace B (distinct keyFields)", () => {
+    setup();
+    const writeRoute = versionThreeRoute({ authority: "behavioral_write" });
+    const leaseForA = writerLease({ route: writeRoute });
+    const record = createLaunchClaim(claimInput({ route: writeRoute, leaseBindings: [instanceLease({ route: writeRoute }), leaseForA] }));
+    const writerReceipt = record.leaseBindings.find((entry) => entry.kind === "writer");
+    const evidenceA = acquiredLeaseEvidence(leaseForA);
+    assert.equal(writerReceipt.keyFields.workspaceRoot, evidenceA.keyFields.workspaceRoot);
+    // Recreating the same attemptId with a lease for a *different* workspace fails closed.
+    const leaseForB = writerLease({ route: writeRoute });
+    assert.throws(
+      () => createLaunchClaim(claimInput({
+        route: writeRoute, leaseBindings: [instanceLease({ route: writeRoute }), leaseForB],
+      })),
+      /identity mismatch/
+    );
+  });
+
+  it("REVIEWER ATTACK -- a native_session lease for REAL conflicts with one for GHOST on replay", () => {
+    setup();
+    const real = nativeSessionLease("REAL-session");
+    createLaunchClaim(claimInput({ leaseBindings: [instanceLease(), real] }));
+    const ghost = nativeSessionLease("GHOST-session");
+    assert.throws(
+      () => createLaunchClaim(claimInput({ leaseBindings: [instanceLease(), ghost] })),
+      /identity mismatch/
+    );
+  });
+
+  it("REVIEWER ATTACK -- capability-snapshot drift between two otherwise-identical routes conflicts", () => {
+    setup();
+    const routeA = versionThreeRoute();
+    const routeADrifted = versionThreeRoute({
+      capabilities: { ...routeA.capabilities, driverMaturity: "validated" },
+    });
+    createLaunchClaim(claimInput({ route: routeA, leaseBindings: [instanceLease({ route: routeA })] }));
+    assert.throws(
+      () => createLaunchClaim(claimInput({
+        route: routeADrifted, leaseBindings: [instanceLease({ route: routeADrifted })],
+      })),
+      /identity mismatch/
+    );
+  });
+
+  it("REVIEWER ATTACK -- rejects a structurally identical clone of a real lease record (fails at the Task 4 brand seam)", () => {
+    setup();
+    const real = instanceLease();
+    const clone = JSON.parse(JSON.stringify(real));
+    assert.throws(() => createLaunchClaim(claimInput({ leaseBindings: [clone] })), /exact object reference/);
+  });
+
+  it("REVIEWER ATTACK -- rejects a same-identity forged lease-shaped object, never really acquired, stating the exact correct route", () => {
+    setup();
+    const evidence = acquiredLeaseEvidence(instanceLease());
+    const forged = { ...evidence };
+    assert.throws(() => createLaunchClaim(claimInput({ leaseBindings: [forged] })), /exact object reference/);
+  });
+
+  it("REVIEWER ATTACK -- rejects a Proxy wrapping a real acquired lease record, invoking zero traps", () => {
+    setup();
+    const real = instanceLease();
+    let trapped = false;
+    const proxy = new Proxy(real, { get(t, p, r) { trapped = true; return Reflect.get(t, p, r); } });
+    assert.throws(() => createLaunchClaim(claimInput({ leaseBindings: [proxy] })), /exact object reference/);
+    assert.equal(trapped, false);
+  });
+
+  it("rejects a lease genuinely acquired under a foreign owner root/Agent/job", () => {
+    setup();
+    const foreign = instanceLease({ ownerRootId: "root-9", agentId: "agent-9", jobId: "job-9" });
+    assert.throws(() => createLaunchClaim(claimInput({ leaseBindings: [foreign] })), /foreign owner root/);
+  });
+});
+
+function nativeSessionLease(nativeSessionId, overrides = {}) {
+  return acquireNativeSessionLease({
+    ...binding(), route: versionThreeRoute(), harnessId: V3_HARNESS_ID, instanceKey: V3_INSTANCE_KEY, nativeSessionId,
+    ...overrides,
+  });
+}
+
+describe("launch claim: bounded, ordered, deduplicated mailbox activation identity and module-owned digest", () => {
+  it("rejects a create input carrying a caller-supplied inputDigest field (closed field set)", () => {
+    setup();
+    assert.throws(
+      () => createLaunchClaim({ ...claimInput(), inputDigest: `sha256:${"a".repeat(64)}` }),
+      /unsupported field|unknown field/
+    );
+  });
+
+  it("persists no prompt/input content: assignedMessageIds and inputDigest are the only input-shaped fields, and preparedInput never appears", () => {
+    setup();
+    const record = createLaunchClaim(claimInput({ preparedInput: "a very specific secret prompt payload" }));
+    assert.deepEqual(Object.keys(record).sort(), [...RECORD_FIELDS].sort());
+    assert.doesNotMatch(JSON.stringify(record), /secret prompt payload/);
+  });
+
+  it("rejects an empty assignedMessageIds array", () => {
+    setup();
+    assert.throws(() => createLaunchClaim(claimInput({ assignedMessageIds: [] })), /at least one/);
+  });
+
+  it("rejects a duplicate message identity", () => {
+    setup();
+    assert.throws(
+      () => createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-1"] })),
+      /duplicate message identity/
+    );
+  });
+
+  it("rejects more than MAX_ASSIGNED_MESSAGE_IDS entries", () => {
+    setup();
+    const tooMany = Array.from({ length: MAX_ASSIGNED_MESSAGE_IDS + 1 }, (_, index) => `message-${index}`);
+    assert.throws(() => createLaunchClaim(claimInput({ assignedMessageIds: tooMany })), /exceeds its durable bound/);
+  });
+
+  it("persists all ids for a genuine multi-message activation, in order", () => {
+    setup();
+    const record = createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-2", "message-3"] }));
+    assert.deepEqual(record.assignedMessageIds, ["message-1", "message-2", "message-3"]);
+  });
+
+  it("order matters: the same set of ids in a different order produces a different digest and is a conflicting replay", () => {
+    setup();
+    createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-2"] }));
+    assert.throws(
+      () => createLaunchClaim(claimInput({ assignedMessageIds: ["message-2", "message-1"] })),
+      /identity mismatch/
+    );
+  });
+
+  it("exact replay (same ids, same order, same prepared input) agrees", () => {
+    setup();
+    const first = createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-2"], preparedInput: "same text" }));
+    const second = createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-2"], preparedInput: "same text" }));
+    assert.deepEqual(first, second);
+  });
+
+  it("changing one message id conflicts with the stored claim", () => {
+    setup();
+    createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-2"] }));
+    assert.throws(
+      () => createLaunchClaim(claimInput({ assignedMessageIds: ["message-1", "message-3"] })),
+      /identity mismatch/
+    );
+  });
+
+  it("changing the prepared input text (same ids) conflicts with the stored claim", () => {
+    setup();
+    createLaunchClaim(claimInput({ preparedInput: "original text" }));
+    assert.throws(
+      () => createLaunchClaim(claimInput({ preparedInput: "a completely different text" })),
+      /identity mismatch/
+    );
+  });
+
+  it("rejects a missing/empty preparedInput", () => {
+    setup();
+    assert.throws(() => createLaunchClaim(claimInput({ preparedInput: "" })), /non-empty text/);
+    assert.throws(() => createLaunchClaim(claimInput({ preparedInput: null })), /non-empty text/);
+  });
+
+  it("hashes realistic opaque prepared input byte-for-byte without persisting it", () => {
+    for (const preparedInput of [
+      ["first message", "second message"].join("\n\n"),
+      "```js\nconsole.log('ok');\n```",
+      "column-1\tcolumn-2",
+      "x".repeat(70 * 1024),
+    ]) {
+      setup();
+      const record = createLaunchClaim(claimInput({
+        assignedMessageIds: ["message-1", "message-2"],
+        preparedInput,
+      }));
+      assert.match(record.inputDigest, /^sha256:[0-9a-f]{64}$/);
+      assert.doesNotMatch(JSON.stringify(record), /first message|console\.log|column-1/);
+    }
+  });
+});
+
+describe("launch claim: malformed and exotic fields fail closed", () => {
+  it("refuses a Proxy route", () => {
+    setup();
+    const proxyRoute = new Proxy(versionThreeRoute(), {});
+    assert.throws(() => createLaunchClaim(claimInput({ route: proxyRoute })), /Proxy/);
+  });
+
+  it("refuses an unstable-identity attemptId", () => {
+    setup();
+    assert.throws(() => createLaunchClaim(claimInput({ attemptId: "attempt​1" })), /control or format characters/);
+  });
+
+  it("refuses a caller-supplied acceptance-shaped field on create (closed field set)", () => {
+    setup();
+    assert.throws(
+      () => createLaunchClaim({ ...claimInput(), acceptance: "acceptance_proven" }),
+      /unsupported field|unknown field/
+    );
+  });
+
+  it("BRAND-SEAM ATTACK: a raw, never-branded liveHarnessTurn -- structurally valid and route-correct -- can never prove acceptance", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const rawUnbranded = rawFakeLiveTurnShape();
+    assert.throws(
+      () => recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: rawUnbranded }),
+      /requires the exact wrapper validateLiveHarnessTurn\(\) returned/
+    );
+    assert.equal(readLaunchClaim(binding()).acceptance, "not_submitted");
+  });
+
+  it("refuses a now-shaped field on any mutation recorder: there is no caller-injectable clock", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    assert.throws(
+      () => recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1", now: () => 0 }),
+      /unsupported field|unknown field/
+    );
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1", now: () => 0 }),
+      /unsupported field|unknown field/
+    );
+  });
+});
+
+describe("launch claim: corrupt and partial durable records", () => {
+  function claimFilePath() {
+    const dir = resolveLaunchClaimDirectory(binding());
+    const [fileName] = fs.readdirSync(dir).filter((entry) => entry.endsWith(".json"));
+    return path.join(dir, fileName);
+  }
+
+  it("fails closed on invalid JSON without deleting the file", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    const originalBytes = fs.readFileSync(filePath);
+    fs.writeFileSync(filePath, "not json");
+    assert.throws(() => readLaunchClaim(binding()), /corrupt/);
+    assert.deepEqual(fs.readFileSync(filePath), Buffer.from("not json"));
+    fs.writeFileSync(filePath, originalBytes);
+  });
+
+  it("fails closed on an unsupported schema version", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    fs.writeFileSync(filePath, JSON.stringify({ ...record, version: 99 }));
+    assert.throws(() => readLaunchClaim(binding()), /unsupported schema version/);
+  });
+
+  it("fails closed on an identity-drifted (hand-copied) record", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const dir = resolveLaunchClaimDirectory(binding());
+    const [fileName] = fs.readdirSync(dir).filter((entry) => entry.endsWith(".json"));
+    const content = fs.readFileSync(path.join(dir, fileName), "utf8");
+    fs.writeFileSync(path.join(dir, "hand-placed.json"), content);
+    assert.throws(() => readLaunchClaim(binding()), /does not live at the directory\/filename its own identity derives/);
+  });
+
+  it("fails closed on a tampered lease receipt whose evidenceDigest disagrees with its own stated fields", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    const tampered = { ...record };
+    tampered.leaseBindings = [{ ...record.leaseBindings[0], capacity: { class: "default", limit: 999 } }];
+    fs.writeFileSync(filePath, JSON.stringify(tampered));
+    assert.throws(() => readLaunchClaim(binding()), /possible tamper/);
+  });
+
+  it("fails closed when a self-consistent lease receipt names a foreign route digest", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    const receipt = { ...record.leaseBindings[0], routeDigest: "f".repeat(64) };
+    receipt.evidenceDigest = createHash("sha256").update(JSON.stringify({
+      kind: receipt.kind,
+      keyFields: receipt.keyFields,
+      capacity: receipt.capacity,
+      routeDigest: receipt.routeDigest,
+      ownerRootId: receipt.ownerRootId,
+      agentId: receipt.agentId,
+      jobId: receipt.jobId,
+    })).digest("hex");
+    fs.writeFileSync(filePath, JSON.stringify({ ...record, leaseBindings: [receipt] }));
+    assert.throws(() => readLaunchClaim(binding()), /route digest does not match/);
+  });
+
+  it("fails closed on a tampered record claiming acceptance_proven with no native turn reference", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    fs.writeFileSync(filePath, JSON.stringify({
+      ...record, acceptance: "acceptance_proven", acceptanceEvidenceAt: record.createdAt,
+    }));
+    assert.throws(() => readLaunchClaim(binding()), /acceptance_proven requires an exact canonical native turn reference/);
+  });
+
+  it("fails closed on a tampered record claiming submissionState started with no submissionStartedAt", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    fs.writeFileSync(filePath, JSON.stringify({ ...record, submissionState: "started" }));
+    assert.throws(() => readLaunchClaim(binding()), /started requires a submission-started timestamp/);
+  });
+
+  it("fails closed on a tampered record claiming submissionState not_started while carrying a submissionStartedAt", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const filePath = claimFilePath();
+    const started = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    fs.writeFileSync(filePath, JSON.stringify({ ...started, submissionState: "not_started" }));
+    assert.throws(() => readLaunchClaim(binding()), /not_started must not carry a submission-started timestamp/);
+  });
+
+  it("fails closed on a tampered record whose updatedAt precedes createdAt", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    fs.writeFileSync(filePath, JSON.stringify({ ...record, updatedAt: "2000-01-01T00:00:00.000Z" }));
+    assert.throws(() => readLaunchClaim(binding()), /updatedAt must not precede createdAt/);
+  });
+
+  it("fails closed on a tampered record whose submissionStartedAt precedes createdAt", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const started = markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const filePath = claimFilePath();
+    fs.writeFileSync(filePath, JSON.stringify({ ...started, submissionStartedAt: "2000-01-01T00:00:00.000Z" }));
+    assert.throws(() => readLaunchClaim(binding()), /submissionStartedAt must not precede createdAt/);
+  });
+
+  it("fails closed on a tampered record whose submissionStartedAt follows acceptanceEvidenceAt", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const proven = recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() });
+    const filePath = claimFilePath();
+    const futureSubmission = new Date(Date.parse(proven.acceptanceEvidenceAt) + 60_000).toISOString();
+    fs.writeFileSync(filePath, JSON.stringify({ ...proven, submissionStartedAt: futureSubmission }));
+    assert.throws(() => readLaunchClaim(binding()), /submissionStartedAt must not follow acceptanceEvidenceAt/);
+  });
+});
+
+describe("launch claim: pre-submission fence (markNativeSubmissionStarted)", () => {
+  it("moves not_started to started with a real timestamp", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const started = markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    assert.equal(started.submissionState, "started");
+    assert.ok(started.submissionStartedAt);
+    assert.equal(started.acceptance, "not_submitted");
+  });
+
+  it("is idempotent for an exact replay: submissionStartedAt never moves forward", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const first = markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const second = markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    assert.deepEqual(first, second);
+  });
+
+  it("refuses a wrong-attempt call", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-2" }),
+      /wrong attempt|attemptId/
+    );
+  });
+
+  it("refuses to start submission once acceptance has already been recorded (out-of-order call)", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1" });
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" }),
+      /refuses to start submission after acceptance has already been recorded/
+    );
+  });
+
+  it("has no regression path: there is no exported function that moves started back to not_started", async () => {
+    const moduleExports = await import("../../runtime/launch-claim.mjs");
+    assert.equal(moduleExports.markNativeSubmissionNotStarted, undefined);
+    assert.equal(moduleExports.resetSubmissionState, undefined);
+  });
+});
+
+describe("launch claim: acceptance state machine", () => {
+  it("records acceptance_rejected from not_submitted with an evidence timestamp", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const updated = recordLaunchAcceptanceRejected({
+      ...binding(), attemptId: "attempt-1", sanitizedDetail: "auth_failed",
+    });
+    assert.equal(updated.acceptance, "acceptance_rejected");
+    assert.equal(updated.nativeTurnRef, null);
+    assert.equal(updated.nativeSessionRef, null);
+    assert.ok(updated.acceptanceEvidenceAt);
+    assert.equal(updated.sanitizedDetail, "auth_failed");
+  });
+
+  it("records acceptance_rejected even after submission has started", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const rejected = recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1" });
+    assert.equal(rejected.acceptance, "acceptance_rejected");
+    assert.equal(rejected.submissionState, "started");
+  });
+
+  it("records acceptance_unknown from not_submitted with an evidence timestamp and no native turn/session reference", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const updated = recordLaunchAcceptanceUnknown({
+      ...binding(), attemptId: "attempt-1", sanitizedDetail: "worker_disappeared",
+    });
+    assert.equal(updated.acceptance, "acceptance_unknown");
+    assert.equal(updated.nativeTurnRef, null);
+    assert.equal(updated.nativeSessionRef, null);
+    assert.ok(updated.acceptanceEvidenceAt);
+  });
+
+  it("records acceptance_proven from not_submitted via durableTurnEvidence(), with turn and session references both persisted", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const updated = recordLaunchAcceptanceProven({
+      ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn(),
+    });
+    assert.equal(updated.acceptance, "acceptance_proven");
+    assert.deepEqual(updated.nativeTurnRef.locator, { sessionId: "s-1", turnId: "t-1" });
+    assert.deepEqual(updated.nativeSessionRef.locator, { sessionId: "s-1" });
+    assert.ok(updated.acceptanceEvidenceAt);
+  });
+
+  it("records acceptance_proven with a null nativeSessionRef when the live turn carries none", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const updated = recordLaunchAcceptanceProven({
+      ...binding(), attemptId: "attempt-1",
+      liveHarnessTurn: fakeLiveHarnessTurn({ live: { nativeSessionRef: null } }),
+    });
+    assert.equal(updated.acceptance, "acceptance_proven");
+    assert.equal(updated.nativeSessionRef, null);
+  });
+
+  it("promotes acceptance_unknown to acceptance_proven when exact later proof arrives", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    recordLaunchAcceptanceUnknown({ ...binding(), attemptId: "attempt-1" });
+    const updated = recordLaunchAcceptanceProven({
+      ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn(),
+    });
+    assert.equal(updated.acceptance, "acceptance_proven");
+  });
+
+  it("never regresses acceptance_proven to acceptance_unknown, acceptance_rejected, or not_submitted", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() });
+    assert.throws(
+      () => recordLaunchAcceptanceUnknown({ ...binding(), attemptId: "attempt-1" }),
+      /conflicting acceptance transition/
+    );
+    assert.throws(
+      () => recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1" }),
+      /conflicting acceptance transition/
+    );
+  });
+
+  it("never regresses acceptance_unknown to not_submitted or acceptance_rejected", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    recordLaunchAcceptanceUnknown({ ...binding(), attemptId: "attempt-1" });
+    assert.throws(
+      () => recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1" }),
+      /conflicting acceptance transition/
+    );
+  });
+
+  it("never allows acceptance_rejected to transition to acceptance_unknown or acceptance_proven: rejected is terminal", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1" });
+    assert.throws(
+      () => recordLaunchAcceptanceUnknown({ ...binding(), attemptId: "attempt-1" }),
+      /conflicting acceptance transition/
+    );
+    assert.throws(
+      () => recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() }),
+      /conflicting acceptance transition/
+    );
+  });
+
+  it("is idempotent for a repeated identical acceptance_proven call with the exact same native turn reference", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const first = recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() });
+    const second = recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() });
+    assert.deepEqual(first, second);
+  });
+
+  it("never silently replaces an already-proven attempt's native turn reference", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() });
+    const differentTurn = fakeLiveHarnessTurn({
+      live: {
+        nativeTurnRef: {
+          version: 1, harnessId: V3_HARNESS_ID, driverVersion: V3_DRIVER_VERSION, instanceKey: V3_INSTANCE_KEY,
+          locatorVersion: 1, locator: { sessionId: "s-1", turnId: "a-different-turn" },
+        },
+      },
+    });
+    assert.throws(
+      () => recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: differentTurn }),
+      /conflicting acceptance transition|already proven/
+    );
+  });
+
+  it("refuses a native turn reference whose Harness/instance does not match the bound route", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const { driver: otherDriver } = createFakeServiceDriver({ harnessId: "other-harness", driverVersion: "other-harness@1" });
+    const otherRoute = versionThreeRoute({ harnessId: "other-harness", driverVersion: "other-harness@1" });
+    const foreignHarnessTurn = validateLiveHarnessTurn(
+      rawFakeLiveTurnShape({
+        nativeTurnRef: {
+          version: 1, harnessId: "other-harness", driverVersion: "other-harness@1", instanceKey: V3_INSTANCE_KEY,
+          locatorVersion: 1, locator: { sessionId: "s-1", turnId: "t-1" },
+        },
+        nativeSessionRef: {
+          version: 1, harnessId: "other-harness", driverVersion: "other-harness@1", instanceKey: V3_INSTANCE_KEY,
+          locatorVersion: 1, locator: { sessionId: "s-1" },
+        },
+      }),
+      { driver: otherDriver, route: otherRoute }
+    );
+    assert.throws(
+      () => recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: foreignHarnessTurn }),
+      /does not match its bound route/
+    );
+  });
+
+  it("refuses a wrong-attempt call: only the exact winning attemptId may record this claim's acceptance", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    assert.throws(
+      () => recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-2" }),
+      /wrong attempt|attemptId/
+    );
+  });
+});
+
+describe("launch claim: native-turn live uniqueness (process-local WeakMap)", () => {
+  it("REVIEWER ATTACK -- the exact same validated liveHarnessTurn wrapper reused for a different claim/job is refused", () => {
+    setup();
+    createLaunchClaim(claimInput({ jobId: "job-1", leaseBindings: [instanceLease({ jobId: "job-1" })] }));
+    createLaunchClaim(claimInput({ jobId: "job-2", leaseBindings: [instanceLease({ jobId: "job-2" })] }));
+    const sharedWrapper = fakeLiveHarnessTurn();
+    const first = recordLaunchAcceptanceProven({
+      ...binding({ jobId: "job-1" }), attemptId: "attempt-1", liveHarnessTurn: sharedWrapper,
+    });
+    assert.equal(first.acceptance, "acceptance_proven");
+    assert.throws(
+      () => recordLaunchAcceptanceProven({ ...binding({ jobId: "job-2" }), attemptId: "attempt-1", liveHarnessTurn: sharedWrapper }),
+      /already bound to a different launch claim/
+    );
+    // The second job's claim must remain untouched.
+    assert.equal(readLaunchClaim(binding({ jobId: "job-2" })).acceptance, "not_submitted");
+  });
+
+  it("allows idempotent same-claim replay of the exact same wrapper", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const wrapper = fakeLiveHarnessTurn();
+    const first = recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: wrapper });
+    const second = recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: wrapper });
+    assert.deepEqual(first, second);
+  });
+});
+
+describe("launch claim: pre-submission rollback eligibility, gated on submissionState, with a CAS-style token", () => {
+  it("is eligible only for not_submitted while submissionState is not_started", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const result = launchClaimRollbackEligibility(record);
+    assert.equal(result.eligible, true);
+    assert.equal(result.reason, "not_submitted");
+    assert.deepEqual(result.token, {
+      attemptId: "attempt-1", acceptance: "not_submitted", submissionState: "not_started", updatedAt: record.updatedAt,
+    });
+  });
+
+  it("becomes ineligible once submission has started, even though acceptance is still not_submitted (crash/lock-failure scenario)", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const started = markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    assert.equal(started.acceptance, "not_submitted");
+    const result = launchClaimRollbackEligibility(started);
+    assert.equal(result.eligible, false);
+    assert.equal(result.reason, "not_submitted_after_submission_started_never_rollback_safe");
+  });
+
+  it("is eligible for acceptance_rejected regardless of submissionState", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const rejected = recordLaunchAcceptanceRejected({ ...binding(), attemptId: "attempt-1" });
+    assert.deepEqual(
+      launchClaimRollbackEligibility(rejected),
+      {
+        eligible: true, reason: "acceptance_rejected",
+        token: {
+          attemptId: "attempt-1", acceptance: "acceptance_rejected", submissionState: "started", updatedAt: rejected.updatedAt,
+        },
+      }
+    );
+  });
+
+  it("is never eligible for acceptance_unknown", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const unknown = recordLaunchAcceptanceUnknown({ ...binding(), attemptId: "attempt-1" });
+    assert.equal(launchClaimRollbackEligibility(unknown).eligible, false);
+    assert.equal(launchClaimRollbackEligibility(unknown).reason, "acceptance_unknown_never_rollback_safe");
+  });
+
+  it("is never eligible for acceptance_proven", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    const proven = recordLaunchAcceptanceProven({ ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn() });
+    assert.equal(launchClaimRollbackEligibility(proven).eligible, false);
+    assert.equal(launchClaimRollbackEligibility(proven).reason, "acceptance_proven_never_rollback_safe");
+  });
+
+  it("exposes exactly the closed rollback reasons", () => {
+    assert.deepEqual(LAUNCH_CLAIM_ROLLBACK_REASONS, [
+      "not_submitted",
+      "acceptance_rejected",
+      "not_submitted_after_submission_started_never_rollback_safe",
+      "acceptance_unknown_never_rollback_safe",
+      "acceptance_proven_never_rollback_safe",
+    ]);
+  });
+
+  it("FORGED RECORD: rejects a fully shape-valid record whose attemptId was never really persisted for this job", () => {
+    setup();
+    const real = createLaunchClaim(claimInput());
+    const forged = { ...real, attemptId: "attempt-forged-never-created" };
+    assert.throws(() => launchClaimRollbackEligibility(forged), /exact currently durable record/);
+  });
+
+  it("STALE/RACE: rejects an in-hand copy whose token would be stale after the real record has since advanced", () => {
+    setup();
+    const staleCopy = createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    assert.throws(() => launchClaimRollbackEligibility(staleCopy), /exact currently durable record/);
+  });
+
+  it("the token's updatedAt/submissionState changes as the durable record advances, letting a caller detect staleness via CAS-style comparison", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const before = launchClaimRollbackEligibility(record);
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const advanced = readLaunchClaim(binding());
+    const after = launchClaimRollbackEligibility(advanced);
+    assert.notEqual(before.token.updatedAt, after.token.updatedAt);
+    assert.equal(before.token.submissionState, "not_started");
+    assert.equal(after.token.submissionState, "started");
+  });
+
+  it("rejects a partial object missing required fields", () => {
+    setup();
+    assert.throws(() => launchClaimRollbackEligibility({ acceptance: "not_submitted" }), /is missing required field/);
+  });
+
+  it("rejects a Proxy-wrapped record", () => {
+    setup();
+    const real = createLaunchClaim(claimInput());
+    assert.throws(() => launchClaimRollbackEligibility(new Proxy(real, {})), /Proxy/);
+  });
+
+  it("imports exactly the two narrow proof seams it needs (acquiredLeaseEvidence, durableTurnEvidence), never an acquire/release/inventory/Driver-registry/mailbox/completion export", () => {
+    const moduleUrl = new URL("../../runtime/launch-claim.mjs", import.meta.url);
+    const source = fs.readFileSync(moduleUrl, "utf8");
+    const importStatements = [...source.matchAll(/^import\s+(\{[\s\S]*?\}|\S+)\s+from\s+["'](.+?)["'];/gm)];
+    const bySpecifier = new Map(importStatements.map((match) => [match[2], match[1]]));
+
+    assert.ok(bySpecifier.has("./instance-admission-lease.mjs"));
+    assert.deepEqual(
+      [...bySpecifier.get("./instance-admission-lease.mjs").matchAll(/[\w$]+/g)].map((m) => m[0]),
+      ["acquiredLeaseEvidence"],
+      "must import only the brand-gated evidence seam, never acquireLease/acquireInstanceLease/" +
+      "acquireNativeSessionLease/releaseLeasesOnSettlement/inspectLeaseInventory"
+    );
+
+    assert.ok(bySpecifier.has("./harness-contract.mjs"));
+    assert.deepEqual(
+      [...bySpecifier.get("./harness-contract.mjs").matchAll(/[\w$]+/g)].map((m) => m[0]),
+      ["durableTurnEvidence"],
+      "must import only the brand-gated evidence consumer, never validateLiveHarnessTurn or a Driver-invoking export"
+    );
+
+    for (const forbidden of ["harness-registry", "workspace-writer-lease", "completion-inbox", "agent-store", "job-store"]) {
+      for (const specifier of bySpecifier.keys()) {
+        assert.doesNotMatch(specifier, new RegExp(forbidden), `unexpected import of ${specifier}`);
+      }
+    }
+  });
+});
+
+describe("launch claim: tightly bounded lock timeout, not the 30-second convention", () => {
+  it("times out against a genuinely held, never-releasing lock within a small bounded multiple of LOCK_ACQUIRE_TIMEOUT_MS, never anywhere near 30s", async () => {
+    setup();
+    assert.ok(LOCK_ACQUIRE_TIMEOUT_MS <= 5_000, `expected a tightly bounded timeout, got ${LOCK_ACQUIRE_TIMEOUT_MS}ms`);
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
+    await new Promise((resolve, reject) => {
+      holder.once("spawn", resolve);
+      holder.once("error", reject);
+    });
+    const claimDir = resolveLaunchClaimDirectory(binding());
+    fs.mkdirSync(claimDir, { recursive: true, mode: 0o700 });
+    const lockFile = path.join(claimDir, ".lock");
+    const identity = getProcessIdentity(holder.pid);
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: holder.pid, identity, token: "held-forever", timestamp: Date.now() }));
+    const start = Date.now();
+    try {
+      assert.throws(() => createLaunchClaim(claimInput()), /Timed out acquiring launch claim directory lock/);
+    } finally {
+      holder.kill();
+    }
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed >= LOCK_ACQUIRE_TIMEOUT_MS, `expected at least the bounded timeout (${LOCK_ACQUIRE_TIMEOUT_MS}ms), got ${elapsed}ms`);
+    assert.ok(elapsed < LOCK_ACQUIRE_TIMEOUT_MS * 3, `expected close to the bounded timeout, got ${elapsed}ms`);
+    assert.ok(elapsed < 10_000, `must never approach the old 30s convention, got ${elapsed}ms`);
+  });
+});
+
+describe("launch claim: real restart/redelivery and independent-process contention", () => {
+  it("lets exactly one of two competing worker attempts durably claim one job activation", async () => {
+    setup();
+    const stateHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+    const run = (attemptId) => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [contentionFixture, "create", attemptId], {
+        env: { ...process.env, CODEX_HARNESSDOCK_RUNTIME_HOME: stateHome },
+      });
+      let stdout = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.on("error", reject);
+      child.on("close", () => resolve(stdout.trim()));
+    });
+    const [resultA, resultB] = await Promise.all([run("attempt-a"), run("attempt-b")]);
+    const outcomes = [resultA, resultB];
+    assert.equal(outcomes.filter((value) => value === "ok").length, 1, `expected exactly one winner: ${outcomes.join(",")}`);
+    assert.equal(outcomes.filter((value) => value === "conflict").length, 1, `expected exactly one conflict: ${outcomes.join(",")}`);
+    const stored = readLaunchClaim(binding());
+    assert.ok(["attempt-a", "attempt-b"].includes(stored.attemptId));
+  });
+
+  it("replays an identical create from independent processes idempotently (no duplicate/lost claim)", async () => {
+    setup();
+    const stateHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+    const run = () => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [contentionFixture, "create", "attempt-same"], {
+        env: { ...process.env, CODEX_HARNESSDOCK_RUNTIME_HOME: stateHome },
+      });
+      let stdout = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.on("error", reject);
+      child.on("close", () => resolve(stdout.trim()));
+    });
+    const results = await Promise.all([run(), run(), run()]);
+    assert.ok(results.every((value) => value === "ok"), `unexpected results: ${results.join(",")}`);
+    const stored = readLaunchClaim(binding());
+    assert.equal(stored.attemptId, "attempt-same");
+  });
+});

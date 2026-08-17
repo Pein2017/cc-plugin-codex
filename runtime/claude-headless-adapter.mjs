@@ -1854,6 +1854,43 @@ export async function interruptClaudeProcess(pid, pidIdentity, options = {}) {
 }
 
 /**
+ * Request interruption of a running Claude Code process without observing the
+ * outcome. This is the request-only half of `interruptClaudeProcess`: it
+ * verifies identity and delivers exactly one SIGINT to the process group,
+ * then returns immediately with a closed structured code. It never runs the
+ * bounded post-signal observation window and never infers anything from
+ * human-readable note text, so a caller that must acknowledge a request
+ * promptly and structurally is never delayed by this turn's own settlement.
+ * `interruptClaudeProcess` is unchanged and remains the legacy synchronous
+ * request-and-observe contract existing callers still use.
+ */
+export function requestClaudeInterrupt(pid, pidIdentity, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const validateIdentity = options.validateProcessIdentityImpl ?? validateProcessIdentity;
+  if (!pidIdentity) {
+    return { requested: false, requestFailure: "missing_identity" };
+  }
+  if (!validateIdentity(pid, pidIdentity, options)) {
+    return { requested: false, requestFailure: "identity_mismatch" };
+  }
+  if (platform === "win32") {
+    return { requested: false, requestFailure: "unsupported_platform" };
+  }
+  const signal = signalProcessGroup(pid, "SIGINT", options);
+  if (signal.absent) {
+    return { requested: false, requestFailure: "process_absent" };
+  }
+  if (signal.controlFailure) {
+    return {
+      requested: false,
+      requestFailure: signal.controlFailure,
+      controlFailureCode: signal.controlFailureCode,
+    };
+  }
+  return { requested: true, requestFailure: null };
+}
+
+/**
  * Cancel a running Claude Code process.
  * Uses process group kill with PID identity verification.
  */

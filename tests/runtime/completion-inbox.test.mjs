@@ -14,6 +14,7 @@ import {
   readUnreadAgentCompletionSummaries,
   readUnreadCompletionEvents,
   reconcileTerminalJobCompletion,
+  reconcileTerminalJobCompletions,
   resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
 
@@ -732,5 +733,607 @@ describe("completion inbox", () => {
       () => readUnreadAgentCompletionSummaries(workspace, ownerRootId),
       /cursor skips an unread event/,
     );
+  });
+});
+
+/**
+ * One version-two normalized terminal result, reduced to the fields the
+ * completion seam is allowed to consult. No production version-two caller
+ * exists yet, so this proves the closed internal path only: the seven public
+ * operations and every version-one job keep their exact current behavior.
+ */
+function normalizedTerminalResult(overrides = {}) {
+  const { executionWorld, continuation, ...rest } = overrides;
+  return {
+    contractVersion: 2,
+    harnessId: "fake-service",
+    driverVersion: "fake-service@1",
+    instanceKey: "tenant-alpha",
+    status: "completed",
+    nativeTurn: "terminal",
+    executionWorld: { continuity: "preserved", settlement: "settled", ...(executionWorld ?? {}) },
+    continuation: { mode: "exact_resume", nativeSessionRef: null, evidence: {}, ...(continuation ?? {}) },
+    failure: { class: null, reason: null, detail: null, resumable: false, requiresAttention: false },
+    finalMessage: "service turn completed",
+    finalMessageAbsenceReason: null,
+    progress: null,
+    metrics: null,
+    resultMetadata: null,
+    driverReceipt: null,
+    ...rest,
+  };
+}
+
+/**
+ * Counts every filesystem call the completion inbox could make. A refusal must
+ * not read, lock, write, fsync, or rename anything at all.
+ */
+function observeInboxIo(operation) {
+  const names = [
+    "readFileSync", "writeFileSync", "openSync", "renameSync", "mkdirSync",
+    "linkSync", "fsyncSync", "unlinkSync", "statSync", "chmodSync", "closeSync",
+  ];
+  const originals = {};
+  const counts = {};
+  for (const name of names) {
+    originals[name] = fs[name];
+    counts[name] = 0;
+    fs[name] = (...args) => {
+      counts[name] += 1;
+      return originals[name](...args);
+    };
+  }
+  try {
+    return { counts, result: operation(), error: null };
+  } catch (error) {
+    return { counts, result: null, error };
+  } finally {
+    for (const name of names) fs[name] = originals[name];
+  }
+}
+
+function totalIo(counts) {
+  return Object.values(counts).reduce((total, count) => total + count, 0);
+}
+
+const unpublishableEvidence = [
+  ["unknown owned work", { status: "failed", executionWorld: { settlement: "unknown" } }, "execution_settlement_unknown"],
+  ["active owned work", { status: "interrupted", executionWorld: { settlement: "active" } }, "execution_settlement_active"],
+  ["unknown native turn", { status: "failed", nativeTurn: "unknown" }, "native_turn_unknown"],
+  ["active native turn", { status: "failed", nativeTurn: "active" }, "native_turn_active"],
+  ["contradictory claim", { status: "completed", executionWorld: { settlement: "active" } }, "contradictory_terminal_evidence"],
+  ["unreadable axes", { nativeTurn: "finished" }, "invalid_evidence"],
+];
+
+describe("completion settlement gate", () => {
+  it("creates no event, mutation, or acknowledgement for unpublishable version-two evidence", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    for (const [label, overrides, reason] of unpublishableEvidence) {
+      const attempt = observeInboxIo(() => appendCompletionEvent(workspace, ownerRootId, completion(`v2-${reason}`, {
+        agentId: `agent-${reason}`,
+        normalizedTerminalResult: normalizedTerminalResult(overrides),
+      })));
+      assert.match(
+        String(attempt.error?.message),
+        new RegExp(`cannot publish a completion: terminal settlement is ${reason}`),
+        label,
+      );
+      // No read, lock, write, fsync, or rename happened at all.
+      assert.equal(totalIo(attempt.counts), 0, label);
+      // Nothing was created, so nothing can be delivered or acknowledged.
+      assert.equal(fs.existsSync(inboxFile), false, label);
+      assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, [], label);
+      assert.deepEqual(readUnreadAgentCompletionSummaries(workspace, ownerRootId).events, [], label);
+    }
+  });
+
+  it("withholds reconciliation for an unpublishable version-two job without touching the inbox", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    for (const [label, overrides, reason] of unpublishableEvidence) {
+      const outcome = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, {
+        id: `job-${reason}`,
+        agentId: `agent-${reason}`,
+        status: "completed",
+        completedAt: "2026-07-25T00:00:00.000Z",
+        summary: "service turn",
+        result: normalizedTerminalResult(overrides),
+      }));
+      assert.deepEqual(outcome.result, { reconciled: false, reason, event: null }, label);
+      assert.equal(totalIo(outcome.counts), 0, label);
+      assert.equal(fs.existsSync(inboxFile), false, label);
+      assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, [], label);
+    }
+  });
+
+  it("holds an unpublishable correction back from an already published completion", () => {
+    const { workspace, ownerRootId } = setup();
+    const job = {
+      id: "job-settled-then-unknown",
+      agentId: "agent-settled-then-unknown",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: normalizedTerminalResult(),
+    };
+    const first = reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+    assert.equal(first.reconciled, true);
+    const stored = fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8");
+
+    const withheld = reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      ...job,
+      summary: "revised service turn",
+      result: normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } }),
+    });
+    assert.deepEqual(withheld, { reconciled: false, reason: "execution_settlement_unknown", event: null });
+    // The preexisting completion payload is left exactly as it was.
+    assert.equal(fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8"), stored);
+  });
+
+  it("publishes settled evidence, including an idle service turn, exactly once", () => {
+    const { workspace, ownerRootId } = setup();
+    for (const [jobId, overrides] of [
+      ["v2-settled", {}],
+      ["v2-idle-service", {
+        executionWorld: { continuity: "not_applicable", settlement: "settled" },
+        continuation: { mode: "none" },
+      }],
+      ["v2-interrupted-settled", {
+        status: "interrupted",
+        failure: { class: "cancelled_or_interrupted", reason: null, detail: null, resumable: false, requiresAttention: false },
+      }],
+    ]) {
+      const job = {
+        id: jobId,
+        agentId: `agent-${jobId}`,
+        status: overrides.status === "interrupted" ? "interrupted" : "completed",
+        completedAt: "2026-07-25T00:00:00.000Z",
+        summary: `${jobId} summary`,
+        result: normalizedTerminalResult(overrides),
+      };
+      const first = reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+      assert.equal(first.reconciled, true, jobId);
+      assert.equal(first.reason, "appended", jobId);
+      const repeated = reconcileTerminalJobCompletion(workspace, ownerRootId, job);
+      assert.equal(repeated.reconciled, false, jobId);
+      assert.equal(repeated.reason, "already-present", jobId);
+      assert.equal(repeated.event.sequence, first.event.sequence, jobId);
+      assert.equal(
+        appendCompletionEvent(workspace, ownerRootId, completion(jobId, {
+          agentId: `agent-${jobId}`,
+          summary: `${jobId} summary`,
+          normalizedTerminalResult: normalizedTerminalResult(overrides),
+        })).appended,
+        false,
+        jobId,
+      );
+    }
+    const stored = JSON.parse(fs.readFileSync(resolveCompletionInboxFile(workspace, ownerRootId), "utf8"));
+    assert.deepEqual(stored.events.map((event) => event.jobId), ["v2-settled", "v2-idle-service", "v2-interrupted-settled"]);
+    // The internal evidence field is never stored or projected.
+    assert.equal(stored.events.some((event) => Object.hasOwn(event, "normalizedTerminalResult")), false);
+    const unread = readUnreadCompletionEvents(workspace, ownerRootId, { limit: 10 }).events;
+    assert.equal(unread.length, 3);
+    assert.equal(unread.some((event) => Object.hasOwn(event, "normalizedTerminalResult")), false);
+  });
+
+  it("refuses wrapped version-two evidence instead of letting it skip the gate", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const unpublishable = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+    // A Proxy can answer one thing to the gate and another to the next reader,
+    // so it is refused as unreadable rather than trusted or waved through.
+    assert.throws(
+      () => appendCompletionEvent(workspace, ownerRootId, completion("v2-proxied", {
+        agentId: "agent-v2-proxied",
+        normalizedTerminalResult: new Proxy(unpublishable, {}),
+      })),
+      /terminal settlement is invalid_evidence/,
+    );
+    assert.deepEqual(
+      reconcileTerminalJobCompletion(workspace, ownerRootId, {
+        id: "job-v2-proxied",
+        agentId: "agent-v2-proxied",
+        status: "completed",
+        completedAt: "2026-07-25T00:00:00.000Z",
+        summary: "service turn",
+        result: new Proxy(normalizedTerminalResult(), {}),
+      }),
+      { reconciled: false, reason: "invalid_evidence", event: null },
+    );
+    assert.equal(fs.existsSync(inboxFile), false);
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+  });
+
+  it("refuses inherited and class-prototype version-two evidence at the inbox seam", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const unsettled = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+    class TerminalEvidence {}
+    Object.assign(TerminalEvidence.prototype, unsettled);
+
+    const appended = observeInboxIo(() => appendCompletionEvent(workspace, ownerRootId, completion("v2-inherited", {
+      agentId: "agent-v2-inherited",
+      normalizedTerminalResult: Object.create(unsettled),
+    })));
+    assert.match(String(appended.error), /terminal settlement is invalid_evidence/);
+    assert.equal(totalIo(appended.counts), 0);
+
+    const reconciled = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      id: "job-v2-class",
+      agentId: "agent-v2-class",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: new TerminalEvidence(),
+    }));
+    assert.deepEqual(reconciled.result, { reconciled: false, reason: "invalid_evidence", event: null });
+    assert.equal(totalIo(reconciled.counts), 0);
+    assert.equal(fs.existsSync(inboxFile), false);
+    assert.deepEqual(readUnreadCompletionEvents(workspace, ownerRootId).events, []);
+  });
+
+  it("refuses an alternating accessor or Proxy container without invoking it once", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const settled = normalizedTerminalResult();
+    const unsettled = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+
+    // The classic time-of-check attack: the gate is shown settled evidence and
+    // the projection is shown unsettled evidence from the same field.
+    let reads = 0;
+    const alternating = {
+      id: "job-alternating",
+      agentId: "agent-alternating",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+    };
+    Object.defineProperty(alternating, "result", {
+      get() {
+        reads += 1;
+        return reads === 1 ? settled : unsettled;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    const alternated = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, alternating));
+    assert.deepEqual(alternated.result, { reconciled: false, reason: "invalid_evidence", event: null });
+    assert.equal(reads, 0);
+    assert.equal(totalIo(alternated.counts), 0);
+
+    const traps = [];
+    const spy = {
+      get(target, key, receiver) {
+        traps.push(`get:${String(key)}`);
+        return Reflect.get(target, key, receiver);
+      },
+      has(target, key) {
+        traps.push(`has:${String(key)}`);
+        return Reflect.has(target, key);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        traps.push(`descriptor:${String(key)}`);
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    };
+    const proxiedJob = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, new Proxy({
+      id: "job-proxied-container",
+      agentId: "agent-proxied-container",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: settled,
+    }, spy)));
+    assert.deepEqual(proxiedJob.result, { reconciled: false, reason: "invalid_evidence", event: null });
+    assert.equal(totalIo(proxiedJob.counts), 0);
+
+    const proxiedInput = observeInboxIo(() => appendCompletionEvent(
+      workspace,
+      ownerRootId,
+      new Proxy(completion("v2-proxied-input", {
+        agentId: "agent-v2-proxied-input",
+        normalizedTerminalResult: settled,
+      }), spy),
+    ));
+    assert.match(String(proxiedInput.error), /terminal settlement is invalid_evidence/);
+    assert.equal(totalIo(proxiedInput.counts), 0);
+    assert.deepEqual(traps, []);
+    assert.equal(fs.existsSync(inboxFile), false);
+  });
+
+  it("refuses conflicting evidence fields whichever one is unsettled", () => {
+    const { workspace, ownerRootId } = setup();
+    const settled = normalizedTerminalResult();
+    const unsettled = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "active" } });
+    for (const [jobId, fields] of [
+      ["job-conflict-a", { normalizedTerminalResult: unsettled, result: settled }],
+      ["job-conflict-b", { normalizedTerminalResult: settled, result: unsettled }],
+    ]) {
+      const outcome = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, {
+        id: jobId,
+        agentId: `agent-${jobId}`,
+        status: "completed",
+        completedAt: "2026-07-25T00:00:00.000Z",
+        summary: "service turn",
+        ...fields,
+      }));
+      assert.deepEqual(outcome.result, { reconciled: false, reason: "execution_settlement_active", event: null }, jobId);
+      assert.equal(totalIo(outcome.counts), 0, jobId);
+    }
+    assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerRootId)), false);
+  });
+
+  it("leaves a published event's bytes, unread batch, and cursor untouched under every refusal", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const job = {
+      id: "job-published",
+      agentId: "agent-published",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: normalizedTerminalResult(),
+    };
+    assert.equal(reconcileTerminalJobCompletion(workspace, ownerRootId, job).reconciled, true);
+    const published = fs.readFileSync(inboxFile, "utf8");
+    const unsettled = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+    class TerminalEvidence {}
+    Object.assign(TerminalEvidence.prototype, unsettled);
+
+    for (const attack of [
+      { ...job, summary: "revised", result: Object.create(unsettled) },
+      { ...job, summary: "revised", result: new TerminalEvidence() },
+      { ...job, summary: "revised", result: unsettled },
+      { ...job, summary: "revised", result: new Proxy(unsettled, {}) },
+    ]) {
+      const outcome = reconcileTerminalJobCompletion(workspace, ownerRootId, attack);
+      assert.equal(outcome.reconciled, false);
+      assert.equal(outcome.event, null);
+      assert.equal(fs.readFileSync(inboxFile, "utf8"), published);
+    }
+    const unread = readUnreadCompletionEvents(workspace, ownerRootId, { limit: 10 });
+    assert.equal(unread.events.length, 1);
+    assert.equal(unread.acknowledgedThrough, 0);
+    assert.equal(unread.events[0].jobId, "job-published");
+  });
+
+  it("leaves version-one terminal jobs and completions untouched by the gate", () => {
+    const { workspace, ownerRootId } = setup();
+    // A version-one job result carries process-shaped evidence and no axis at
+    // all: it must reconcile exactly as it did before the gate existed.
+    const legacy = reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      id: "legacy-job",
+      agentId: "agent-legacy",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "legacy summary",
+      recoverability: { resumable: true, exactSessionId: "session-legacy" },
+      result: { contractVersion: 1, exitStatus: 0, rawOutput: "legacy output", failureClass: null, metrics: null },
+    });
+    assert.equal(legacy.reconciled, true);
+    assert.equal(legacy.event.finalMessage, "legacy output");
+    assert.equal(legacy.event.resumability.classification, "resumable");
+    // A plain completion input without any settlement evidence is unaffected.
+    assert.equal(appendCompletionEvent(workspace, ownerRootId, completion("plain-job")).appended, true);
+  });
+
+  it("refuses a lying Proxy in the evidence object's own prototype chain without invoking it", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const unsettled = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+    const traps = [];
+    // A lying `has` trap denies every axis field; a correct reader must not
+    // let that make the evidence look axis-free and skip the gate.
+    const lyingEvidenceProto = new Proxy(unsettled, {
+      has(target, key) {
+        traps.push(`has:${String(key)}`);
+        return false;
+      },
+    });
+    const evidenceViaProto = Object.create(lyingEvidenceProto);
+
+    const appended = observeInboxIo(() => appendCompletionEvent(workspace, ownerRootId, completion("v2-evidence-proto-proxy", {
+      agentId: "agent-evidence-proto-proxy",
+      normalizedTerminalResult: evidenceViaProto,
+    })));
+    assert.match(String(appended.error), /terminal settlement is invalid_evidence/);
+    assert.equal(totalIo(appended.counts), 0);
+
+    const reconciled = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      id: "job-evidence-proto-proxy",
+      agentId: "agent-evidence-proto-proxy",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "looks fine",
+      result: evidenceViaProto,
+    }));
+    assert.deepEqual(reconciled.result, { reconciled: false, reason: "invalid_evidence", event: null });
+    assert.equal(totalIo(reconciled.counts), 0);
+    // The lying trap is never consulted, on either path.
+    assert.deepEqual(traps, []);
+    assert.equal(fs.existsSync(inboxFile), false);
+  });
+
+  it("refuses a lying Proxy in the completion/job container's own prototype chain without invoking it", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    const unsettled = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+    const traps = [];
+    const lyingContainerProto = new Proxy(
+      { result: unsettled, normalizedTerminalResult: unsettled },
+      {
+        has(target, key) {
+          traps.push(`has:${String(key)}`);
+          return false;
+        },
+      },
+    );
+    const job = Object.create(lyingContainerProto);
+    Object.assign(job, {
+      id: "job-container-proto-proxy",
+      agentId: "agent-container-proto-proxy",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "looks fine",
+    });
+    const reconciled = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, job));
+    assert.deepEqual(reconciled.result, { reconciled: false, reason: "invalid_evidence", event: null });
+    assert.equal(totalIo(reconciled.counts), 0);
+
+    const completionContainer = Object.create(
+      new Proxy(
+        { normalizedTerminalResult: unsettled },
+        {
+          has(target, key) {
+            traps.push(`has:${String(key)}`);
+            return false;
+          },
+        },
+      ),
+    );
+    Object.assign(completionContainer, completion("v2-completion-container-proto-proxy", {
+      agentId: "agent-completion-container-proto-proxy",
+    }));
+    const appended = observeInboxIo(() => appendCompletionEvent(workspace, ownerRootId, completionContainer));
+    assert.match(String(appended.error), /terminal settlement is invalid_evidence/);
+    assert.equal(totalIo(appended.counts), 0);
+
+    assert.deepEqual(traps, []);
+    assert.equal(fs.existsSync(inboxFile), false);
+  });
+
+  it("never invokes a throwing or alternating `has` trap while classifying a container or evidence chain", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    let callCount = 0;
+    const settled = normalizedTerminalResult();
+    const throwingContainerProto = new Proxy(
+      { result: settled },
+      {
+        has() {
+          callCount += 1;
+          if (callCount % 2 === 1) throw new Error("malicious has trap");
+          return false;
+        },
+      },
+    );
+    const job = Object.create(throwingContainerProto);
+    Object.assign(job, {
+      id: "job-throwing-container-proxy",
+      agentId: "agent-throwing-container-proxy",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "looks fine",
+    });
+    let reconciled;
+    assert.doesNotThrow(() => {
+      reconciled = observeInboxIo(() => reconcileTerminalJobCompletion(workspace, ownerRootId, job));
+    });
+    assert.deepEqual(reconciled.result, { reconciled: false, reason: "invalid_evidence", event: null });
+    assert.equal(totalIo(reconciled.counts), 0);
+    assert.equal(callCount, 0);
+    assert.equal(fs.existsSync(inboxFile), false);
+  });
+
+  it("skips only the malicious job in a batch, with zero traps and zero I/O for it, while both healthy jobs publish", () => {
+    const { workspace, ownerRootId } = setup();
+    const inboxFile = resolveCompletionInboxFile(workspace, ownerRootId);
+    function healthyJob(id) {
+      return {
+        id,
+        agentId: `agent-${id}`,
+        status: "completed",
+        completedAt: "2026-07-25T00:00:00.000Z",
+        summary: `${id} summary`,
+        result: { contractVersion: 1, exitStatus: 0, rawOutput: `${id} output`, failureClass: null, metrics: null },
+      };
+    }
+    const traps = [];
+    const throwingProto = new Proxy(
+      {},
+      {
+        has(target, key) {
+          traps.push(`has:${String(key)}`);
+          throw new Error("malicious has trap");
+        },
+      },
+    );
+    const maliciousJob = Object.create(throwingProto);
+    Object.assign(maliciousJob, {
+      id: "job-malicious",
+      agentId: "agent-malicious",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "evil",
+    });
+
+    let results;
+    assert.doesNotThrow(() => {
+      results = reconcileTerminalJobCompletions(workspace, ownerRootId, [
+        healthyJob("job-healthy-a"),
+        maliciousJob,
+        healthyJob("job-healthy-b"),
+      ]);
+    });
+    assert.equal(results.length, 3);
+    assert.equal(results[0].reconciled, true, "first healthy job");
+    assert.equal(results[0].reason, "appended", "first healthy job");
+    assert.equal(results[1].reconciled, false, "malicious job");
+    assert.equal(results[1].reason, "invalid_evidence", "malicious job");
+    assert.equal(results[1].event, null, "malicious job");
+    assert.equal(results[2].reconciled, true, "second healthy job");
+    assert.equal(results[2].reason, "appended", "second healthy job");
+    // Zero traps invoked for the malicious item anywhere in the batch.
+    assert.deepEqual(traps, []);
+
+    const stored = JSON.parse(fs.readFileSync(inboxFile, "utf8"));
+    assert.deepEqual(stored.events.map((event) => event.jobId), ["job-healthy-a", "job-healthy-b"]);
+    assert.deepEqual(stored.events.map((event) => event.sequence), [1, 2]);
+  });
+
+  it("keeps canonical Object.prototype and null-prototype settled/unsettled evidence unchanged at the seam", () => {
+    const { workspace, ownerRootId } = setup();
+    const bare = (fields) => Object.assign(Object.create(null), fields);
+    const settledNullProto = bare({
+      ...normalizedTerminalResult(),
+      executionWorld: bare(normalizedTerminalResult().executionWorld),
+      continuation: bare(normalizedTerminalResult().continuation),
+    });
+    const settledOrdinary = normalizedTerminalResult();
+    const unsettledOrdinary = normalizedTerminalResult({ status: "failed", executionWorld: { settlement: "unknown" } });
+
+    const settledNullReconciled = reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      id: "job-settled-null-proto",
+      agentId: "agent-settled-null-proto",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: settledNullProto,
+    });
+    assert.equal(settledNullReconciled.reconciled, true);
+    assert.equal(settledNullReconciled.reason, "appended");
+
+    const settledOrdinaryReconciled = reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      id: "job-settled-ordinary-proto",
+      agentId: "agent-settled-ordinary-proto",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: settledOrdinary,
+    });
+    assert.equal(settledOrdinaryReconciled.reconciled, true);
+    assert.equal(settledOrdinaryReconciled.reason, "appended");
+
+    const unsettledReconciled = reconcileTerminalJobCompletion(workspace, ownerRootId, {
+      id: "job-unsettled-ordinary-proto",
+      agentId: "agent-unsettled-ordinary-proto",
+      status: "completed",
+      completedAt: "2026-07-25T00:00:00.000Z",
+      summary: "service turn",
+      result: unsettledOrdinary,
+    });
+    assert.deepEqual(unsettledReconciled, { reconciled: false, reason: "execution_settlement_unknown", event: null });
   });
 });

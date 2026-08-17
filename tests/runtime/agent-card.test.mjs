@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import { projectAgentCard } from "../../runtime/agent-card.mjs";
 
+import { versionThreeRoute } from "./fixtures/version-three-state.mjs";
+
 const agent = {
   path: "/root/card",
   selectedModel: "claude-haiku-4-5",
@@ -94,5 +96,47 @@ describe("Agent Card", () => {
     assert.equal(projectAgentCard(agent, { ...job, completedAt: null }, {
       now: new Date("2026-08-08T01:00:00.000Z"),
     }).elapsed_seconds, null);
+  });
+});
+
+describe("Version-three Agent Card", () => {
+  const route = versionThreeRoute({ topology: "native_orchestrator", authority: "behavioral_write" });
+  const futureAgent = {
+    version: 3,
+    path: "/root/future_card",
+    route,
+    selectedModel: null,
+    delegationMode: null,
+  };
+
+  it("reads immutable identity from the frozen route, not from turn intent", () => {
+    const card = projectAgentCard(futureAgent, {
+      status: "running",
+      startedAt: "2026-08-13T00:00:00.000Z",
+      // A version-three Agent's authority was frozen at creation; a per-turn
+      // write intent is historical Claude evidence and must not override it.
+      request: { effort: "high", write: false },
+      publicProgress: { activity: "thinking", updatedAt: "2026-08-13T00:00:05.000Z" },
+    }, { now: new Date("2026-08-13T00:00:08.000Z") });
+    assert.deepEqual(card, {
+      agent_name: "/root/future_card",
+      model: "fake-service-large",
+      // Reasoning effort stays turn-scoped in every generation.
+      reasoning_effort: "high",
+      authority: "behavioral_write",
+      delegation_mode: "native_orchestrator",
+      phase: "thinking",
+      started_at: "2026-08-13T00:00:00.000Z",
+      last_activity_at: "2026-08-13T00:00:05.000Z",
+      elapsed_seconds: 8,
+    });
+  });
+
+  it("keeps the frozen route authority without any observed turn", () => {
+    const card = projectAgentCard(futureAgent, null, { now: new Date("2026-08-13T00:00:08.000Z") });
+    assert.equal(card.authority, "behavioral_write");
+    assert.equal(card.model, "fake-service-large");
+    assert.equal(card.delegation_mode, "native_orchestrator");
+    assert.equal(card.reasoning_effort, null);
   });
 });

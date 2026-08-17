@@ -397,6 +397,7 @@ describe("Claude Code version compatibility", () => {
     const readiness = runtime.readiness();
     assert.equal(readiness.ready, true);
     const prepared = runtime.prepareStart("must never reach stdin", {
+      harnessId: runtime.driver.harnessId,
       readinessReceipt: readiness,
       jobId: "compat-worker-drift",
       model: "haiku",

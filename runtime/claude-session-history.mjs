@@ -9,6 +9,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  CLAUDE_LEGACY_HARNESS_ID,
+  isLegacyAgentRecord,
+  legacyClaudeHistoryBinding,
+  legacyHarnessId,
+} from "./claude-legacy-adapter.mjs";
+
 export const DEFAULT_AGENT_MESSAGE_LIMIT = 1;
 export const MAX_AGENT_MESSAGE_LIMIT = 20;
 
@@ -73,17 +80,47 @@ function canonicalTopLevelTranscript(candidate, projectsRoot, sessionId) {
   return canonical;
 }
 
-export function resolveBoundClaudeTranscript(agent) {
+/**
+ * The Claude session binding native history is read through.
+ *
+ * Only a record that actually recorded a Claude Code session has one. The
+ * legacy adapter owns that derivation, so neither a newer record nor a
+ * version-two Agent bound to another Harness can be read through a Claude
+ * transcript layout.
+ */
+function boundClaudeSession(agent) {
   if (!agent || typeof agent !== "object" || Array.isArray(agent)) {
     throw new Error("read_agent_messages requires a resolved Agent record.");
   }
-  const sessionId = assertText(agent.claudeSessionId, "Agent Claude session ID");
+  const identity = agent.path ?? agent.agentId ?? "";
+  if (agent.version != null && !isLegacyAgentRecord(agent)) {
+    throw new Error(
+      `Agent ${identity} is not a legacy Claude Code Agent; ` +
+      "native Claude history is unavailable for it."
+    );
+  }
+  if (isLegacyAgentRecord(agent)) {
+    const harnessId = legacyHarnessId(agent);
+    if (harnessId !== CLAUDE_LEGACY_HARNESS_ID) {
+      throw new Error(
+        `Agent ${identity} is bound to Harness ${harnessId}; ` +
+        "native Claude history is unavailable for it."
+      );
+    }
+    return legacyClaudeHistoryBinding(agent) ?? { sessionId: null, configDir: null };
+  }
+  return { sessionId: agent.claudeSessionId, configDir: agent.claudeConfigDir };
+}
+
+function resolveBoundClaudeSession(agent) {
+  const binding = boundClaudeSession(agent);
+  const sessionId = assertText(binding?.sessionId, "Agent Claude session ID");
   if (!SESSION_ID_PATTERN.test(sessionId)) {
     throw new Error("Agent Claude session ID is not safe for native history lookup.");
   }
   let projectsRoot;
   try {
-    projectsRoot = canonicalProjectsRoot(agent.claudeConfigDir);
+    projectsRoot = canonicalProjectsRoot(binding.configDir);
   } catch (error) {
     if (error?.code === "ENOENT") {
       throw new Error("Native Claude history is unavailable for this Agent (projects directory missing or expired).", {
@@ -117,7 +154,7 @@ export function resolveBoundClaudeTranscript(agent) {
   if (candidates.size > 1) {
     throw new Error("Native Claude history is ambiguous for this Agent session.");
   }
-  return [...candidates][0];
+  return { sessionId, transcript: [...candidates][0] };
 }
 
 function assistantText(event, sessionId) {
@@ -167,11 +204,17 @@ function parseTranscript(filePath, sessionId) {
   return messages;
 }
 
+/** The exact native transcript one legacy Claude Agent session is bound to. */
+export function resolveBoundClaudeTranscript(agent) {
+  return resolveBoundClaudeSession(agent).transcript;
+}
+
 export function readBoundClaudeAgentMessages(agent, options = {}) {
   const limit = messageLimit(options.limit);
   const before = optionalText(options.before, "read_agent_messages before cursor");
-  const sessionId = assertText(agent?.claudeSessionId, "Agent Claude session ID");
-  const transcript = resolveBoundClaudeTranscript(agent);
+  // The session identity comes from the same adapter-resolved binding as the
+  // transcript, never from a compatibility field that may not be projected.
+  const { sessionId, transcript } = resolveBoundClaudeSession(agent);
   const newestFirst = parseTranscript(transcript, sessionId).reverse();
   let start = 0;
   if (before) {

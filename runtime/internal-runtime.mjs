@@ -16,8 +16,12 @@ import {
   assertHarnessCapability,
   validateHarnessCapabilities,
 } from "./harness-capabilities.mjs";
+import {
+  currentGenerationHarnessId,
+  legacyRecordHarnessId,
+} from "./claude-legacy-adapter.mjs";
 import { validateHarnessTurnResult } from "./harness-contract.mjs";
-import { DEFAULT_HARNESS_ID, resolveHarnessDriver } from "./harness-registry.mjs";
+import { assertStatedHarnessId, resolveHarnessDriver } from "./harness-registry.mjs";
 import {
   ACTIVE_JOB_STATUSES,
   HARNESS_QUEUED_JOB_STATUS,
@@ -554,9 +558,11 @@ class ClaudeRuntime {
       onWake: options.waitDependencies?.onWake ?? null,
       onRead: options.waitDependencies?.onRead ?? null,
     };
-    // Preserve the historical default projection for internal callers while
-    // resolving every durable Agent/job from its own admitted Harness route.
-    this.driver = resolveHarnessDriver(DEFAULT_HARNESS_ID, { env: this.env });
+    // The Harness this public generation is bound to is stated once, by the
+    // owner of that legacy meaning. Every durable Agent/job is still resolved
+    // from its own recorded Harness, and nothing below defaults to this one.
+    this.generationHarnessId = currentGenerationHarnessId();
+    this.driver = resolveHarnessDriver(this.generationHarnessId, { env: this.env });
     this.harnessInstance = Object.freeze({
       harnessId: this.driver.harnessId,
       instanceKey: this.driver.resolveInstanceKey(this.env),
@@ -569,11 +575,17 @@ class ClaudeRuntime {
     ).trim() || null;
   }
 
-  driverForHarness(harnessId = DEFAULT_HARNESS_ID) {
+  /**
+   * Resolve one explicitly stated Harness. There is no default: an unstated
+   * Harness is a missing route, and it is refused before any readiness check,
+   * durable write, or native launch.
+   */
+  driverForHarness(harnessId) {
+    const stated = assertStatedHarnessId(harnessId, "Harness Driver resolution");
     // Preserve the existing in-process test seam while production composition
-    // still resolves every non-default route from the static registry.
-    if (this.driver?.harnessId === harnessId) return this.driver;
-    return resolveHarnessDriver(harnessId, { env: this.env });
+    // still resolves every other route from the static registry.
+    if (this.driver?.harnessId === stated) return this.driver;
+    return resolveHarnessDriver(stated, { env: this.env });
   }
 
   harnessInstanceFor(driver) {
@@ -597,7 +609,7 @@ class ClaudeRuntime {
     return patchJob(this.cwd, job.id, { ownerRootId: this.ownerRootId }) ?? job;
   }
 
-  readiness(harnessId = DEFAULT_HARNESS_ID) {
+  readiness(harnessId = this.generationHarnessId) {
     const driver = this.driverForHarness(harnessId);
     const preflight = driver.preflight({ cwd: this.cwd, env: this.env });
     return {
@@ -621,7 +633,7 @@ class ClaudeRuntime {
     };
   }
 
-  assertReady(harnessId = DEFAULT_HARNESS_ID) {
+  assertReady(harnessId) {
     const driver = this.driverForHarness(harnessId);
     const receipt = this.readiness(driver.harnessId);
     const unready = driver.describeUnreadiness(receipt);
@@ -685,7 +697,11 @@ class ClaudeRuntime {
     // Keep this validation ahead of readiness and all durable job writes. The
     // public lifecycle validates first for caller-facing failure semantics;
     // preparation repeats it so internal callers cannot bypass that boundary.
-    const driver = this.driverForHarness(options.harnessId ?? DEFAULT_HARNESS_ID);
+    //
+    // Preparation is a route decision, so it states its Harness. There is no
+    // fallback here: an unstated Harness fails before readiness, before the
+    // session lease, and before one durable job byte is written.
+    const driver = this.driverForHarness(options.harnessId);
     const harnessInstance = this.harnessInstanceFor(driver);
     const executionProfile = driver.validateRoute({
       profile: options.profile,
@@ -880,9 +896,9 @@ class ClaudeRuntime {
     let receipt = null;
     let failure = null;
     const harnessInstance = Object.freeze({
-      harnessId: nonEmptyString(current.harnessId) ?? DEFAULT_HARNESS_ID,
+      harnessId: legacyRecordHarnessId(current),
       instanceKey: nonEmptyString(current.harnessInstanceKey) ??
-        this.driverForHarness(current.harnessId ?? DEFAULT_HARNESS_ID).resolveInstanceKey(this.env),
+        this.driverForHarness(legacyRecordHarnessId(current)).resolveInstanceKey(this.env),
     });
     try {
       sessionLease = resumeSessionId
@@ -1227,7 +1243,7 @@ class ClaudeRuntime {
         `this runtime owns version ${HARNESS_JOB_STATE_VERSION}.`
       );
     }
-    const harnessId = nonEmptyString(job?.harnessId) ?? DEFAULT_HARNESS_ID;
+    const harnessId = legacyRecordHarnessId(job);
     const driver = this.driverForHarness(harnessId);
     const driverVersion = nonEmptyString(job?.driverVersion);
     // Stopping a live turn must stay possible across a Driver version bump:
@@ -1290,6 +1306,8 @@ class ClaudeRuntime {
     if (!sessionId) throw new Error(`Claude job ${source.id} has no owner-valid exact Claude session to resume.`);
     const request = readJobFile(this.cwd, source.id)?.request ?? {};
     return this.start(message, {
+      // A resumed turn belongs to the Harness its own source job recorded.
+      harnessId: options.harnessId ?? legacyRecordHarnessId(source),
       write: options.write ?? source.write,
       profile: options.profile ?? request.profile ?? source.profile,
       model: options.model ?? request.model,
@@ -1324,8 +1342,9 @@ class ClaudeRuntime {
 
     /** @type {{ interrupted: boolean, note?: string, controlFailure?: string, forced?: boolean }} */
     let receipt = {
-      interrupted: true,
-      note: "Supervisor will stop before spawning another Claude attempt.",
+      interrupted: false,
+      note: "Interrupt request has no terminal evidence yet.",
+      controlFailure: "no_process_identity",
     };
     if (stored.pid) {
       if (!stored.pidIdentity) {
@@ -1335,85 +1354,33 @@ class ClaudeRuntime {
           controlFailure: "missing_identity",
         };
       } else {
-        receipt = await driver.interruptTurn({
-          pid: stored.pid,
-          pidIdentity: stored.pidIdentity,
-        });
+        try {
+          receipt = await driver.interruptTurn({
+            pid: stored.pid,
+            pidIdentity: stored.pidIdentity,
+          });
+        } catch {
+          receipt = {
+            interrupted: false,
+            note: "Native interrupt request failed.",
+            controlFailure: "driver_error",
+          };
+        }
       }
     }
     if (!receipt.interrupted) {
-      const forced = !receipt.controlFailure && stored.pid && stored.pidIdentity
-        ? await driver.cancelTurn({ pid: stored.pid, pidIdentity: stored.pidIdentity })
-        : { cancelled: false, note: receipt.note };
-      if (forced.cancelled) {
-        const current = readJobFile(this.cwd, job.id) ?? stored;
-        transitionJob(this.cwd, job.id, ["interrupting"], "failed", {
-          phase: "forced_interruption_unflushed",
-          completedAt: nowIso(),
-          acceptingSteering: false,
-          pid: null,
-          pidIdentity: null,
-          workerPid: null,
-          workerPidIdentity: null,
-          result: {
-            ...(current.result ?? {}),
-            status: "failed",
-            sessionId: resultSessionId(current),
-            rawOutput: current.partialOutput ?? "",
-            partialOutput: current.partialOutput ?? "",
-            resumable: false,
-            failureClass: "forced_interruption_unflushed",
-            failureReason: "Claude process tree required forced termination without transcript flush evidence.",
-          },
-        });
-        receipt = {
-          interrupted: false,
-          forced: true,
-          note: "Turn was force-terminated and is not considered safely resumable.",
-        };
-      } else {
-        transitionJob(this.cwd, job.id, ["interrupting"], "running", {
-          phase: "interrupt_failed",
-          acceptingSteering: true,
-        });
-        receipt = {
-          ...receipt,
-          note: forced.note ?? receipt.note,
-        };
-      }
-    } else {
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (readJobFile(this.cwd, job.id)?.status !== "interrupting") break;
-        await sleep(100);
-      }
-      const current = readJobFile(this.cwd, job.id);
-      if (current?.status === "interrupting") {
-        const sessionId = resultSessionId(current);
-        transitionJob(this.cwd, job.id, ["interrupting"], "interrupted", {
-          phase: "interrupted",
-          completedAt: nowIso(),
-          pid: null,
-          pidIdentity: null,
-          workerPid: null,
-          workerPidIdentity: null,
-          result: {
-            ...(current.result ?? {}),
-            status: "failed",
-            sessionId,
-            rawOutput: current.partialOutput ?? "",
-            partialOutput: current.partialOutput ?? "",
-            failureClass: "cancelled_or_interrupted",
-          },
-        });
-      }
+      transitionJob(this.cwd, job.id, ["interrupting"], "running", {
+        phase: "interrupt_failed",
+        acceptingSteering: true,
+      });
     }
     const current = readJobFile(this.cwd, job.id) ?? job;
     return {
       jobId: job.id,
-      interrupted: receipt.interrupted,
+      interrupted: current.status === "interrupted",
       status: current.status,
       sessionId: resultSessionId(current),
-      forced: receipt.forced === true,
+      forced: false,
       note: receipt.note ?? null,
     };
   }

@@ -60,6 +60,16 @@ describe("native plugin contract", () => {
     }
   });
 
+  it("keeps the manifest defaultPrompt free of mandatory join-obligation language", () => {
+    const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
+    const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
+    const defaultPrompt = manifest.interface.defaultPrompt.join("\n");
+    assert.doesNotMatch(defaultPrompt, /retain required join obligations/i);
+    assert.doesNotMatch(defaultPrompt, /required join/i);
+    assert.doesNotMatch(defaultPrompt, /critical dependency/i);
+    assert.doesNotMatch(defaultPrompt, /completion-first/i);
+  });
+
   it("has no active import or metadata dependency on upstream installers or versioned cache", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     assert.equal(packageJson.private, true);
@@ -125,6 +135,18 @@ describe("native plugin contract", () => {
     }
   });
 
+  it("keeps interrupt-agent guidance truthful about graceful, never forced, termination", () => {
+    const text = fs.readFileSync(
+      path.join(root, "plugins", "codex-harnessdock", "skills", "interrupt-agent", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(text, /graceful\s+interrupt request may be accepted, rejected, or left pending/i);
+    assert.match(text, /`status`[\s\S]*`interrupted`,\s*`still_working`,\s*or\s*`failed`/i);
+    assert.match(text, /`still_working`[\s\S]*never\s+a\s+forced\s+termination/i);
+    assert.doesNotMatch(text, /Forced unflushed\s+termination becomes failed and non-resumable/i);
+    assert.doesNotMatch(text, /force-terminat/i);
+  });
+
   it("keeps single-target progress discoverable through the existing wait skill", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "codex-harnessdock", "skills", "wait-agent", "SKILL.md"),
@@ -132,7 +154,7 @@ describe("native plugin contract", () => {
     );
     assert.match(text, /wake_on_progress: true[\s\S]*exactly one target/i);
     assert.match(text, /multiple[\s\S]*targets form one completion-only all-settled barrier/i);
-    assert.match(text, /unrelated root[\s\S]*activity remains available to its proper consumer/i);
+    assert.match(text, /unrelated root[\s\S]*activity remains[\s\n]+available to its proper consumer/i);
   });
 
   it("publishes one checkout-owned stdio MCP server with the one-hour timeout margin", () => {
@@ -214,7 +236,7 @@ describe("native plugin contract", () => {
     assert.doesNotMatch(text, /receipt exactly as returned/i);
   });
 
-  it("documents exact admitted model and effort identifiers without invented fallback", () => {
+  it("documents exact admitted model and effort identifiers without route ranking", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
@@ -222,20 +244,15 @@ describe("native plugin contract", () => {
     for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
       assert.match(text, new RegExp(model));
     }
-    assert.match(text, /Haiku[\s\S]*cheapest\/fastest[\s\S]*tests[\s\S]*smoke[\s\S]*mechanical work/i);
-    assert.match(text, /Haiku\/low[\s\S]*preferred[\s\S]*real smoke[\s\S]*not test-only/i);
-    assert.match(text, /Sonnet[\s\S]*balanced general coding/i);
-    assert.match(text, /Opus[\s\S]*deep[\s\S]*complex[\s\S]*high-risk/i);
-    assert.match(text, /Fable[\s\S]*highest capability\/spend[\s\S]*core decisions[\s\S]*planning[\s\S]*not[\s\S]*routine coding/i);
-    assert.match(text, /Approximate guidance, not exact pricing[\s\S]*Haiku < Sonnet < Opus < Fable/i);
+    assert.doesNotMatch(text, /cheapest\/fastest|preferred for real smoke|highest capability\/spend|Haiku < Sonnet < Opus < Fable/i);
     assert.match(text, /Ask when no model family was selected/i);
     assert.match(text, /low.*medium.*high.*xhigh.*max/s);
-    assert.match(text, /Agent label such as Ops5[\s\S]*partial IDs[\s\S]*substitute another model/i);
+    assert.match(text, /Agent label such as Ops5[\s\S]*partial IDs[\s\S]*substitute another[\s\S]*model/i);
     assert.match(text, /subscription[\s\S]*usage[\s\S]*allowance[\s\S]*credit[\s\S]*quota exhaustion[\s\S]*stop further real Claude tests/i);
     assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
     assert.match(text, /`write: false`[\s\S]*behavioral read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation[\s\S]*not an OS-level/i);
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
-    assert.match(text, /`leaf`[\s\S]*native `Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Opus or Fable/i);
+    assert.match(text, /`leaf`[\s\S]*native[\s\S]*`Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Opus or Fable/i);
     assert.match(text, /experimental Native Agent Team lead/i);
     assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
     assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
@@ -294,13 +311,13 @@ describe("native plugin contract", () => {
         assert.match(metadata, /solely to recheck completion after a quiet wait_agent timeout/i);
       } else {
         assert.match(text, /complete stored[\s\S]*completion_message/i);
-        assert.match(text, /critical path[\s\S]*ordinary join[\s\S]*omit progress/i);
+        assert.match(text, /untargeted call observes current-root completion[\s\S]*targeted call observes/i);
         assert.match(text, /3600000 ms/);
         assert.doesNotMatch(text, /10-minute/i);
         assert.doesNotMatch(text, /timeout_ms/);
-        assert.match(text, /wake_on_progress: true[\s\S]*one intermediate update per active\s+Agent job/i);
+        assert.match(text, /wake_on_progress: true[\s\S]*an intermediate update/i);
         assert.match(text, /hook[\s\S]*private/i);
-        assert.match(text, /never repeat progress waiting/i);
+        assert.match(text, /Do not repeat progress waiting/i);
         assert.match(text, /Do not narrate unchanged timeouts/i);
         assert.match(text, /`list_agents` or\s+`read_agent_messages` immediately\s+afterward merely to recheck completion/i);
         assert.match(text, /call `wait_agent` again directly/i);
@@ -309,7 +326,7 @@ describe("native plugin contract", () => {
           path.join(root, "plugins", "codex-harnessdock", "skills", name, "agents", "openai.yaml"),
           "utf8",
         );
-        assert.match(metadata, /critical-path[\s\S]*one-hour completion-first/i);
+        assert.match(metadata, /one-hour completion bound/i);
         assert.match(metadata, /wake_on_progress[\s\S]*one intentional intermediate observation per Agent turn[\s\S]*never repeat/i);
         assert.match(metadata, /quiet timeout[\s\S]*call wait_agent again directly/i);
       }

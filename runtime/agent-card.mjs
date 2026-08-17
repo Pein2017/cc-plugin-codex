@@ -43,18 +43,26 @@ export function projectAgentCard(agent, job, options = {}) {
     ? nullableTimestamp(job?.result?.lastByteAt ?? job?.lastByteAt)
     : null;
   const startedAt = nullableTimestamp(job?.startedAt);
+  // A version-three Agent froze its model, topology, and behavioral authority
+  // at creation. Only reasoning effort stays turn-scoped, so nothing about the
+  // observed turn may restate that identity.
+  const frozenRoute = agent?.version === 3 && agent?.route ? agent.route : null;
   const terminalJob = terminal.has(job?.status);
   const completedAt = terminalJob ? nullableTimestamp(job?.completedAt) : null;
   return {
     agent_name: agent.path,
-    model: agent.selectedModel,
+    model: frozenRoute ? frozenRoute.model : agent.selectedModel,
     reasoning_effort: nullableEffort(job?.request?.effort),
-    authority: job?.request?.write === true
-      ? "behavioral_write"
-      : job?.request?.write === false
-        ? "behavioral_read_only"
-        : "unknown",
-    delegation_mode: agent.delegationMode,
+    // Historical per-turn write intent is legacy Claude evidence; it can never
+    // widen, narrow, or answer for a frozen route authority.
+    authority: frozenRoute
+      ? frozenRoute.authority
+      : job?.request?.write === true
+        ? "behavioral_write"
+        : job?.request?.write === false
+          ? "behavioral_read_only"
+          : "unknown",
+    delegation_mode: frozenRoute ? frozenRoute.topology : agent.delegationMode,
     phase,
     started_at: startedAt,
     // Private or unknown activity cannot lend its timestamp to a public card.

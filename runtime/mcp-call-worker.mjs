@@ -35,10 +35,16 @@ try {
     /** @type {any} */ (error).code = "HARNESSDOCK_MCP_RESTART_REQUIRED";
     throw error;
   }
-  if (typeof runtimeModule.createClaudeRuntime !== "function") {
-    throw new Error("Checkout runtime/index.mjs does not export createClaudeRuntime().");
+  // The neutral factory is preferred; the bounded current-generation alias is
+  // still accepted so a same-generation checkout written before the neutral
+  // name existed keeps serving discovered Codex tasks without a restart.
+  const runtimeFactory = typeof runtimeModule.createAgentRuntime === "function"
+    ? runtimeModule.createAgentRuntime
+    : runtimeModule.createClaudeRuntime;
+  if (typeof runtimeFactory !== "function") {
+    throw new Error("Checkout runtime/index.mjs does not export createAgentRuntime().");
   }
-  const runtime = runtimeModule.createClaudeRuntime({
+  const runtime = runtimeFactory({
     ...workerData.context,
     abortSignal: abortController.signal,
   });
