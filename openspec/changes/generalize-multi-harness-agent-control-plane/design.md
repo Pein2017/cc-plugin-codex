@@ -411,6 +411,17 @@ The vertical slice passes only when:
 
 No real Claude call is required merely to prove the neutral core. Any real Claude regression witness requires separate existing test authorization and stops on account/auth/quota evidence.
 
+### 17. Declare worker-terminal completion notification for one shared external waker
+
+Cross-Harness workers otherwise trap the initiating Codex lead in poll loops: queued completion mail cannot wake an idle root, so an external waker daemon is the only component that can convert HarnessDock worker completion into a lead wake. This decision fixes the interface direction now and defers every implementation detail (declared 2026-08-17; no task in this change or in `add-opencode-explorer-driver` implements it).
+
+- Terminal settlement of any Driver's worker MUST already produce the durable completion/mailbox record; that record remains the sole source of truth. Waker notification is a derived, best-effort signal layered on top, and its failure or absence never affects settlement, leases, completion delivery, or receipts.
+- The control plane exposes exactly one outbound completion-notification seam that a single operator-configured external waker can consume. HarnessDock never implements its own wake daemon, polling loop, scheduler, or a second parallel wake channel.
+- The notification payload is bounded and secret-free: root, Agent, route lineage, terminal state, and the durable receipt locator; no transcripts, prompts, credentials, or native protocol payloads.
+- The seam is Harness-neutral Supervisor behavior, not per-Driver work. Drivers only report terminal evidence as they already must.
+
+The declaration exists so the Phase B public generation does not freeze a surface that would later require a breaking change to add completion-wake support.
+
 ## Risks / Trade-offs
 
 - [The v2 contract refactor regresses mature Claude behavior] → Implement a Claude LiveTurn façade behind captured fixtures, keep legacy projection explicit, and require parity tests before switching the supervisor.

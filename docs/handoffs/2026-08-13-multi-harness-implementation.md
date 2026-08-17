@@ -95,6 +95,29 @@ Before freezing any phase implementation, run `openspec list` again. The current
   Phase B may begin directly in this worktree without an intermediate install,
   restart, commit, or Plugin activation.
 
+## Takeover checkpoint — 2026-08-17
+
+- Supervision moved to a Claude Fable lead session (`fable-lead`); a
+  user-created `opus-worker` session is the bounded implementer. The user acts
+  as product owner; the lead owns technical calibration and may modify
+  planning artifacts.
+- Commits `bb2f0a9` (Phase A accepted candidate) and `e382947` (Phase B tasks
+  1–2) land the previously uncommitted accepted work with the public
+  `Pein2017` noreply identity. Takeover gates on the committed tree:
+  `npm run check` runtime **1222/1222** and integration **20/20** with clean
+  lint/typecheck; the former portable live-CLI skip now runs live and passes
+  after a takeover fix that checks only path-shaped binary-leak candidates
+  instead of the bare `opencode` name.
+- The operator OpenCode Server was restarted after the network restart via
+  `opencode serve --port 4096 --hostname 127.0.0.1`; health returned
+  `{"healthy":true,"version":"1.18.18"}`. The Server remains operator-owned;
+  Plugin code never manages its lifecycle.
+- Design decision 17 (single shared external completion-wake notification
+  seam, design-only) was added to the Phase A change per the 2026-08-17
+  token-efficiency handoff; no implementation task was added anywhere.
+- Phase B Task 3 is the active milestone; `codex-explorer` remains the only
+  readiness blocker and is owned by Task 3.
+
 ## Immediate next action and stop rule
 
 1. Bind Git/Serena to `/data/CoordExp/codex-harnessdock-dev`, inspect exact HEAD/status, and re-run `openspec list` before selecting work.
