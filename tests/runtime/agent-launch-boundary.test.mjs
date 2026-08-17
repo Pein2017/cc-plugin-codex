@@ -5,6 +5,8 @@ import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
+import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
+import { resolveDriverV2 } from "../../runtime/harness-registry.mjs";
 import { readUnreadCompletionEvents } from "../../runtime/completion-inbox.mjs";
 import {
   listStoredJobs,
@@ -12,6 +14,30 @@ import {
   resolveJobFile,
   writeJobFile,
 } from "../../runtime/job-store.mjs";
+
+/**
+ * Seam the route-time readiness observation, exactly as these suites already
+ * seam `assertReady`, so no test performs a real host probe.
+ */
+function seamRouteInspection(runtime) {
+  runtime.jobs.inspectRouteInstance = async (harnessId) => ({
+    driver: resolveDriverV2(harnessId, { env: runtime.jobs.env }),
+    inspections: [{
+      harnessId,
+      instanceKey: claudeCodeInstanceKey(runtime.jobs.env.CLAUDE_CONFIG_DIR),
+      readiness: "ready",
+      liveValidated: true,
+      maturity: "experimental",
+      detailCode: "ready",
+      routes: {
+        models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+        topologies: ["leaf", "native_orchestrator"],
+        interaction: "noninteractive_fixed_policy",
+      },
+    }],
+  });
+  return runtime;
+}
 
 const roots = /** @type {string[]} */ ([]);
 const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-launch-runtime-home-"));
@@ -33,7 +59,7 @@ function setup() {
   fs.mkdirSync(claudeConfigDir);
   fs.writeFileSync(envFile, `CLAUDE_CONFIG_DIR=${claudeConfigDir}\n`);
   roots.push(root);
-  const runtime = createAgentRuntime({
+  const runtime = seamRouteInspection(createAgentRuntime({
     cwd: workspace,
     envFile,
     env: {
@@ -41,7 +67,7 @@ function setup() {
       CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
-  });
+  }));
   return { runtime, workspace };
 }
 
@@ -77,11 +103,13 @@ describe("Agent durable launch boundary", () => {
     };
     await assert.rejects(
       runtime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "missing_model",
         message: "must not launch",
         write: false,
       }),
-      /requires an explicit model/
+      /spawn_agent model must be non-empty text/
     );
     assert.equal(readinessCalled, false);
     assert.equal(runtime.store.listAgents().length, 0);
@@ -101,8 +129,8 @@ describe("Agent durable launch boundary", () => {
       },
       {
         name: "sonnet orchestrator",
-        input: { delegation_mode: "claude_orchestrator" },
-        error: /requires exact model claude-opus-5 or claude-fable-5/,
+        input: { topology: "native_orchestrator" },
+        error: /claude-opus-5 or claude-fable-5/,
       },
       {
         name: "haiku write",
@@ -111,13 +139,15 @@ describe("Agent durable launch boundary", () => {
       },
       {
         name: "haiku orchestrator",
-        input: { model: "claude-haiku-4-5", delegation_mode: "claude_orchestrator" },
-        error: /requires exact model claude-opus-5 or claude-fable-5/,
+        input: { model: "claude-haiku-4-5", topology: "native_orchestrator" },
+        error: /claude-opus-5 or claude-fable-5/,
       },
       {
-        name: "fable alias orchestrator",
-        input: { model: "fable", delegation_mode: "claude_orchestrator" },
-        error: /requires exact model claude-opus-5 or claude-fable-5/,
+        // A model is stated in full now: an alias is a different identifier, not
+        // a shorthand the route resolves.
+        name: "alias model",
+        input: { model: "fable" },
+        error: /does not serve model/,
       },
       {
         name: "retired tool allowlist",
@@ -136,9 +166,11 @@ describe("Agent durable launch boundary", () => {
 
       await assert.rejects(
         runtime.spawnAgent({
+          topology: "leaf",
+          harness: "claude-code",
           task_name: `invalid_${testCase.name.replace(/[^a-z]+/g, "_")}`,
           message: "must not persist",
-          model: "sonnet",
+          model: "claude-sonnet-5",
           write: false,
           ...testCase.input,
         }),
@@ -222,9 +254,11 @@ describe("Agent durable launch boundary", () => {
     };
     await assert.rejects(
       spawnSetup.runtime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "incompatible_spawn",
         message: "must not persist",
-        model: "sonnet",
+        model: "claude-sonnet-5",
         write: false,
       }),
       /incompatible with CC runtime surface/,
@@ -338,6 +372,8 @@ describe("Agent durable launch boundary", () => {
       selectedModel: "claude-sonnet-5",
     });
     const jobId = "invalid-before-reconcile-job";
+
+
     runtime.store.reserveActivation(agent.agentId, jobId, { initial: true });
     const timestamp = new Date().toISOString();
     writeJobFile(workspace, jobId, {
@@ -395,7 +431,9 @@ describe("Agent durable launch boundary", () => {
   it("keeps slow readiness outside activation, then attaches a prepared fact before worker launch", async () => {
     const { runtime, workspace } = setup();
     const events = /** @type {string[]} */ ([]);
-    const baseStore = runtime.store;
+    // The public generation writes version-three Agents, so the launch path's
+    // durable owner is the version-three store; seam that one.
+    const baseStore = runtime.versionThreeStore();
     const jobs = /** @type {any} */ (runtime.jobs);
     const baseAttach = jobs.attachPreparedStart.bind(jobs);
     let observedJobId = null;
@@ -409,7 +447,7 @@ describe("Agent durable launch boundary", () => {
       events.push("ready:end");
       return readiness(runtime);
     };
-    runtime.store = {
+    const seamedStore = {
       ...baseStore,
       reserveActivation(target, jobId, options) {
         const prepared = readJobFile(workspace, jobId);
@@ -423,6 +461,7 @@ describe("Agent durable launch boundary", () => {
         return baseStore.reserveActivation(target, jobId, options);
       },
     };
+    runtime.versionThreeStore = () => seamedStore;
     jobs.attachPreparedStart = (prepared, agentId) => {
       events.push("attach");
       return baseAttach(prepared, agentId);
@@ -439,14 +478,20 @@ describe("Agent durable launch boundary", () => {
     };
 
     const result = await runtime.spawnAgent({
+      topology: "leaf",
+      harness: "claude-code",
       task_name: "boundary",
       message: "launch after readiness",
-      model: "sonnet",
+      model: "claude-sonnet-5",
       write: false,
     });
 
     assert.deepEqual(result, {
       agent_name: "/root/boundary",
+      harness: "claude-code",
+      // A version-three Agent states its Driver's own maturity, from the route
+      // it froze at creation.
+      route_maturity: "experimental",
       model: "claude-sonnet-5",
       reasoning_effort: null,
       authority: "behavioral_read_only",
@@ -488,9 +533,11 @@ describe("Agent durable launch boundary", () => {
 
     await assert.rejects(
       runtime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "prepare_race",
         message: "initial prompt",
-        model: "opus",
+        model: "claude-opus-5",
         write: false,
       }),
       /injected prepare failure/

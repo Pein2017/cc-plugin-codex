@@ -287,7 +287,10 @@ describe("native Claude Agent message history", () => {
 });
 
 describe("native Claude history is legacy-only", () => {
-  it("refuses a version-three Agent instead of guessing a Claude transcript", () => {
+  it("refuses a version-three Agent on a foreign Harness instead of guessing a Claude transcript", () => {
+    // Native Claude history is proven by the ROUTE, not by record age: the
+    // public generation writes version-three records for Claude Agents too, so
+    // the question this refusal answers is which Harness the route names.
     const fixture = setup("version_three");
     const future = {
       ...fixture.agent,
@@ -298,11 +301,11 @@ describe("native Claude history is legacy-only", () => {
     };
     assert.throws(
       () => resolveBoundClaudeTranscript(future),
-      /not a legacy Claude Code Agent/,
+      /bound to Harness fake-service; native Claude history is unavailable/,
     );
     assert.throws(
       () => readBoundClaudeAgentMessages(future),
-      /not a legacy Claude Code Agent/,
+      /bound to Harness fake-service; native Claude history is unavailable/,
     );
   });
 

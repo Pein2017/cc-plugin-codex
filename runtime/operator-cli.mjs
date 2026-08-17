@@ -15,6 +15,7 @@ function usage() {
   return [
     "Usage:",
     "  node runtime/operator-cli.mjs list-agents --all [--cwd <path>] [--env-file <path>] [--json]",
+    "  node runtime/operator-cli.mjs list-harnesses --all [--cwd <path>] [--env-file <path>] [--json]",
     "  node runtime/operator-cli.mjs record-disposition --delivery-token <opaque-token> --disposition <accepted_first_pass|accepted_after_correction|rejected_or_escalated|surface_failure> [--json]",
     "  node runtime/operator-cli.mjs usage-report --all [--days <positive-integer>] [--until <UTC-timestamp>] [--json]",
     "",
@@ -66,6 +67,34 @@ function listAgents(argv) {
   }, options.json);
 }
 
+/**
+ * Observe the admitted Harnesses and their instances. Inspection only: this
+ * neither spawns, routes, ranks, nor repairs anything, and it mirrors exactly
+ * what the model-facing listing reports.
+ */
+async function listHarnesses(argv) {
+  const { options, positionals } = parseArgs(argv, {
+    valueOptions: ["cwd", "env-file"],
+    booleanOptions: ["all", "json"],
+  });
+  if (!options.all || positionals.length > 0) {
+    throw new Error("Operator list-harnesses requires explicit --all and accepts no target.");
+  }
+  const runtime = createInternalClaudeRuntime({
+    cwd: options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd(),
+    envFile: options["env-file"] ?? null,
+    env: process.env,
+    operatorMode: true,
+    ownerRootId: "operator-diagnostic",
+  });
+  output({
+    workspaceRoot: runtime.cwd,
+    operatorMode: true,
+    readOnly: true,
+    harnesses: await runtime.inspectAdmittedHarnesses(),
+  }, options.json);
+}
+
 function recordDisposition(argv) {
   const { options, positionals } = parseArgs(argv, {
     valueOptions: ["delivery-token", "disposition"],
@@ -105,6 +134,10 @@ async function main() {
   }
   if (command === "list-agents") {
     listAgents(argv);
+    return;
+  }
+  if (command === "list-harnesses") {
+    await listHarnesses(argv);
     return;
   }
   if (command === "record-disposition") {

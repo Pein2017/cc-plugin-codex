@@ -1,6 +1,21 @@
 {
-  "generation": 5,
+  "generation": 6,
   "tools": [
+    {
+      "name": "list_harnesses",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
     {
       "name": "spawn_agent",
       "inputSchema": {
@@ -18,25 +33,36 @@
             "type": "string",
             "minLength": 1
           },
+          "harness": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "opencode"
+            ],
+            "description": "Required Harness this Agent runs on. There is no default Harness."
+          },
           "model": {
             "type": "string",
             "enum": [
+              "claude-fable-5",
               "claude-haiku-4-5",
-              "claude-sonnet-5",
               "claude-opus-5",
-              "claude-fable-5"
-            ]
+              "claude-sonnet-5",
+              "opencode-go/deepseek-v4-flash"
+            ],
+            "description": "Required full model identifier admitted by the stated Harness."
+          },
+          "topology": {
+            "type": "string",
+            "enum": [
+              "leaf",
+              "native_orchestrator"
+            ],
+            "description": "Required topology: leaf runs the task itself; native_orchestrator is admitted only by a Harness whose route proves it."
           },
           "write": {
             "type": "boolean",
             "description": "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
-          },
-          "delegation_mode": {
-            "type": "string",
-            "enum": [
-              "leaf",
-              "claude_orchestrator"
-            ]
           },
           "reasoning_effort": {
             "type": "string",
@@ -52,7 +78,9 @@
         "required": [
           "task_name",
           "message",
+          "harness",
           "model",
+          "topology",
           "write"
         ],
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -117,10 +145,6 @@
               "xhigh",
               "max"
             ]
-          },
-          "write": {
-            "description": "Behavioral authority: false is read/review-only, true permits task-scoped writes, omitted inherits. Process access is unchanged.",
-            "type": "boolean"
           }
         },
         "required": [

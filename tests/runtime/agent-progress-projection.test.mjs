@@ -84,6 +84,8 @@ describe("Agent progress projection", () => {
     assert.deepEqual(first, second);
     assert.deepEqual(first.agents[0], {
       agent_name: agent.path,
+      harness: "claude-code",
+      route_maturity: null,
       model: "claude-sonnet-5",
       reasoning_effort: null,
       authority: "unknown",
@@ -130,6 +132,8 @@ describe("Agent progress projection", () => {
     const foreignBefore = readJobFile(workspace, "cc-progress");
     assert.deepEqual(runtime.listAgents().agents[0], {
       agent_name: agent.path,
+      harness: "claude-code",
+      route_maturity: null,
       model: "claude-sonnet-5",
       reasoning_effort: null,
       authority: "unknown",

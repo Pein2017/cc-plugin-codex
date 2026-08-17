@@ -25,6 +25,7 @@ import {
 import {
   AGENT_RECORD_VERSION_V3,
   FUTURE_WRITE_GENERATION,
+  JOB_STATE_VERSION_V3,
   assertUnderstoodJobRecord,
   assertVersionThreeWriteAllowed,
   isUnderstoodJobRecord,
@@ -668,9 +669,37 @@ function readRegistry(cwd, rootThreadId, create = false) {
  * never change one. Version three is owned by the dependent multi-Harness
  * generation, so the current public generation is fenced out of it.
  */
+/**
+ * Whether one version-three Agent's turns run on the version-one supervisor.
+ *
+ * The public generation gives every new Agent a version-three identity record
+ * while keeping two execution machines underneath it, and the Claude Harness
+ * keeps the version-one supervisor because that machinery IS the Claude
+ * contract: the job record, its stream-json progress, the exact-child
+ * acceptance fence, and the resumable completion its adapter classifies.
+ *
+ * `runtime/harness-registry.mjs` states this rule for the whole runtime
+ * (`harnessExecutionLifecycle`); this restates it in the one term the store
+ * already knows, so the durable layer takes on no dependency on the Driver
+ * graph. A test pins the two statements together.
+ */
+function versionOneLifecycleRecord(agent) {
+  return agent?.version === AGENT_RECORD_VERSION_V3 &&
+    agent?.route?.harnessId === CLAUDE_LEGACY_HARNESS_ID;
+}
+
 function isRecordWritableBy(record, generation) {
   if (record?.version !== AGENT_RECORD_VERSION_V3) return true;
-  return generation === FUTURE_WRITE_GENERATION;
+  if (generation === FUTURE_WRITE_GENERATION) return true;
+  // The public generation now states a whole route on every spawn, so it is the
+  // generation that CREATES version-three Agents -- and for a route that runs on
+  // the version-one supervisor it also owns the whole turn lifecycle: the
+  // activation, its recovery, its reconciliation, and its terminal projection.
+  // Fencing it out of those records would fence an Agent away from the only
+  // machine that runs it. A version-three-worker route stays fenced: those
+  // records are owned by the detached worker, and the public seam may read them
+  // but never write one.
+  return versionOneLifecycleRecord(record);
 }
 
 /**
@@ -708,6 +737,10 @@ function assertGenerationFence(before, after, generation) {
  */
 function assertVersionThreeLifecycleUnavailable(agent, operation) {
   if (agent?.version !== AGENT_RECORD_VERSION_V3) return agent;
+  // A version-three record whose route runs the version-one supervisor uses
+  // that supervisor's own lifecycle transitions. Refusing them here would fence
+  // an Agent out of the only machine that can run it.
+  if (versionOneLifecycleRecord(agent)) return agent;
   throw new Error(
     `Agent ${agent.path ?? agent.agentId} is a version-three record and the version-three ` +
     `turn lifecycle is not implemented in this generation; ${operation} is refused.`
@@ -730,6 +763,13 @@ function assertVersionThreeLifecycleUnavailable(agent, operation) {
  */
 function assertVersionThreeLifecycleOwned(agent, generation, operation) {
   if (agent?.version !== AGENT_RECORD_VERSION_V3) return false;
+  // A version-three record whose route runs the version-one supervisor is
+  // created and driven by the generation that states its route, so its
+  // activation and turn transitions belong to that generation too. The
+  // structural fence still decides whether this particular generation may write
+  // this particular record; this only refuses a version-three-WORKER record to
+  // a generation that does not own the version-three turn machine.
+  if (versionOneLifecycleRecord(agent)) return true;
   assertVersionThreeWriteAllowed(
     generation,
     `Version-three Agent ${agent.path ?? agent.agentId} ${operation}`
@@ -1777,15 +1817,18 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
     const jobId = normalizeJobId(job.id);
     const target = assertText(job.agentId, "Agent-linked job agent ID");
     const agentBefore = resolveTarget(target);
-    // A version-three Agent is finalized only by a receipt that proves this
-    // exact frozen route, and only from the generation that owns version-three
-    // turn semantics. Both checks precede any session binding or lifecycle
+    // Which terminal projection applies is decided by the RECEIPT's durable
+    // generation, not by the Agent record's version. The two are independent
+    // under the hybrid: a version-three Claude Agent's turns settle as
+    // version-one supervisor jobs, and projecting those through the
+    // version-three receipt path would demand a `normalizedTerminalResult` they
+    // never carry. A version-three receipt still additionally requires a
+    // version-three Agent and the generation that owns version-three turn
+    // semantics, and both checks precede any session binding or lifecycle
     // advance.
-    const versionThreeTerminal = assertVersionThreeLifecycleOwned(
-      agentBefore,
-      generation,
-      "terminal projection"
-    );
+    const versionThreeTerminal = jobDurableStateVersion(job) === JOB_STATE_VERSION_V3
+      ? assertVersionThreeLifecycleOwned(agentBefore, generation, "terminal projection")
+      : false;
     if (versionThreeTerminal) {
       // `assertVersionThreeJobIdentity()` requires durable state version three
       // exactly. `assertUnderstoodJobRecord()` deliberately still refuses that
@@ -1793,15 +1836,36 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
       // one seam, gated on both a version-three Agent and the internal write
       // generation, is the only place a version-three receipt is owned.
       assertVersionThreeJobIdentity(job, agentBefore);
+    } else if (agentBefore.version === AGENT_RECORD_VERSION_V3) {
+      // A version-one/two receipt may finalize a version-three Agent only when
+      // that Agent's route runs the version-one supervisor -- the machine that
+      // produced the receipt -- and only when the receipt names the very
+      // Harness the route froze. A receipt from any other Harness has no
+      // standing to speak for this route, whatever its durable generation.
+      if (!versionOneLifecycleRecord(agentBefore)) {
+        throw new Error(
+          `Version-three Agent ${agentBefore.path} runs no version-one turn; ` +
+          `job ${jobId} cannot finalize it.`
+        );
+      }
+      const receiptHarnessId = job.harnessId ?? CLAUDE_LEGACY_HARNESS_ID;
+      if (receiptHarnessId !== agentBefore.route.harnessId) {
+        throw new Error(
+          `Version-three Agent ${agentBefore.path} is frozen to Harness ${agentBefore.route.harnessId}; ` +
+          `a ${receiptHarnessId} receipt is rejected.`
+        );
+      }
+      assertUnderstoodJobRecord(job, "project");
     } else {
       // A receipt from a durable generation this runtime does not own cannot be
       // projected onto an Agent: its terminal, settlement, and session meanings
       // are defined elsewhere.
       assertUnderstoodJobRecord(job, "project");
     }
-    // A version-three Agent binds no legacy Claude session: its continuation
-    // pointer is the Driver-validated envelope its own receipt carries, and
-    // `bindSession()` stays refused for version-three records.
+    // A version-three RECEIPT binds no legacy Claude session: its continuation
+    // pointer is the Driver-validated envelope the receipt itself carries. A
+    // version-one receipt binds one exactly as it always did, whatever version
+    // the Agent record is, because that binding is the supervisor's own fact.
     const observedSessionId = versionThreeTerminal ? null : jobSessionId(job);
     let sessionBinding = null;
     let sessionBindingError = null;

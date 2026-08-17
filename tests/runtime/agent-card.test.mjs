@@ -20,6 +20,8 @@ describe("Agent Card", () => {
       publicProgress: { activity: "tool", updatedAt: "2026-08-07T00:00:05.000Z" },
     }, { now: new Date("2026-08-07T00:00:09.900Z") }), {
       agent_name: "/root/card",
+      harness: null,
+      route_maturity: null,
       model: "claude-haiku-4-5",
       reasoning_effort: "low",
       authority: "behavioral_read_only",
@@ -42,6 +44,8 @@ describe("Agent Card", () => {
     assert.equal(hook.authority, "unknown");
     assert.deepEqual(projectAgentCard(agent, null, { now: new Date("2026-08-07T00:00:10.000Z") }), {
       agent_name: "/root/card",
+      harness: null,
+      route_maturity: null,
       model: "claude-haiku-4-5",
       reasoning_effort: null,
       authority: "unknown",
@@ -120,6 +124,8 @@ describe("Version-three Agent Card", () => {
     }, { now: new Date("2026-08-13T00:00:08.000Z") });
     assert.deepEqual(card, {
       agent_name: "/root/future_card",
+      harness: null,
+      route_maturity: "experimental",
       model: "fake-service-large",
       // Reasoning effort stays turn-scoped in every generation.
       reasoning_effort: "high",

@@ -295,9 +295,14 @@ describe("Harness Driver contract", () => {
         new RegExp(`spawn_agent does not accept ${key}`),
       );
     }
+    // `harness` is a route decision in the multi-Harness generation: a caller
+    // must state which admitted Harness its Agent runs on, and that statement is
+    // validated against the static table rather than refused here. Naming the
+    // implementation behind that Harness stays refused.
+    assert.doesNotThrow(() => assertNoHarnessImplementationSelector({ harness: "opencode" }, "spawn_agent"));
     assert.throws(
-      () => assertNoHarnessImplementationSelector({ harness: "other-exec" }, "spawn_agent"),
-      /spawn_agent does not accept harness/,
+      () => assertNoHarnessImplementationSelector({ harness_id: "other-exec" }, "spawn_agent"),
+      /spawn_agent does not accept harness_id/,
     );
     assert.doesNotThrow(() => assertNoHarnessImplementationSelector({ model: "opus" }, "spawn_agent"));
     for (const key of ["CC_HARNESS_ID", "CC_HARNESS_DRIVER_MODULE", "CC_HARNESS_CAPABILITIES"]) {
@@ -1321,7 +1326,7 @@ describe("Driver Contract v2 registry and scope", () => {
     // implements on Contract v2 -- now the wrapped Claude Driver, and nothing
     // else. A fixture can never register itself, and admission is not
     // activation: no public lifecycle path resolves a v2 Driver here.
-    assert.deepEqual(ADMITTED_DRIVER_V2_HARNESS_IDS, ["claude-code"]);
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
     assert.throws(() => resolveDriverV2("fake-service"), /Unknown Harness fake-service/);
     assert.equal(resolveDriverV2("claude-code").contractVersion, 2);
     assert.equal(admitDriverV2(service), service);

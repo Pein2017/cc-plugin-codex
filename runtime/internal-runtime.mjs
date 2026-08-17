@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveRuntimeEnvironment } from "./environment.mjs";
+import { runDetachedVersionThreeTurn } from "./v3-worker-entry.mjs";
 import {
   HARNESS_CAPABILITY_NAMES,
   assertHarnessCapability,
@@ -20,8 +21,18 @@ import {
   currentGenerationHarnessId,
   legacyRecordHarnessId,
 } from "./claude-legacy-adapter.mjs";
-import { validateHarnessTurnResult } from "./harness-contract.mjs";
-import { assertStatedHarnessId, resolveHarnessDriver } from "./harness-registry.mjs";
+import {
+  admittedDriverDescription,
+  validateHarnessTurnResult,
+  validateInstanceInspection,
+} from "./harness-contract.mjs";
+import {
+  ADMITTED_GENERATION_HARNESS_IDS,
+  assertStatedHarnessId,
+  createDriverScope,
+  resolveDriverV2,
+  resolveHarnessDriver,
+} from "./harness-registry.mjs";
 import {
   ACTIVE_JOB_STATUSES,
   HARNESS_QUEUED_JOB_STATUS,
@@ -40,6 +51,7 @@ import {
   reserveSessionLease,
   resolveJobsDirForObservation,
   resolveJobFile,
+  ensureStateDir as ensureJobStateDir,
   resolveJobLogFile,
   transitionJob,
   writeJobFile,
@@ -393,6 +405,14 @@ function resultSessionId(job) {
   return job?.threadId ?? job?.result?.sessionId ?? job?.request?.resumeSessionId ?? null;
 }
 
+function assertWorkerIdentityText(value, label) {
+  const text = String(value ?? "").trim();
+  if (!text || !/^[\w.:-]+$/.test(text)) {
+    throw new Error(`${label} must be bounded identity text.`);
+  }
+  return text;
+}
+
 function assertJobId(value) {
   const id = String(value ?? "").trim();
   if (!id) throw new Error("A Claude job id is required.");
@@ -494,6 +514,29 @@ function pendingPublicProgress(cwd, ownerRootId, jobId = null, progressJobIds = 
       Date.parse(left.progress.updatedAt ?? 0) - Date.parse(right.progress.updatedAt ?? 0) ||
       left.jobId.localeCompare(right.jobId)
     )[0] ?? null;
+}
+
+/**
+ * The bounded facts one logical instance publishes to a model-facing listing.
+ *
+ * Everything here is already closed by the Driver contract: a redacted instance
+ * key, a closed readiness and detail code, a maturity, and the Driver's own
+ * bounded route facts. Capacity is surfaced as its own field because a caller
+ * needs to know a route serves one turn at a time; it is read from the route
+ * facts rather than computed, and an absent capacity stays null rather than
+ * defaulting to a number.
+ */
+function publicHarnessInstance(inspection) {
+  const routes = inspection.routes ?? null;
+  return Object.freeze({
+    instance: inspection.instanceKey,
+    readiness: inspection.readiness,
+    detail: inspection.detailCode,
+    live_validated: inspection.liveValidated,
+    maturity: inspection.maturity,
+    capacity: routes && Number.isSafeInteger(routes.capacity) ? routes.capacity : null,
+    routes: routes === null ? null : Object.freeze({ ...routes }),
+  });
 }
 
 class ClaudeRuntime {
@@ -609,9 +652,123 @@ class ClaudeRuntime {
     return patchJob(this.cwd, job.id, { ownerRootId: this.ownerRootId }) ?? job;
   }
 
+  /**
+   * Observe every admitted Harness through its version-two Driver.
+   *
+   * This is inspection, not dispatch: it creates no Agent, no session, and no
+   * durable record, it starts and repairs nothing, and it neither ranks,
+   * recommends, nor selects. Each Harness answers for its own logical instances;
+   * one Harness failing to answer never hides the others.
+   */
+  /**
+   * The validated version-two inspections of one admitted Harness, for route
+   * acceptance.
+   *
+   * This is the runtime's single seam for a route-time readiness observation, so
+   * a caller, a test, or a later generation replaces one function rather than
+   * reaching into a Driver. It starts, repairs, and creates nothing.
+   */
+  async inspectRouteInstance(harnessId) {
+    const driver = resolveDriverV2(assertStatedHarnessId(harnessId, "Route instance inspection"), {
+      env: this.env,
+    });
+    const inspections = await driver.inspectInstances(createDriverScope({
+      driver,
+      purpose: "inspect",
+      rootId: this.ownerRootId,
+      workspaceRoot: this.cwd,
+      env: this.env,
+    }));
+    // One host observation per route acceptance. A Harness whose turns run on
+    // the version-one supervisor needs that generation's readiness receipt too,
+    // and its Driver can state it from the observation it just made rather than
+    // making the same (subprocess-shaped) observation a second time. A Driver
+    // that offers none simply returns null and the caller observes for itself.
+    const offered = typeof driver.launchPreflightFromInspection === "function"
+      ? driver.launchPreflightFromInspection(this.cwd)
+      : null;
+    return Object.freeze({
+      driver,
+      inspections: Object.freeze(
+        (Array.isArray(inspections) ? inspections : [])
+          .map((inspection) => validateInstanceInspection(inspection, driver))
+      ),
+      // The receipt is consumed by the version-one launch path, so it is
+      // wrapped with the version-one Driver's own identity, exactly as
+      // `assertReady()` would have produced it.
+      launchReadiness: offered == null
+        ? null
+        : this.readinessFromPreflight(this.driverForHarness(driver.harnessId), offered),
+    });
+  }
+
+  async inspectAdmittedHarnesses() {
+    const records = [];
+    for (const harnessId of ADMITTED_GENERATION_HARNESS_IDS) {
+      records.push(Object.freeze(await this.inspectAdmittedHarness(harnessId)));
+    }
+    return Object.freeze(records);
+  }
+
+  async inspectAdmittedHarness(harnessId) {
+    let driver;
+    try {
+      driver = resolveDriverV2(harnessId, { env: this.env });
+    } catch {
+      // A Harness this checkout admits but cannot construct here is reported as
+      // unavailable with a closed reason; the underlying message may name
+      // configuration and never reaches a model-facing receipt.
+      return { harness: harnessId, unavailable: "driver_unavailable", instances: [] };
+    }
+    const description = admittedDriverDescription(driver);
+    const scope = createDriverScope({
+      driver,
+      purpose: "inspect",
+      rootId: this.ownerRootId,
+      workspaceRoot: this.cwd,
+      env: this.env,
+    });
+    let inspections;
+    try {
+      inspections = await driver.inspectInstances(scope);
+    } catch {
+      return {
+        harness: driver.harnessId,
+        driver_version: driver.driverVersion,
+        maturity: description.maturity,
+        capability_schema_version: description.capabilitySchemaVersion,
+        unavailable: "inspection_failed",
+        instances: [],
+      };
+    }
+    return {
+      harness: driver.harnessId,
+      driver_version: driver.driverVersion,
+      maturity: description.maturity,
+      capability_schema_version: description.capabilitySchemaVersion,
+      instances: Object.freeze(
+        (Array.isArray(inspections) ? inspections : []).map((inspection) =>
+          publicHarnessInstance(validateInstanceInspection(inspection, driver))
+        )
+      ),
+    };
+  }
+
   readiness(harnessId = this.generationHarnessId) {
     const driver = this.driverForHarness(harnessId);
-    const preflight = driver.preflight({ cwd: this.cwd, env: this.env });
+    return this.readinessFromPreflight(driver, driver.preflight({ cwd: this.cwd, env: this.env }));
+  }
+
+  /**
+   * Wrap one Driver preflight in this runtime's own scope facts.
+   *
+   * The scope half -- working directory, native configuration, environment
+   * receipt, source root, owner root, state protection -- belongs to this
+   * runtime, not to any Driver, so it is added in exactly one place whether the
+   * preflight came from a fresh observation or from the one a route acceptance
+   * already made.
+   */
+  readinessFromPreflight(driver, preflight) {
     return {
       ...preflight,
       harness: {
@@ -1095,9 +1252,94 @@ class ClaudeRuntime {
     }
   }
 
-  async runWorker(jobId) {
+  /**
+   * Hand one accepted version-three turn to a real detached worker process.
+   *
+   * This mirrors the existing detached-worker contract exactly -- the same
+   * `cli.mjs worker` entry, the same detached/stdio/windowsHide options, the
+   * same spawn observation -- and differs only in what it hands over: four
+   * identifiers, never state. It writes no version-one job record, because a
+   * version-three turn's durable owner is the version-three job store and a
+   * second lifecycle for one native turn could publish a second completion.
+   *
+   * A process that never proves it spawned is terminated and reported, so the
+   * caller can roll its activation back; a process that dies later is
+   * reconciliation's business, not this call's.
+   */
+  async launchVersionThreeWorker(options) {
+    const ownerRootId = this.assertOwnerRoot();
+    const agentId = assertWorkerIdentityText(options.agentId, "Version-three worker agent ID");
+    const jobId = assertJobId(options.jobId);
+    const attemptId = assertWorkerIdentityText(options.attemptId, "Version-three worker attempt ID");
+    ensureJobStateDir(this.cwd);
+    const logFile = resolveJobLogFile(this.cwd, jobId);
+    const args = [
+      CLI_PATH,
+      "worker",
+      "--cwd",
+      this.cwd,
+      "--job-id",
+      jobId,
+      "--agent-id",
+      agentId,
+      "--attempt-id",
+      attemptId,
+    ];
+    // Turn-scoped effort is the only turn option this generation admits, and it
+    // is a closed enum: it travels as one argument, never as free-form state.
+    const effort = options.turnOptions?.effort ?? null;
+    if (effort) args.push("--reasoning-effort", String(effort));
+    const workerLog = this.launchDependencies.createWorkerLogStdio(logFile);
+    let child = null;
+    try {
+      child = this.launchDependencies.spawn(process.execPath, args, {
+        cwd: this.cwd,
+        env: this.env,
+        detached: true,
+        stdio: /** @type {import("node:child_process").StdioOptions} */ (workerLog.stdio),
+        windowsHide: true,
+      });
+      const observer = observeChild(child, () => {});
+      const spawnOutcome = await observer.waitForSpawn();
+      if (spawnOutcome.kind !== "spawned") {
+        try { child.kill("SIGTERM"); } catch {}
+        throw new Error(
+          `Version-three worker for ${jobId} did not prove spawn; nothing was submitted.`
+        );
+      }
+      try { child.unref(); } catch {}
+      appendLogLine(logFile, "Queued for detached version-three execution.");
+      return Object.freeze({
+        jobId,
+        agentId,
+        attemptId,
+        ownerRootId,
+        status: "queued",
+        workspaceRoot: this.cwd,
+        logFile,
+      });
+    } finally {
+      try { workerLog.close?.(); } catch {}
+    }
+  }
+
+  async runWorker(jobId, options = {}) {
     const ownerRootId = this.assertOwnerRoot();
     const id = assertJobId(jobId);
+    // A version-three handoff states its Agent and attempt on the command line
+    // and carries no version-one job record at all.
+    if (options.agentId || options.attemptId) {
+      return runDetachedVersionThreeTurn({
+        cwd: this.cwd,
+        env: this.env,
+        ownerRootId,
+        agentId: assertWorkerIdentityText(options.agentId, "Version-three worker agent ID"),
+        jobId: id,
+        attemptId: assertWorkerIdentityText(options.attemptId, "Version-three worker attempt ID"),
+        turnOptions: options.effort ? { effort: options.effort } : null,
+        signal: options.signal ?? null,
+      });
+    }
     const stored = readJobFile(this.cwd, id);
     if (!stored) throw new Error(`No stored Claude job found for ${id}.`);
     if (jobOwnerRootId(stored) !== ownerRootId) {

@@ -9,6 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
+import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
+import { CLAUDE_CODE_HARNESS_ID, delegationModeForTopology } from "./claude-code-driver.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
   isLocallyCurrentOAuthCredential,
@@ -22,10 +24,24 @@ import {
 } from "./completion-inbox.mjs";
 import {
   HARNESS_CAPABILITY_NAMES,
+  ROUTE_CAPABILITY_SCHEMA_VERSION,
+  assertAdmittedInteraction,
   assertHarnessCapability,
   validateHarnessCapabilities,
 } from "./harness-capabilities.mjs";
-import { assertNoHarnessImplementationSelector } from "./harness-registry.mjs";
+import {
+  validateCanonicalRoute,
+  validateInstanceInspection,
+} from "./harness-contract.mjs";
+import {
+  ADMITTED_GENERATION_HARNESS_IDS,
+  assertNoHarnessImplementationSelector,
+  assertStatedHarnessId,
+  harnessExecutionLifecycle,
+  createDriverScope,
+  harnessAdmitsModel,
+  resolveDriverV2,
+} from "./harness-registry.mjs";
 import { createInternalClaudeRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
@@ -464,6 +480,34 @@ function requeuePreClaudeMailboxMessage(message, jobId) {
   };
 }
 
+/**
+ * The closed reason one accepted route does not admit an operation, or `null`
+ * when it does. Only a version-three Agent carries a route capability snapshot;
+ * a legacy record keeps its existing version-one capability handling, so this
+ * never changes what a Claude Agent created before this generation can do.
+ */
+/**
+ * The version-one capability snapshot to hold one Agent to, or `null` when the
+ * question has already been answered by a frozen route.
+ *
+ * A version-three Agent states its capabilities in the route capability
+ * vocabulary, which `unsupportedRouteOperation()` has already read by the time
+ * any caller reaches this. Re-asking in the version-one vocabulary would
+ * validate a snapshot that record deliberately does not carry.
+ */
+function versionOneCapabilitySnapshot(agent, driver) {
+  if (agent?.version === 3) return null;
+  return agent?.capabilities ?? driver?.capabilities ?? null;
+}
+
+function unsupportedRouteOperation(agent, capability, admitted) {
+  const values = agent?.version === 3 ? agent?.route?.capabilities?.values : null;
+  if (!values) return null;
+  const value = values[capability];
+  if (typeof value !== "string" || admitted.includes(value)) return null;
+  return { operation: capability, value, harness: agent.harnessId ?? null };
+}
+
 class AgentRuntime {
   constructor(options = {}) {
     this.jobs = createInternalClaudeRuntime(options);
@@ -482,6 +526,39 @@ class AgentRuntime {
         instanceKey: this.jobs.harnessInstance.instanceKey,
       },
     });
+  }
+
+  /**
+   * The store that writes version-three Agents. Version three is the record
+   * shape whose whole route -- Harness, instance, model, topology, authority,
+   * Driver version, capability schema -- is immutable from creation, which is
+   * exactly what an explicitly stated route deserves.
+   */
+  versionThreeStore() {
+    return createAgentStore({
+      cwd: this.cwd,
+      ownerRootId: this.ownerRootId,
+      writeGeneration: FUTURE_WRITE_GENERATION,
+    });
+  }
+
+  /**
+   * The durable store that owns one Agent's record generation.
+   *
+   * A version-three record is fenced out of the public generation's own store,
+   * so every mutation of one -- a mailbox entry, an activation, a terminal
+   * projection -- has to be made through the store that states the write
+   * generation version three belongs to. Reads are unfenced and stay on the
+   * runtime's own store.
+   *
+   * Store routing keys on the RECORD VERSION because it is about the write
+   * generation a record belongs to. Turn steering keys on the Harness's
+   * EXECUTION LIFECYCLE instead, because that is about which machine owns the
+   * running turn. The two questions have different answers for the same Agent
+   * and must never be collapsed into one test.
+   */
+  storeForAgent(agent) {
+    return agent?.version === 3 ? this.versionThreeStore() : this.store;
   }
 
   storeForDriver(driver) {
@@ -864,8 +941,12 @@ class AgentRuntime {
     initial = false,
     removableMessageId = null,
   } = {}) {
+    // The rollback has to be written by the store that owns the record's write
+    // generation; the public generation's own store is fenced out of a
+    // version-three record and would silently leave a half-created Agent.
+    const store = this.storeForAgent(previous ?? this.store.readAgent(agentId));
     try {
-      this.store.updateAgent(agentId, (agent) => ({
+      store.updateAgent(agentId, (agent) => ({
         ...agent,
         activeJobId: agent.activeJobId === jobId ? null : agent.activeJobId,
         status: previous.status,
@@ -890,10 +971,123 @@ class AgentRuntime {
       // An initial activation that failed before its turn was established may
       // have received sender messages. Let the store delete only an empty
       // pending-init record; queued messages are the durable reason to keep it.
-      if (initial) this.store.rollbackReservation(agentId, { removableMessageId });
+      if (initial) store.rollbackReservation(agentId, { removableMessageId });
     } catch {
       // A durable job may already exist. Later reconciliation is authoritative.
     }
+  }
+
+  /**
+   * Create one version-three Agent on an accepted route and hand its first turn
+   * to a detached worker.
+   *
+   * The order is the durable one: the Agent identity and its first mailbox
+   * message exist before the activation is reserved, the activation exists
+   * before the worker is launched, and the worker owns the launch claim,
+   * submission fence, instance lease, and settlement from there. If the worker
+   * cannot be handed the turn, the activation and its unread first message are
+   * rolled back so nothing half-exists.
+   */
+  async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions }) {
+    const store = this.versionThreeStore();
+    const agent = store.createAgent({
+      task_name: taskName,
+      description,
+      route: accepted.route,
+      initialMessage: message,
+    });
+    const initialMessage = store.listMessages(agent.agentId)[0];
+    const activation = store.reserveActivation(agent.agentId, jobId, { initial: true });
+    if (!activation.reserved) {
+      store.rollbackReservation(agent.agentId, { removableMessageId: initialMessage?.messageId });
+      throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
+    }
+    const attemptId = generateJobId("attempt");
+    try {
+      await this.jobs.launchVersionThreeWorker({
+        agentId: agent.agentId,
+        jobId,
+        attemptId,
+        turnOptions,
+      });
+    } catch (error) {
+      // Nothing native was submitted: the worker never proved it started, so
+      // this rolls back exactly what it reserved.
+      this.rollbackActivation(agent.agentId, jobId, agent, {
+        initial: true,
+        removableMessageId: initialMessage?.messageId,
+      });
+      throw error;
+    }
+    return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId));
+  }
+
+  /**
+   * Accept one fully stated route before anything durable exists.
+   *
+   * Every field is the caller's explicit decision: the Harness, the full model
+   * identifier, the topology, and the behavioral authority. Nothing here
+   * defaults, infers, aliases, or remembers a previous choice, and no Harness is
+   * preferred. The Driver that owns the stated Harness decides whether the route
+   * is admissible; a Harness with no ready logical instance, a model that
+   * Harness does not serve, a topology it does not admit, an authority it
+   * refuses, or a capability snapshot needing an approval broker all fail here,
+   * before any readiness side effect, durable write, session, or native turn.
+   */
+  async acceptStatedRoute(input, label) {
+    const harnessId = assertText(input.harness, `${label} harness`);
+    if (!ADMITTED_GENERATION_HARNESS_IDS.includes(harnessId)) {
+      throw new Error(
+        `${label} states Harness ${JSON.stringify(harnessId)}; this runtime admits only ` +
+        `${ADMITTED_GENERATION_HARNESS_IDS.join(", ")}. There is no default Harness.`
+      );
+    }
+    const model = assertText(input.model, `${label} model`);
+    const topology = assertText(input.topology, `${label} topology`);
+    if (typeof input.write !== "boolean") {
+      throw new Error(`${label} requires explicit boolean write authority.`);
+    }
+    if (!harnessAdmitsModel(harnessId, model)) {
+      throw new Error(
+        `Harness ${harnessId} does not serve model ${JSON.stringify(model)}. A model is stated in full and ` +
+        `is never aliased, completed, or substituted.`
+      );
+    }
+    // One route-time readiness observation, through the runtime's own seam.
+    const observed = await this.jobs.inspectRouteInstance(harnessId);
+    const driver = observed.driver;
+    const validated = [...observed.inspections];
+    const inspection = validated.find((candidate) => candidate.readiness === "ready");
+    if (!inspection) {
+      const observed = validated
+        .map((candidate) => `${candidate.readiness}/${candidate.detailCode}`)
+        .join(", ") || "none";
+      throw new Error(
+        `Harness ${harnessId} has no ready logical instance (${observed}). Nothing is started, repaired, or ` +
+        `substituted for it.`
+      );
+    }
+    const request = {
+      harnessId,
+      model,
+      topology,
+      authority: input.write ? "behavioral_write" : "behavioral_read_only",
+    };
+    const route = validateCanonicalRoute(driver.validateRoute(request, inspection), {
+      driver,
+      inspection,
+      request,
+    });
+    assertAdmittedInteraction(route.capabilities, `Harness ${harnessId} route`);
+    return Object.freeze({
+      driver,
+      inspection,
+      // The version-one launch receipt this same observation produced, when the
+      // owning Driver offered one. It is what keeps a spawn to ONE host
+      // observation instead of two.
+      launchReadiness: observed.launchReadiness ?? null,
+      route: Object.freeze({ ...route, capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION }),
+    });
   }
 
   async spawnAgent(inputValue) {
@@ -901,6 +1095,7 @@ class AgentRuntime {
     assertNoHarnessImplementationSelector(input, "spawn_agent");
     for (const key of [
       "agent_type",
+      "delegation_mode",
       "service_tier",
       "session_id",
       "claude_session_id",
@@ -918,32 +1113,62 @@ class AgentRuntime {
       throw new Error("spawn_agent task_name must match [a-z0-9_]+.");
     }
     const message = assertText(input.message, "spawn_agent message");
-    if (typeof input.write !== "boolean") {
-      throw new Error("spawn_agent requires explicit boolean write intent.");
+    // The whole route is the caller's explicit decision, accepted before any
+    // readiness side effect or durable Agent reservation exists.
+    const accepted = await this.acceptStatedRoute(input, "spawn_agent");
+    const jobId = generateJobId("cc-agent");
+    // Reasoning effort is Driver-discriminated: the Driver that owns the accepted
+    // route decides whether one is admitted at all, and it decides here, before
+    // anything durable exists. A route that proves no effort refuses it.
+    accepted.driver.prepareTurn({
+      route: accepted.route,
+      taskInput: message,
+      turnOptions: input.reasoning_effort == null ? null : { effort: input.reasoning_effort },
+      turnId: jobId,
+    });
+    if (harnessExecutionLifecycle(accepted.route.harnessId) === "version_three_worker") {
+      return await this.spawnVersionThreeAgent({
+        accepted,
+        taskName,
+        description: input.description,
+        message,
+        jobId,
+        turnOptions: input.reasoning_effort == null ? null : { effort: input.reasoning_effort },
+      });
     }
-    // Validate the caller-owned model decision before readiness checks or any
-    // durable Agent reservation. There is no implicit or fallback model.
-    const requestedModel = requiredSpawnModel(input);
-    const driver = this.jobs.driverForHarness(this.jobs.generationHarnessId);
-    const executionOptions = validatedInternalOptions(
-      driver,
-      { ...input, model: requestedModel },
-    );
+    const driver = this.jobs.driverForHarness(accepted.route.harnessId);
+    const executionOptions = validatedInternalOptions(driver, {
+      ...input,
+      model: accepted.route.model,
+      // The legacy execution profile speaks delegation modes; the stated
+      // topology is translated through the owning Driver's own mapping.
+      delegation_mode: delegationModeForTopology(accepted.route.topology),
+    });
     const model = executionOptions.model;
 
     this.reconcile();
     // CLI availability/auth can each take seconds. Do not create a durable
-    // active Agent reservation until that external preflight has succeeded.
-    const readinessReceipt = this.jobs.assertReady(driver.harnessId);
-    const agent = this.storeForDriver(driver).createAgent({
+    // active Agent reservation until that external preflight has succeeded --
+    // and do not run it twice: route acceptance already observed this host, and
+    // its Driver stated the version-one receipt from that same observation.
+    // Anything less than a proven-ready receipt falls back to observing again,
+    // so this can only ever remove a duplicate, never a check.
+    const readinessReceipt = accepted.launchReadiness?.ready === true
+      ? accepted.launchReadiness
+      : this.jobs.assertReady(driver.harnessId);
+    // Every new Agent gets the version-three identity plane: the whole route is
+    // immutable from creation. Its TURNS still run on the version-one
+    // supervisor, which is a separate question with a separate owner
+    // (`harnessExecutionLifecycle`), and everything below this line is that
+    // supervisor's own path.
+    const store = this.versionThreeStore();
+    const agent = store.createAgent({
       task_name: taskName,
       description: input.description,
-      selectedModel: model,
-      delegationMode: executionOptions.delegationMode,
+      route: accepted.route,
       initialMessage: message,
     });
-    const initialMessage = this.store.listMessages(agent.agentId)[0];
-    const jobId = generateJobId("cc-agent");
+    const initialMessage = store.listMessages(agent.agentId)[0];
     let prepared;
     try {
       prepared = this.jobs.prepareStart(message, {
@@ -958,15 +1183,15 @@ class AgentRuntime {
     } catch (error) {
       // A sender may have reached this newly-created Agent while local job
       // preparation was failing. The store removes only an empty reservation.
-      this.store.rollbackReservation(agent.agentId, {
+      store.rollbackReservation(agent.agentId, {
         removableMessageId: initialMessage?.messageId,
       });
       throw error;
     }
-    const activation = this.store.reserveActivation(agent.agentId, jobId, { initial: true });
+    const activation = store.reserveActivation(agent.agentId, jobId, { initial: true });
     if (!activation.reserved) {
       this.jobs.abortPreparedStart(prepared);
-      this.store.rollbackReservation(agent.agentId, {
+      store.rollbackReservation(agent.agentId, {
         removableMessageId: initialMessage?.messageId,
       });
       throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
@@ -977,8 +1202,8 @@ class AgentRuntime {
       launchAttempted = true;
       const assigned = activation.assignedMessages;
       await this.jobs.launchPreparedStart(attached, messageText(assigned));
-      this.markInitialPromptMessages(agent.agentId, jobId, assigned);
-      return publicSpawnReceipt(this.cwd, this.store.resolveTarget(agent.agentId));
+      this.markInitialPromptMessages(agent.agentId, jobId, assigned, store);
+      return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId));
     } catch (error) {
       const handoffDisposition = launchAttempted
         ? preparedStartDisposition(error)
@@ -1003,6 +1228,29 @@ class AgentRuntime {
     // Every Agent projection states its own Harness -- a version-one/two record
     // through the legacy adapter, a version-three record from its frozen route.
     // An Agent that states none is unroutable and is refused, never defaulted.
+    if (agent?.version === 3) {
+      // A version-three Agent is routed by the Driver Contract v2 table its own
+      // frozen route names. Resolving it through the version-one table would
+      // refuse every Harness that generation never had, and would answer an
+      // unsupported operation with an unroutable-Agent exception instead of the
+      // receipt the route itself proves.
+      const statedHarnessId = agent.route?.harnessId ?? agent.harnessId;
+      const routed = resolveDriverV2(assertStatedHarnessId(
+        statedHarnessId,
+        `Agent ${agent.path} Harness`,
+      ), { env: this.jobs.env });
+      if (
+        options.allowDriverVersionDrift !== true &&
+        agent.route?.driverVersion != null &&
+        agent.route.driverVersion !== routed.driverVersion
+      ) {
+        throw new Error(
+          `Agent ${agent.path} accepted Driver ${agent.route.driverVersion}; ` +
+          `but this runtime provides ${routed.driverVersion}.`
+        );
+      }
+      return routed;
+    }
     const driver = this.jobs.driverForHarness(agent.harnessId);
     if (agent.version === 2) {
       if (
@@ -1072,13 +1320,22 @@ class AgentRuntime {
     if (agent.continuation.mode === "blocked") {
       throw blockedContinuationRejection(agent, "accept messages");
     }
-    const queued = this.store.enqueueMessage(agent.agentId, assertText(input.message, "send_message message"), {
+    const store = this.storeForAgent(agent);
+    const queued = store.enqueueMessage(agent.agentId, assertText(input.message, "send_message message"), {
       kind: "send_message",
     });
-    const delivery = queued.delivery === "assigned_active"
+    // Active delivery is the version-one supervisor's steering path, which reads
+    // a version-one job record. Which path an Agent takes is decided by its
+    // Harness's execution lifecycle, never by its record version: the two are
+    // deliberately independent, so an Agent may hold a version-three record and
+    // still run its turns on the version-one supervisor. A version-three-worker
+    // turn has no job file to steer -- its worker reads the durable mailbox
+    // itself -- so the entry stays queued rather than claiming it was steered.
+    const steerable = harnessExecutionLifecycle(agent.harnessId) === "version_one_supervisor";
+    const delivery = queued.delivery === "assigned_active" && steerable
       ? this.deliverAssignedMessage(queued.agent, queued.message)
       : { delivered: false, reason: "queued_no_turn" };
-    const current = this.store.resolveTarget(agent.agentId);
+    const current = store.resolveTarget(agent.agentId);
     return {
       agent_name: current.path,
       delivery: delivery.delivered
@@ -1099,11 +1356,11 @@ class AgentRuntime {
     return delivery;
   }
 
-  markInitialPromptMessages(agentId, jobId, messages) {
+  markInitialPromptMessages(agentId, jobId, messages, store = this.store) {
     let marked = 0;
     for (const message of messages) {
       try {
-        const receipt = this.store.markMessageDispatched(agentId, message.messageId, {
+        const receipt = store.markMessageDispatched(agentId, message.messageId, {
           jobId,
           receipt: { delivery: "initial_prompt" },
         });
@@ -1147,12 +1404,28 @@ class AgentRuntime {
     ) {
       return agent;
     }
-    const driverInstanceKey = driver.resolveInstanceKey?.(this.jobs.env) ?? null;
+    // The instance identity being compared is the VERSION-ONE supervisor's: the
+    // failed receipt states it, the credential observation states it, and both
+    // are the native configuration path. A version-three Agent's own route
+    // states the redacted key instead -- a different namespace -- so the
+    // comparison is made through the Driver that owns the execution machine,
+    // not through the Contract v2 Driver that owns its capabilities. Comparing
+    // the redacted key against a path would silently never match, and an
+    // auth-blocked Agent could never be recovered at all.
+    const executionDriver = agent.version === 3
+      ? this.jobs.driverForHarness(agent.route.harnessId)
+      : driver;
+    const driverInstanceKey = executionDriver.resolveInstanceKey?.(this.jobs.env) ?? null;
     const failedInstanceKey = failedJob.harnessInstanceKey ?? failedJob.claudeConfigDir ?? null;
+    // "No proven native session yet" is stated as the neutral reference on a
+    // version-three record and as the legacy pair on a legacy one.
+    const provenSession = agent.version === 3
+      ? agent.nativeSessionRef != null
+      : agent.claudeSessionId != null;
     if (
       driverInstanceKey !== replacement.configIdentity ||
       failedInstanceKey !== replacement.configIdentity ||
-      agent.claudeSessionId != null
+      provenSession
     ) {
       return agent;
     }
@@ -1172,6 +1445,16 @@ class AgentRuntime {
     assertNoHarnessImplementationSelector(input, "followup_task");
     if (input.model != null) {
       throw new Error("followup_task inherits the Agent's selected model and does not accept a model override.");
+    }
+    // A frozen route's behavioral authority is immutable: a follow-up inherits
+    // it and can never widen, narrow, or restate it.
+    for (const key of ["write", "harness", "topology"]) {
+      if (input[key] != null) {
+        throw new Error(
+          `followup_task does not accept ${key}: an Agent's route and behavioral authority are frozen at ` +
+          `creation and inherited by every later turn.`
+        );
+      }
     }
     for (const key of [
       "delegation_mode",
@@ -1194,15 +1477,30 @@ class AgentRuntime {
     if (agent.continuation.mode === "blocked" && !credentialRecoveryCandidate) {
       throw blockedContinuationRejection(agent, "continue");
     }
+    // A version-three Agent's frozen route decides continuation before any
+    // legacy option validation sees the input. A route that proves fresh-only
+    // continuation has no same-Agent second turn to validate options for, and
+    // refusing here keeps the legacy validator from answering with its own
+    // unrelated vocabulary.
+    const continuationSupport = unsupportedRouteOperation(agent, "continuation", ["exact_resume"]);
+    if (continuationSupport) {
+      throw new Error(
+        `Agent ${agent.path} is frozen to a ${continuationSupport.harness} route whose continuation is ` +
+        `${continuationSupport.value}; a same-Agent follow-up is refused. Spawn a new Agent instead.`
+      );
+    }
     if (agent.continuation.mode === "exact_session") {
       // Refuse before any durable mailbox or activation write: an exact-resume
       // target is only meaningful when the accepted snapshot proves it.
-      assertHarnessCapability(
-        agent.capabilities ?? driver.capabilities,
-        "continuation",
-        ["exact_resume"],
-        `Harness ${driver.harnessId} cannot resume Agent ${agent.path} in its exact native session`
-      );
+      const continuationSnapshot = versionOneCapabilitySnapshot(agent, driver);
+      if (continuationSnapshot) {
+        assertHarnessCapability(
+          continuationSnapshot,
+          "continuation",
+          ["exact_resume"],
+          `Harness ${driver.harnessId} cannot resume Agent ${agent.path} in its exact native session`
+        );
+      }
     }
     const validationJobId = agent.activeJobId ?? agent.latestJobId;
     const validationLatestJob = validationJobId
@@ -1212,10 +1510,26 @@ class AgentRuntime {
     // delivery race: should that turn become terminal during delivery, this
     // same call is allowed to activate the queued message and must not leave
     // invalid execution options behind as durable mailbox state.
-    const executionOptions = validatedInternalOptions(driver, input, {
+    // A version-three Agent's model and topology are the frozen route's, never
+    // a legacy projected field it does not carry and never a value recovered
+    // from a previous job's request. A follow-up cannot change either.
+    const frozenRoute = agent.version === 3 ? agent.route : null;
+    // Two Drivers answer two different questions for one Agent. `driver` is the
+    // Contract v2 Driver its frozen route names, and it owns capability
+    // questions. The EXECUTION options below speak the version-one supervisor's
+    // own vocabulary -- profile, delegation mode, effort -- so they are
+    // validated by the Driver that owns that machine. Handing a version-one
+    // option bag to a version-two Driver would ask it to read a route in a
+    // vocabulary that bag does not contain.
+    const executionDriver = frozenRoute
+      ? this.jobs.driverForHarness(frozenRoute.harnessId)
+      : driver;
+    const executionOptions = validatedInternalOptions(executionDriver, input, {
       ...(validationLatestJob?.request ?? {}),
-      model: validationLatestJob?.request?.model ?? agent.selectedModel,
-      delegationMode: agent.delegationMode,
+      model: frozenRoute?.model ?? validationLatestJob?.request?.model ?? agent.selectedModel,
+      delegationMode: frozenRoute
+        ? delegationModeForTopology(frozenRoute.topology)
+        : agent.delegationMode,
     });
     if (credentialRecoveryCandidate) {
       agent = this.recoverCredentialBlockedAgent(agent, driver, validationLatestJob);
@@ -1601,12 +1915,27 @@ class AgentRuntime {
         status: "no_active_turn",
       };
     }
-    assertHarnessCapability(
-      agent.capabilities ?? driver.capabilities,
-      "interrupt",
-      ["graceful_flush_proven", "best_effort_signal"],
-      `Harness ${driver.harnessId} cannot interrupt an active turn`
-    );
+    const interruptSupport = unsupportedRouteOperation(agent, "interruptRequest", ["supported"]);
+    if (interruptSupport) {
+      // An accepted route that proves no interrupt answers with a receipt, not
+      // an exception: the Agent keeps running, nothing is aborted, and no
+      // abort/status call is made in place of the operation.
+      return {
+        agent_name: agent.path,
+        harness: agent.harnessId ?? driver.harnessId,
+        status: "unsupported",
+        unsupported: interruptSupport,
+      };
+    }
+    const interruptSnapshot = versionOneCapabilitySnapshot(agent, driver);
+    if (interruptSnapshot) {
+      assertHarnessCapability(
+        interruptSnapshot,
+        "interrupt",
+        ["graceful_flush_proven", "best_effort_signal"],
+        `Harness ${driver.harnessId} cannot interrupt an active turn`
+      );
+    }
     const turn = await this.jobs.interrupt(agent.activeJobId);
     this.reconcile();
     const current = this.store.resolveTarget(agent.agentId);
@@ -1629,13 +1958,33 @@ class AgentRuntime {
     }
     const agent = this.store.resolveTarget(assertText(input.target, "read_agent_messages target"));
     const driver = this.assertAgentDriver(agent);
-    assertHarnessCapability(
-      agent.capabilities ?? driver.capabilities,
-      "history",
-      ["assistant_messages"],
-      `Harness ${driver.harnessId} exposes no readable assistant history`
-    );
-    if (!agent.claudeSessionId || !agent.claudeConfigDir) {
+    const historySupport = unsupportedRouteOperation(agent, "history", ["assistant_messages"]);
+    if (historySupport) {
+      // No native transcript API is called for a route that proves no history.
+      return {
+        agent_name: agent.path,
+        harness: agent.harnessId ?? driver.harnessId,
+        status: "unsupported",
+        unsupported: historySupport,
+        messages: [],
+      };
+    }
+    const historySnapshot = versionOneCapabilitySnapshot(agent, driver);
+    if (historySnapshot) {
+      assertHarnessCapability(
+        historySnapshot,
+        "history",
+        ["assistant_messages"],
+        `Harness ${driver.harnessId} exposes no readable assistant history`
+      );
+    }
+    // A version-three record proves its native session with a neutral
+    // reference; a legacy record proves it with the legacy pair. Either way the
+    // proof has to exist before a transcript is looked for.
+    const provenSession = agent.version === 3
+      ? agent.nativeSessionRef?.nativeSessionId
+      : agent.claudeSessionId && agent.claudeConfigDir;
+    if (!provenSession) {
       throw new Error(`Agent ${agent.path} has no proven native Claude session history.`);
     }
     const history = driver.readAssistantHistory(agent, {
@@ -1672,6 +2021,24 @@ class AgentRuntime {
     return {
       agents,
     };
+  }
+
+  /**
+   * Observe which Harnesses this checkout admits and what their logical
+   * instances currently report.
+   *
+   * This states availability, not advice. It reports each Harness's readiness,
+   * route constraints, capability maturity, and capacity, and it deliberately
+   * carries no ranking, recommendation, score, price, or default: choosing a
+   * Harness is the caller's explicit decision at spawn, and nothing here makes
+   * it for them. It creates no Agent, session, or durable record.
+   */
+  async listHarnesses(inputValue = {}) {
+    const input = assertObject(inputValue, "list_harnesses input");
+    for (const key of Object.keys(input)) {
+      throw new Error(`list_harnesses observes admitted Harnesses only; it does not accept ${key}.`);
+    }
+    return { harnesses: await this.jobs.inspectAdmittedHarnesses() };
   }
 }
 

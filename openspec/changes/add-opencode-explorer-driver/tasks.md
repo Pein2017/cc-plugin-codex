@@ -48,12 +48,12 @@
 
 ## 7. Activate The Eight-Operation Public Generation
 
-- [ ] 7.1 Statically admit exactly `claude-code` and the discovered `opencode` route, with all protocol-specific construction behind Driver factories and `runtime/index.mjs`.
-- [ ] 7.2 Add `list_harnesses` through runtime facade, isolated worker, MCP, operator CLI, tests, and `$codex-harnessdock:list-harnesses`; report readiness/route/capability/maturity/capacity without ranking or selection.
-- [ ] 7.3 Change `spawn_agent` to require `task_name`, `message`, `harness`, full `model`, `topology`, and `write`, with only optional `description` and Driver-discriminated `reasoning_effort`; no route field or legacy delegation mode defaults.
-- [ ] 7.4 Make `followup_task` inherit immutable route/authority and accept only target/message plus admitted effort; remove write mutation and do not add generic scope/questions, endpoint/profile/session/tool/policy selectors.
-- [ ] 7.5 Expose bounded immutable route/maturity lineage in spawn/list/wait/completion and explicit unsupported receipts in interrupt/history; activate v3 writes only after complete route validation.
-- [ ] 7.6 Bump the HarnessDock MCP generation once, preserve v1/v2 Claude control, reject stale old schemas before mutation, and prove one root can explicitly own different Harness Agents without direct cross-Harness messaging.
+- [x] 7.1 Statically admit exactly `claude-code` and the discovered `opencode` route, with all protocol-specific construction behind Driver factories and `runtime/index.mjs`.
+- [x] 7.2 Add `list_harnesses` through runtime facade, isolated worker, MCP, operator CLI, tests, and `$codex-harnessdock:list-harnesses`; report readiness/route/capability/maturity/capacity without ranking or selection.
+- [x] 7.3 Change `spawn_agent` to require `task_name`, `message`, `harness`, full `model`, `topology`, and `write`, with only optional `description` and Driver-discriminated `reasoning_effort`; no route field or legacy delegation mode defaults.
+- [x] 7.4 Make `followup_task` inherit immutable route/authority and accept only target/message plus admitted effort; remove write mutation and do not add generic scope/questions, endpoint/profile/session/tool/policy selectors.
+- [x] 7.5 Expose bounded immutable route/maturity lineage in spawn/list/wait/completion and explicit unsupported receipts in interrupt/history; activate v3 writes only after complete route validation.
+- [x] 7.6 Bump the HarnessDock MCP generation once, preserve v1/v2 Claude control, reject stale old schemas before mutation, and prove one root can explicitly own different Harness Agents without direct cross-Harness messaging.
 
 ## 8. Update Skills, Operator Surfaces, And Architecture Roadmap
 

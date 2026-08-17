@@ -16,12 +16,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { ADMITTED_GENERATION_HARNESS_IDS, ADMITTED_MODEL_IDS } from "./harness-registry.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
 export const HARNESSDOCK_MCP_TOOL_NAMES = Object.freeze([
+  "list_harnesses",
   "spawn_agent",
   "send_message",
   "followup_task",
@@ -41,12 +43,10 @@ const PROMOTION_GATE_DIRECTORY = path.join(
   resolveGitCommonDirectory(SOURCE_ROOT),
   "codex-harnessdock-promotion-gate",
 );
-const MODEL_IDS = [
-  "claude-haiku-4-5",
-  "claude-sonnet-5",
-  "claude-opus-5",
-  "claude-fable-5",
-];
+// One source for both the typed schema and runtime validation.
+const MODEL_IDS = [...ADMITTED_MODEL_IDS];
+const HARNESS_IDS = [...ADMITTED_GENERATION_HARNESS_IDS];
+const TOPOLOGIES = ["leaf", "native_orchestrator"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const MODEL_FACING_WAIT_TIMEOUT_MS = 3_600_000;
 
@@ -57,23 +57,32 @@ const message = z.string().trim().min(1);
 const executionFields = {
   reasoning_effort: z.enum(EFFORTS).optional(),
 };
-const optionalWrite = z.boolean().optional().describe(
-  "Behavioral authority: false is read/review-only, true permits task-scoped writes, omitted inherits. Process access is unchanged."
-);
-
 const TOOL_DEFINITIONS = Object.freeze({
+  list_harnesses: {
+    description:
+      "Experimental: list the Harnesses this checkout admits, with each logical instance's readiness, route constraints, capability maturity, and capacity. This observes state only.",
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   spawn_agent: {
     description:
-      "Experimental: start a durable Claude Agent asynchronously; leaf by default, exact Opus or Fable experimental Native Agent Team lead only when explicit.",
+      "Experimental: start one durable Agent asynchronously on an explicitly stated route. The Harness, full model, topology, and behavioral authority are all required and are frozen on the Agent; none of them is defaulted, inferred, or aliased.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
       description: z.string().trim().min(1).optional(),
-      model: z.enum(MODEL_IDS),
+      harness: z.enum(/** @type {[string, ...string[]]} */ (HARNESS_IDS)).describe(
+        "Required Harness this Agent runs on. There is no default Harness."
+      ),
+      model: z.enum(/** @type {[string, ...string[]]} */ (MODEL_IDS)).describe(
+        "Required full model identifier admitted by the stated Harness."
+      ),
+      topology: z.enum(/** @type {[string, ...string[]]} */ (TOPOLOGIES)).describe(
+        "Required topology: leaf runs the task itself; native_orchestrator is admitted only by a Harness whose route proves it."
+      ),
       write: z.boolean().describe(
         "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
       ),
-      delegation_mode: z.enum(["leaf", "claude_orchestrator"]).optional(),
       ...executionFields,
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -86,8 +95,8 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   followup_task: {
     description:
-      "Experimental: deliver work or activate one proven Claude Agent continuation asynchronously.",
-    inputSchema: z.object({ target: exactTarget, message, ...executionFields, write: optionalWrite }).strict(),
+      "Experimental: deliver work or activate one proven Agent continuation asynchronously. The Agent's route and behavioral authority are immutable and inherited; only its turn-scoped reasoning effort may be stated where the route admits one.",
+    inputSchema: z.object({ target: exactTarget, message, ...executionFields }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
@@ -324,7 +333,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the seven Experimental Agent tools. Spawn starts a Claude Agent asynchronously. wait_agent has implementation-defined completion-priority, wakes on durable activity, has a fixed one-hour upper bound, and takes no timeout argument. Targets form one to eight exact targets joined as either one exact turn or an all-settled barrier; only one target may opt into one progress update. A completion token is acknowledged exactly once on a later wait only if needed. After a quiet timeout, call wait_agent again instead of list_agents or read_agent_messages. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
+        "Use the eight Experimental Agent tools. list_harnesses observes which Harnesses this checkout admits and what each instance reports. Spawn starts one Agent asynchronously on an explicitly stated Harness, full model, topology, and behavioral authority, all of which are then frozen on that Agent; follow-up inherits them. wait_agent has implementation-defined completion-priority, wakes on durable activity, has a fixed one-hour upper bound, and takes no timeout argument. Targets form one to eight exact targets joined as either one exact turn or an all-settled barrier; only one target may opt into one progress update. A completion token is acknowledged exactly once on a later wait only if needed. After a quiet timeout, call wait_agent again instead of list_agents or read_agent_messages. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

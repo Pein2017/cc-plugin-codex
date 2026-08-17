@@ -242,6 +242,8 @@ describe("Agent wait persistence", () => {
       agents: [{
         agent_name: created.path,
         agent_status: "completed",
+        harness: "claude-code",
+        route_maturity: null,
         model: "claude-haiku-4-5",
         reasoning_effort: null,
         authority: "unknown",

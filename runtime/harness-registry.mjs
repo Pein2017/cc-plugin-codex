@@ -15,6 +15,9 @@ import {
   createClaudeCodeDriver,
   createClaudeCodeDriverV2,
 } from "./claude-code-driver.mjs";
+import { MODEL_ALIASES } from "./claude-headless-adapter.mjs";
+import { createOpencodeDriver } from "./opencode-driver.mjs";
+import { OPENCODE_EXPLORER_MODEL, OPENCODE_HARNESS_ID } from "./opencode-explorer-profile.mjs";
 import {
   ROUTE_AUTHORITY_VALUES,
   ROUTE_REQUEST_FIELDS,
@@ -48,7 +51,12 @@ const DRIVER_FACTORIES = Object.freeze({
  * implementation selection is refused here.
  */
 const REJECTED_INPUT_SELECTORS = Object.freeze([
-  "harness",
+  // `harness` is deliberately absent: in the multi-Harness generation a caller
+  // must state which admitted Harness its Agent runs on, and that statement is
+  // a route decision validated against the static table. What stays refused is
+  // everything that would choose an *implementation* for that Harness -- its
+  // module, path, executable, endpoint, logical instance, capability snapshot,
+  // or credentials -- because those are fixed operator configuration.
   "harness_id",
   "harness_driver",
   "harness_module",
@@ -159,15 +167,110 @@ export function resolveHarnessDriver(harnessId, options = {}) {
  * checkout-owned source, so a fixture, environment value, persisted record, or
  * model-facing input can never make one appear at runtime.
  *
- * Admission is not activation: the current public generation still prepares
- * and runs turns through the version-one Claude Driver above, and no public
- * lifecycle path resolves a version-two Driver in this generation.
+ * Admission is activation for the multi-Harness generation: `list_harnesses`
+ * observes every entry here through its version-two Driver, and an explicit
+ * OpenCode route resolves its checkout-owned Driver from this table. Legacy
+ * Claude Agents keep running through the version-one Driver above under their
+ * own accepted evidence.
  */
 const DRIVER_V2_FACTORIES = Object.freeze({
   [CLAUDE_CODE_HARNESS_ID]: createClaudeCodeDriverV2,
+  [OPENCODE_HARNESS_ID]: createOpencodeDriver,
 });
 
-export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V2_FACTORIES));
+export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V2_FACTORIES).sort());
+
+/**
+ * Every Harness the multi-Harness public generation admits, in one
+ * deterministic order.
+ *
+ * The order is alphabetical so two observations of the same checkout agree; it
+ * is not a preference, a ranking, or a default. There is no preferred Harness
+ * here and no code path that picks one: a caller that has not stated a Harness
+ * has not stated a route.
+ *
+ * The version-one table above stays Claude-only on purpose. Version one encodes
+ * a process-shaped Claude lifecycle that a service-backed Harness has no
+ * meaning for, so `resolveHarnessDriver("opencode")` keeps failing closed while
+ * the version-two contract is where both Harnesses are admitted.
+ */
+export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
+
+/**
+ * The full model identifiers each admitted Harness serves, in one place.
+ *
+ * The Claude entries are derived from that Driver's own canonical alias table
+ * and the OpenCode entry from the discovered route constant, so this table
+ * cannot drift from either Driver. The typed public schema and runtime route
+ * validation both read it: a model no Harness admits is refused by the schema,
+ * and a model the wrong Harness admits is refused by that Harness's own route
+ * validation. Neither is a default, a preference, or a mapping from Harness to
+ * model -- a caller states both.
+ */
+export const ADMITTED_ROUTE_MODELS = Object.freeze({
+  [CLAUDE_CODE_HARNESS_ID]: Object.freeze([...new Set(MODEL_ALIASES.values())].sort()),
+  [OPENCODE_HARNESS_ID]: Object.freeze([OPENCODE_EXPLORER_MODEL]),
+});
+
+/** Every admitted full model identifier, deduplicated and deterministic. */
+export const ADMITTED_MODEL_IDS = Object.freeze(
+  [...new Set(Object.values(ADMITTED_ROUTE_MODELS).flat())].sort()
+);
+
+/** Whether one Harness admits one full model identifier. */
+export function harnessAdmitsModel(harnessId, model) {
+  return (ADMITTED_ROUTE_MODELS[harnessId] ?? []).includes(model);
+}
+
+/**
+ * The execution lifecycle each admitted Harness's turns run under.
+ *
+ * The public generation gives every new Agent the same identity plane -- a
+ * version-three record whose whole route is immutable from creation -- while
+ * keeping two different execution machines underneath it:
+ *
+ *   - `version_one_supervisor` is the process-shaped Claude lifecycle: the
+ *     supervisor job record, the stream-json progress it publishes, the bounded
+ *     reconnect, the exact-child PID acceptance fence, and the resumable
+ *     completion the Claude adapter classifies. Claude turns keep running on it
+ *     because that machinery IS the Claude contract, not a legacy of it.
+ *   - `version_three_worker` is the generic durable lifecycle: the launch claim
+ *     and submission fence, the native-turn acceptance proof, the instance and
+ *     native-session leases, and the settlement rules a service-backed Harness
+ *     with no child process needs.
+ *
+ * The choice is made once, from the route's Harness, when the Agent is created,
+ * and it never changes for that Agent. That is what keeps the two machines from
+ * ever describing one turn: a Claude Agent has version-one job artifacts and
+ * never a version-three job record, and an OpenCode Agent has version-three job
+ * records and never a version-one job file.
+ */
+export const HARNESS_EXECUTION_LIFECYCLES = Object.freeze([
+  "version_one_supervisor",
+  "version_three_worker",
+]);
+
+const HARNESS_EXECUTION_LIFECYCLE = Object.freeze({
+  [CLAUDE_CODE_HARNESS_ID]: "version_one_supervisor",
+  [OPENCODE_HARNESS_ID]: "version_three_worker",
+});
+
+/**
+ * The execution lifecycle one admitted Harness's turns run under. A Harness
+ * with no stated lifecycle is unroutable and is refused, never defaulted onto
+ * either machine.
+ */
+export function harnessExecutionLifecycle(harnessId) {
+  const stated = assertStatedHarnessId(harnessId, "Harness execution lifecycle");
+  const lifecycle = HARNESS_EXECUTION_LIFECYCLE[stated];
+  if (!lifecycle) {
+    throw new Error(
+      `Harness ${stated} states no execution lifecycle; this runtime runs turns only on ` +
+      `${HARNESS_EXECUTION_LIFECYCLES.join(" or ")}.`
+    );
+  }
+  return lifecycle;
+}
 
 /** Validate one version-two Driver for admission, wherever it came from. */
 export function admitDriverV2(driver) {

@@ -56,10 +56,15 @@ const runtimeDirectory = path.join(repositoryRoot, "runtime");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "harnessdock-task7-neutrality-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
-const SEVEN_OPERATIONS = Object.freeze([
+/**
+ * The public operations of the current generation. The multi-Harness generation
+ * added `list_harnesses`; the seam itself stays the sole lifecycle surface.
+ */
+const PUBLIC_OPERATIONS = Object.freeze([
   "followup_task",
   "interrupt_agent",
   "list_agents",
+  "list_harnesses",
   "read_agent_messages",
   "send_message",
   "spawn_agent",
@@ -128,14 +133,14 @@ describe("Task 7.1 — the neutral public runtime factory", () => {
     assert.equal(createClaudeRuntime, createAgentRuntime);
   });
 
-  it("returns exactly the seven frozen public operations from either name", () => {
+  it("returns exactly the frozen public operations from either name", () => {
     const neutral = createAgentRuntime(runtimeOptions("neutral"));
     const alias = createClaudeRuntime(runtimeOptions("alias"));
-    assert.deepEqual(Object.keys(neutral).sort(), SEVEN_OPERATIONS);
-    assert.deepEqual(Object.keys(alias).sort(), SEVEN_OPERATIONS);
+    assert.deepEqual(Object.keys(neutral).sort(), PUBLIC_OPERATIONS);
+    assert.deepEqual(Object.keys(alias).sort(), PUBLIC_OPERATIONS);
     assert.equal(Object.isFrozen(neutral), true);
     assert.equal(Object.isFrozen(alias), true);
-    for (const operation of SEVEN_OPERATIONS) {
+    for (const operation of PUBLIC_OPERATIONS) {
       assert.equal(typeof neutral[operation], "function");
       assert.equal(typeof alias[operation], "function");
     }
@@ -217,7 +222,7 @@ export function createClaudeRuntime() {
 });
 
 describe("Task 7.4 — current codex_harnessdock MCP discovery stays generation-compatible", () => {
-  it("advertises the frozen seven names, input schemas, and annotations", async () => {
+  it("advertises the frozen tool names, input schemas, and annotations", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createCcMcpServer({
       runtimeFactory: () => Object.fromEntries(
@@ -373,15 +378,11 @@ describe("Task 7.2 — no generic or version-three path carries a Harness defaul
 });
 
 describe("Task 7.1 — the current public generation stays inert on version two", () => {
-  it("writes version-two Agents and refuses version-three state through the public seam's own store", () => {
-    // The public seam never states a write generation, so every store it opens
-    // is the public seven-operation generation.
-    assert.doesNotMatch(
-      fs.readFileSync(path.join(runtimeDirectory, "agent-runtime.mjs"), "utf8"),
-      /writeGeneration/,
-      "the public runtime must never open a future-generation store"
-    );
-
+  it("keeps a store that states no write generation on version two", () => {
+    // The multi-Harness generation writes version-three Agents for an explicitly
+    // stated route, and does so through a store that names that write generation
+    // out loud. A store that states none is still the version-two generation, so
+    // every legacy record and every caller that opens one is unchanged.
     const workspaceRoot = path.join(root, "public-generation-workspace");
     fs.mkdirSync(workspaceRoot, { recursive: true });
     process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = RUNTIME_HOME;
@@ -411,12 +412,16 @@ describe("Task 7.1 — the current public generation stays inert on version two"
 
 describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
   it("resolves only checkout-owned Harness identities", () => {
+    // Version one stays the Claude-only legacy contract; version two is where the
+    // multi-Harness generation admits both checkout-owned Harnesses.
     assert.deepEqual([...registry.ADMITTED_HARNESS_IDS], [CLAUDE_LEGACY_HARNESS_ID]);
-    assert.deepEqual([...registry.ADMITTED_DRIVER_V2_HARNESS_IDS], [CLAUDE_LEGACY_HARNESS_ID]);
+    assert.deepEqual([...registry.ADMITTED_DRIVER_V2_HARNESS_IDS], [CLAUDE_LEGACY_HARNESS_ID, "opencode"]);
     assert.equal(Object.isFrozen(registry.ADMITTED_HARNESS_IDS), true);
     assert.equal(Object.isFrozen(registry.ADMITTED_DRIVER_V2_HARNESS_IDS), true);
     assert.throws(() => resolveHarnessDriver("opencode", { env: {} }), /Unknown Harness/);
-    assert.throws(() => resolveDriverV2("opencode", { env: {} }), /Unknown Harness/);
+    // An unadmitted Harness is still refused at both contract versions.
+    assert.throws(() => resolveHarnessDriver("deepseek", { env: {} }), /Unknown Harness/);
+    assert.throws(() => resolveDriverV2("deepseek", { env: {} }), /Unknown Harness/);
   });
 
   it("exposes no registration, loader, or evaluation seam", () => {
@@ -431,7 +436,7 @@ describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
 
   it("refuses every model-facing implementation, instance, endpoint, and credential selector", () => {
     for (const key of [
-      "harness", "harness_id", "harness_driver", "harness_module", "harness_executable",
+      "harness_id", "harness_driver", "harness_module", "harness_executable",
       "harness_endpoint", "harness_instance", "driver", "driver_module", "driver_path",
       "driver_endpoint", "capability_override", "claude_bin", "claude_config_dir", "env_file",
       "settings_path", "endpoint", "base_url", "api_base", "service_url", "instance",
@@ -443,6 +448,9 @@ describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
         `${key} must never select an implementation`
       );
     }
+    // The one route decision a caller does state: which admitted Harness. It is
+    // validated against the static table, never treated as an implementation.
+    assert.doesNotThrow(() => assertNoHarnessImplementationSelector({ harness: "opencode" }, "spawn_agent"));
     for (const key of [
       "CC_HARNESS_ID", "CC_HARNESS_DRIVER", "CC_HARNESS_DRIVER_MODULE", "CC_HARNESS_DRIVER_PATH",
       "CC_HARNESS_CAPABILITIES", "CC_HARNESS_REGISTRY", "CC_HARNESS_ENDPOINT",
@@ -466,6 +474,14 @@ describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
       for (const tool of listed.tools) {
         assert.equal(tool.inputSchema.additionalProperties, false);
         for (const property of Object.keys(tool.inputSchema.properties ?? {})) {
+          // `harness` is the one route field a caller states, and it is a closed
+          // enum of admitted Harness identities -- not an implementation,
+          // endpoint, instance, module, or credential selector, none of which
+          // any public schema publishes.
+          if (property === "harness") {
+            assert.deepEqual(tool.inputSchema.properties.harness.enum, ["claude-code", "opencode"]);
+            continue;
+          }
           assert.doesNotMatch(
             property,
             /harness|driver|instance|endpoint|base_url|api_base|service_url|credential|api_key|auth_token|access_token|module|config_dir|settings|executable/i,

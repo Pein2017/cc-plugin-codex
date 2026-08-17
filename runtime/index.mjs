@@ -18,12 +18,13 @@ export { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
  * @property {(input: object) => Promise<object>} interrupt_agent
  * @property {(input: object) => object} read_agent_messages
  * @property {(input?: object) => object} list_agents
+ * @property {(input?: object) => Promise<object>} list_harnesses
  */
 
 /**
- * The neutral public factory. It owns no Harness identity of its own: the
- * seven operations it exposes are the same seven this generation has always
- * exposed, and which Harness serves them is an internal routing fact.
+ * The neutral public factory. It owns no Harness identity of its own: which
+ * Harness serves an operation is decided by the caller's explicit route at
+ * spawn and then frozen on the Agent, never by this seam.
  *
  * @returns {AgentRuntimeLifecycle}
  */
@@ -37,6 +38,7 @@ export function createAgentRuntime(options = {}) {
     interrupt_agent: runtime.interruptAgent.bind(runtime),
     read_agent_messages: runtime.readAgentMessages.bind(runtime),
     list_agents: runtime.listAgents.bind(runtime),
+    list_harnesses: runtime.listHarnesses.bind(runtime),
   });
 }
 

@@ -51,6 +51,12 @@ export function projectAgentCard(agent, job, options = {}) {
   const completedAt = terminalJob ? nullableTimestamp(job?.completedAt) : null;
   return {
     agent_name: agent.path,
+    // Immutable route lineage. A version-three Agent states its whole route, so
+    // every card, wait, and completion receipt names the Harness that owns it
+    // and the maturity that route was accepted under; a legacy record states
+    // only the Harness it recorded and no maturity to claim.
+    harness: agent.harnessId ?? null,
+    route_maturity: frozenRoute?.capabilities?.driverMaturity ?? null,
     model: frozenRoute ? frozenRoute.model : agent.selectedModel,
     reasoning_effort: nullableEffort(job?.request?.effort),
     // Historical per-turn write intent is legacy Claude evidence; it can never

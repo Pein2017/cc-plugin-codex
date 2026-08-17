@@ -16,6 +16,7 @@ import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { resolveJobFile, resolveJobLogFile, writeJobFile } from "./job-store.mjs";
 import { inspectCompatibilityShells, inspectInstalledPluginParity } from "./plugin-installation.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "./version.mjs";
+import { CLAUDE_CODE_HARNESS_ID } from "./claude-code-driver.mjs";
 
 const REAL_SMOKE_MODEL = "claude-haiku-4-5";
 const REAL_SMOKE_EFFORT = "low";
@@ -419,7 +420,9 @@ export async function runPaidSmoke(client, meta, options = {}) {
         task_name: taskName,
         message: "Inspect your available native tools, use Bash to run pwd without modifying anything, and do not delegate. If Workflow is unavailable, reply exactly CC_RELEASE_SMOKE_OK. If Workflow is available, reply exactly CC_RELEASE_SMOKE_WORKFLOW_VISIBLE.",
         description: "Explicit paid release acceptance smoke",
+        harness: CLAUDE_CODE_HARNESS_ID,
         model: REAL_SMOKE_MODEL,
+        topology: "leaf",
         reasoning_effort: REAL_SMOKE_EFFORT,
         write: false,
       },

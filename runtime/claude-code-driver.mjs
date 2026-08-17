@@ -42,6 +42,7 @@ import {
 } from "./execution-profile.mjs";
 import { resolveNativeTeamPolicy } from "./claude-native-team-policy.mjs";
 import { redactedClaudeInstanceKey } from "./claude-legacy-adapter.mjs";
+import { AGENT_RECORD_VERSION_V3 } from "./durable-state-v3.mjs";
 import {
   DRIVER_CONTRACT_VERSION_V2,
   HARNESS_DRIVER_CONTRACT_VERSION,
@@ -539,8 +540,12 @@ export function reconcileLegacyClaudeInstanceKey(legacyInstanceKey) {
   return claudeCodeInstanceKey(legacyInstanceKey);
 }
 
-/** The legacy delegation mode one version-two topology means. */
-function delegationModeForTopology(topology) {
+/**
+ * The legacy delegation mode one version-two topology means. Exported so the
+ * public spawn path translates a stated topology through this Driver's own
+ * mapping rather than a second copy that could drift.
+ */
+export function delegationModeForTopology(topology) {
   if (topology === "native_orchestrator") return "claude_orchestrator";
   if (topology === "leaf") return "leaf";
   throw new Error(`Claude Code admits no topology ${JSON.stringify(topology ?? null)}.`);
@@ -931,6 +936,20 @@ export function createClaudeCodeDriverV2(options = {}) {
 
   const fixedInstanceKey = claudeCodeInstanceKey(fixedEnv?.CLAUDE_CONFIG_DIR);
 
+  /**
+   * The host facts of the most recent inspection, kept so one route acceptance
+   * needs exactly one host observation.
+   *
+   * Observing this host means running the CLI: an availability probe, a version
+   * probe, and an auth probe, each of which can take seconds. Route acceptance
+   * and the version-one launch preflight ask the same three questions, so the
+   * answer is retained here for the caller that composes both, rather than
+   * asked twice. It is deliberately keyed by working directory and never
+   * refreshed on its own: this is a memo of one observation, not a cache with a
+   * lifetime, and a caller that did not just inspect gets nothing back.
+   */
+  let lastHostObservation = null;
+
   /** The host facts one inspection observed, without repairing anything. */
   function observeHost(cwd) {
     const availability = observeAvailability(cwd, { env: fixedEnv });
@@ -1018,9 +1037,12 @@ export function createClaudeCodeDriverV2(options = {}) {
         }];
       }
       const instanceKey = fixedInstanceKey;
+      const observedCwd = scope?.workspaceRoot ?? process.cwd();
       let host;
+      lastHostObservation = null;
       try {
-        host = observeHost(scope?.workspaceRoot ?? process.cwd());
+        host = observeHost(observedCwd);
+        lastHostObservation = { cwd: observedCwd, host };
       } catch {
         // An unreadable host is reported as unknown, never as ready and never
         // as a repair opportunity.
@@ -1049,6 +1071,31 @@ export function createClaudeCodeDriverV2(options = {}) {
             }
           : null,
       }];
+    },
+
+    /**
+     * The version-one-shaped launch preflight for the observation this Driver
+     * just made, or `null` when it has none for this working directory.
+     *
+     * The version-one supervisor consumes a readiness receipt; producing it
+     * from the inspection that already ran is what keeps one route acceptance
+     * to one host observation. `null` is always a safe answer: the caller then
+     * observes for itself.
+     */
+    launchPreflightFromInspection(cwd) {
+      if (lastHostObservation == null || lastHostObservation.cwd !== cwd) return null;
+      const { availability, compatibility, auth } = lastHostObservation.host;
+      if (!availability || !compatibility || !auth) return null;
+      return Object.freeze({
+        ready: Boolean(availability.available && compatibility.staticCompatible && auth.loggedIn),
+        availability,
+        compatibility,
+        auth,
+        // The version-one instance identity, exactly as that generation's own
+        // preflight states it. The redacted version-three key is a different
+        // namespace and never substitutes for it here.
+        instanceKey: resolveClaudeInstanceKey(fixedEnv),
+      });
     },
 
     /**
@@ -1179,8 +1226,33 @@ export function createClaudeCodeDriverV2(options = {}) {
       return reference;
     },
 
+    /**
+     * Bound native assistant history for one Agent this Driver owns.
+     *
+     * A version-three Agent's record states its logical instance as a one-way
+     * redaction, never as a path, so the native configuration directory is
+     * resolved HERE, at use time, from the runtime's own operator environment
+     * -- and it is only used once it has been proven to be the very instance
+     * the route pinned, by re-deriving the same redacted key. A configuration
+     * that moved, or an environment naming a different one, fails closed: if
+     * the hash does not match, the instance genuinely is not the one this
+     * Agent's turns ran on. The resolved path is passed inward and never
+     * returned, logged, or serialized.
+     */
     readAssistantHistory(agent, page) {
-      return readBoundClaudeAgentMessages(agent, page);
+      // A version-two record carries a legacy `route` projection that states no
+      // instance, so the discriminator is the record version, never the field.
+      const route = agent?.version === AGENT_RECORD_VERSION_V3 ? agent.route : null;
+      if (route == null) return readBoundClaudeAgentMessages(agent, page);
+      const declared = String(fixedEnv?.CLAUDE_CONFIG_DIR ?? "").trim();
+      if (!declared || claudeCodeInstanceKey(declared) !== route.instanceKey) {
+        throw new Error(
+          `Agent ${agent.path ?? agent.agentId} is pinned to logical instance ${route.instanceKey}; ` +
+          "this runtime's Claude configuration resolves to a different logical instance, so its " +
+          "native history is refused."
+        );
+      }
+      return readBoundClaudeAgentMessages(agent, { ...page, claudeConfigDir: declared });
     },
 
     /**

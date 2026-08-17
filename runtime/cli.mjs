@@ -17,18 +17,20 @@ const PUBLIC_COMMANDS = new Set([
   "interrupt_agent",
   "read_agent_messages",
   "list_agents",
+  "list_harnesses",
 ]);
 
 function usage() {
   return [
     "Usage:",
-    "  node runtime/cli.mjs spawn_agent --task-name <name> --model <haiku|sonnet|opus|fable> --write=<true|false> [options] <message>",
+    "  node runtime/cli.mjs spawn_agent --task-name <name> --harness <harness> --model <full-model-id> --topology <leaf|native_orchestrator> --write=<true|false> [options] <message>",
     "  node runtime/cli.mjs send_message <exact-target> <message>",
     "  node runtime/cli.mjs followup_task <exact-target> <message>",
     "  node runtime/cli.mjs wait_agent [--timeout-ms <ms>] [--targets <csv>] [--wake-on-progress] [--acknowledge-tokens <csv>]",
     "  node runtime/cli.mjs interrupt_agent <exact-target>",
     "  node runtime/cli.mjs read_agent_messages <exact-target> [--before <message-id>] [--limit <1-20>]",
     "  node runtime/cli.mjs list_agents [--path-prefix </root/prefix>]",
+    "  node runtime/cli.mjs list_harnesses",
     "",
     "Internal diagnostics:",
     "  node runtime/cli.mjs readiness",
@@ -88,9 +90,10 @@ async function spawnAgent(argv) {
       "task-name",
       "message",
       "description",
+      "harness",
       "model",
+      "topology",
       "reasoning-effort",
-      "delegation-mode",
       "prompt-file",
     ],
     booleanOptions: ["write"],
@@ -103,11 +106,19 @@ async function spawnAgent(argv) {
     task_name: options["task-name"],
     message,
     description: options.description,
+    harness: options.harness,
     model: options.model,
+    topology: options.topology,
     reasoning_effort: options["reasoning-effort"],
-    delegation_mode: options["delegation-mode"],
     write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
   });
+  output(receipt, options.json);
+}
+
+async function listHarnesses(argv) {
+  rejectForbiddenPublicArgs(argv);
+  const { options } = parse(argv, {});
+  const receipt = await createAgentRuntime(runtimeOptions(options)).list_harnesses({});
   output(receipt, options.json);
 }
 
@@ -134,12 +145,10 @@ async function followupTask(argv) {
       "message",
       "reasoning-effort",
     ],
-    booleanOptions: ["write"],
   });
   const receipt = await createAgentRuntime(runtimeOptions(options)).followup_task({
     ...targetAndMessage(options, positionals),
     reasoning_effort: options["reasoning-effort"],
-    write: Object.hasOwn(options, "write") ? Boolean(options.write) : undefined,
   });
   output(receipt, options.json);
 }
@@ -213,15 +222,24 @@ function readAgentMessages(argv) {
 }
 
 async function worker(argv) {
-  const { options } = parse(argv, { valueOptions: ["job-id"] });
+  const { options } = parse(argv, {
+    valueOptions: ["job-id", "agent-id", "attempt-id", "reasoning-effort"],
+  });
   if (!options["job-id"]) throw new Error("worker requires --job-id.");
-  await createInternalClaudeRuntime(runtimeOptions(options)).runWorker(options["job-id"]);
+  // A version-three handoff states its Agent and attempt; a legacy handoff
+  // states neither and reads its whole turn from the stored job record.
+  await createInternalClaudeRuntime(runtimeOptions(options)).runWorker(options["job-id"], {
+    agentId: options["agent-id"],
+    attemptId: options["attempt-id"],
+    effort: options["reasoning-effort"],
+  });
 }
 
 async function main() {
   const [command, ...argv] = process.argv.slice(2);
   switch (command) {
     case "spawn_agent": await spawnAgent(argv); break;
+    case "list_harnesses": await listHarnesses(argv); break;
     case "send_message": sendMessage(argv); break;
     case "followup_task": await followupTask(argv); break;
     case "wait_agent": await waitAgent(argv); break;

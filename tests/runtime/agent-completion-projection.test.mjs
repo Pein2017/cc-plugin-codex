@@ -396,6 +396,8 @@ describe("Agent completion projection", () => {
       agents: [{
         agent_name: agent.path,
         agent_status: "completed",
+        harness: "claude-code",
+        route_maturity: null,
         model: null,
         reasoning_effort: null,
         authority: "unknown",
@@ -411,6 +413,8 @@ describe("Agent completion projection", () => {
       agents: [{
         agent_name: agent.path,
         agent_status: "completed",
+        harness: "claude-code",
+        route_maturity: null,
         model: null,
         reasoning_effort: null,
         authority: "unknown",
@@ -430,6 +434,8 @@ describe("Agent completion projection", () => {
       {
         agent_name: agent.path,
         agent_status: "completed",
+        harness: "claude-code",
+        route_maturity: null,
         model: null,
         reasoning_effort: null,
         authority: "unknown",
@@ -442,6 +448,8 @@ describe("Agent completion projection", () => {
       {
         agent_name: unrelated.path,
         agent_status: "starting",
+        harness: "claude-code",
+        route_maturity: null,
         model: null,
         reasoning_effort: null,
         authority: "unknown",

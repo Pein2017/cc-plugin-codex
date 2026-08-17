@@ -26,6 +26,7 @@ describe("native plugin contract", () => {
     "followup_task",
     "interrupt_agent",
     "list_agents",
+    "list_harnesses",
     "read_agent_messages",
     "send_message",
     "spawn_agent",
@@ -91,7 +92,7 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("exposes only the seven canonical Agent lifecycle operations from the public index", () => {
+  it("exposes only the canonical Agent lifecycle operations from the public index", () => {
     const runtime = createClaudeRuntime({
       cwd: root,
       env: {

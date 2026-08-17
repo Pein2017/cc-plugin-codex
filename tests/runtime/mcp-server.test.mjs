@@ -49,7 +49,7 @@ afterEach(async () => {
 });
 
 describe("typed HarnessDock MCP server", () => {
-  it("advertises exactly the canonical seven typed tools", async () => {
+  it("advertises exactly the canonical typed tools", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const listed = await client.listTools();
@@ -64,14 +64,15 @@ describe("typed HarnessDock MCP server", () => {
       openWorldHint: false,
     });
     const spawn = listed.tools.find((tool) => tool.name === "spawn_agent");
-    assert.deepEqual(new Set(spawn.inputSchema.required), new Set(["task_name", "message", "model", "write"]));
+    assert.deepEqual(new Set(spawn.inputSchema.required), new Set(["task_name", "message", "harness", "model", "topology", "write"]));
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "fork_turns"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
-    assert.equal(Object.hasOwn(spawn.inputSchema.properties, "harness"), false);
-    assert.deepEqual(spawn.inputSchema.properties.delegation_mode.enum, ["leaf", "claude_orchestrator"]);
-    assert.match(spawn.description, /experimental Native Agent Team lead/i);
-    assert.match(spawn.description, /exact Opus or Fable/i);
+    assert.equal(Object.hasOwn(spawn.inputSchema.properties, "delegation_mode"), false);
+    assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode"]);
+    assert.deepEqual(spawn.inputSchema.properties.topology.enum, ["leaf", "native_orchestrator"]);
+    assert.match(spawn.description, /explicitly stated route/i);
+    assert.match(spawn.description, /frozen on the Agent/i);
     assert.match(spawn.inputSchema.properties.write.description, /Required behavioral authority[\s\S]*false[\s\S]*true permits[\s\S]*Process access is unchanged/i);
     const followup = listed.tools.find((tool) => tool.name === "followup_task");
     assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
@@ -315,6 +316,8 @@ describe("typed HarnessDock MCP server", () => {
     const receipts = {
       spawn_agent: {
         agent_name: "/root/compact",
+        harness: "claude-code",
+        route_maturity: null,
         model: "claude-sonnet-5",
         reasoning_effort: null,
         authority: "behavioral_read_only",
@@ -341,7 +344,9 @@ describe("typed HarnessDock MCP server", () => {
       ["spawn_agent", {
         task_name: "compact",
         message: "bounded task",
+        harness: "claude-code",
         model: "claude-sonnet-5",
+        topology: "leaf",
         write: false,
       }],
       ["followup_task", { target: "/root/compact", message: "continue" }],
@@ -371,12 +376,16 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(omitted.isError, true);
     await client.callTool({
       name: "spawn_agent",
-      arguments: { ...base, task_name: "permission_read", write: false },
+      arguments: {
+        harness: "claude-code",
+        topology: "leaf", ...base, task_name: "permission_read", write: false },
       _meta: meta,
     });
     await client.callTool({
       name: "spawn_agent",
-      arguments: { ...base, task_name: "permission_write", write: true },
+      arguments: {
+        harness: "claude-code",
+        topology: "leaf", ...base, task_name: "permission_write", write: true },
       _meta: meta,
     });
 
@@ -444,6 +453,8 @@ describe("typed HarnessDock MCP server", () => {
     const forbidden = await client.callTool({
       name: "spawn_agent",
       arguments: {
+        harness: "claude-code",
+        topology: "leaf",
         task_name: "audit",
         message: "read only",
         model: "claude-haiku-4-5",

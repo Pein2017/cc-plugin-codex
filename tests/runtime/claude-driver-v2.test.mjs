@@ -247,7 +247,10 @@ describe("Claude Code Driver Contract v2 admission", () => {
   });
 
   it("resolves the wrapped Driver from the static in-tree version-two registry", () => {
-    assert.deepEqual(ADMITTED_DRIVER_V2_HARNESS_IDS, [CLAUDE_CODE_HARNESS_ID]);
+    // The multi-Harness generation admits two Harnesses at Driver Contract v2;
+    // this Driver is still resolved from the static in-tree table by identity.
+    assert.equal(ADMITTED_DRIVER_V2_HARNESS_IDS.includes(CLAUDE_CODE_HARNESS_ID), true);
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
     const resolved = resolveDriverV2(CLAUDE_CODE_HARNESS_ID, { env: fixedEnv() });
     assert.equal(resolved.harnessId, CLAUDE_CODE_HARNESS_ID);
     assert.equal(resolved.contractVersion, DRIVER_CONTRACT_VERSION_V2);
@@ -1234,5 +1237,53 @@ describe("Claude Code terminal evidence translation", () => {
     for (const value of [CONFIG_DIR, EXECUTABLE, "CLAUDE_CONFIG_DIR", "Bearer"]) {
       assert.equal(durable.includes(value), false, value);
     }
+  });
+});
+
+describe("Claude Code Driver v2 — one host observation states both facts", () => {
+  it("answers the launch preflight from the inspection it just made", async () => {
+    const counts = { availability: 0, auth: 0, compatibility: 0 };
+    const driver = createClaudeCodeDriverV2({
+      env: fixedEnv(),
+      ...hostSeams({
+        observeAvailability: () => {
+          counts.availability += 1;
+          return { available: true, detail: "claude 2.0.0" };
+        },
+        observeAuth: () => {
+          counts.auth += 1;
+          return { available: true, loggedIn: true, detail: "logged in" };
+        },
+        observeCompatibility: () => {
+          counts.compatibility += 1;
+          return {
+            staticCompatible: true,
+            version: "2.0.0",
+            fingerprint: "fingerprint-1",
+            executable: EXECUTABLE,
+          };
+        },
+      }),
+    });
+
+    const inspections = await driver.inspectInstances(inspectScope(driver));
+    assert.equal(inspections[0].readiness, "ready");
+    assert.deepEqual(counts, { availability: 1, auth: 1, compatibility: 1 });
+
+    const preflight = driver.launchPreflightFromInspection("/workspace");
+    assert.equal(preflight.ready, true);
+    assert.equal(preflight.availability.available, true);
+    assert.equal(preflight.compatibility.executable, EXECUTABLE);
+    assert.equal(preflight.auth.loggedIn, true);
+    // The whole point: no second probe of any kind.
+    assert.deepEqual(counts, { availability: 1, auth: 1, compatibility: 1 });
+  });
+
+  it("states nothing for a working directory it did not just inspect", async () => {
+    const { driver } = makeDriver();
+    assert.equal(driver.launchPreflightFromInspection("/workspace"), null);
+    await driver.inspectInstances(inspectScope(driver));
+    assert.equal(driver.launchPreflightFromInspection("/some/other/workspace"), null);
+    assert.notEqual(driver.launchPreflightFromInspection("/workspace"), null);
   });
 });

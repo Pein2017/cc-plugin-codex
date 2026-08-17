@@ -23,6 +23,7 @@ import {
   reconcileTerminalJobCompletion,
 } from "./completion-inbox.mjs";
 import {
+  AGENT_RECORD_VERSION_V3,
   assertUnderstoodJobRecord,
   isUnderstoodJobRecord,
 } from "./durable-state-v3.mjs";
@@ -796,13 +797,24 @@ function prepareTerminalAgentSessionBinding(cwd, job) {
     store.bindSession(agent.agentId, sessionId, {
       jobId: job.id,
       harnessId: job.harnessId ?? agent.harnessId,
+      // A version-three Agent takes its logical instance from its frozen route
+      // and nothing else. A version-one Claude receipt states that instance as
+      // the raw configuration PATH, which is a different namespace from the
+      // route's redacted key, so offering it here would be offering an identity
+      // the route must reject -- and this helper swallows a rejection, which
+      // would silently leave the binding to terminal projection alone and give
+      // up the crash-window guarantee this helper exists for.
+      //
       // Early releases did not duplicate the Agent config directory into
-      // every job receipt. The Agent's validated instance is the only safe
-      // fallback; never silently substitute a process-global config path.
-      instanceKey: job.harnessInstanceKey
-        ?? job.claudeConfigDir
-        ?? agent.nativeSessionRef?.instanceKey
-        ?? agent.claudeConfigDir,
+      // every job receipt. For a legacy record the Agent's validated instance is
+      // the only safe fallback; never silently substitute a process-global
+      // config path.
+      ...(agent.version === AGENT_RECORD_VERSION_V3 ? {} : {
+        instanceKey: job.harnessInstanceKey
+          ?? job.claudeConfigDir
+          ?? agent.nativeSessionRef?.instanceKey
+          ?? agent.claudeConfigDir,
+      }),
       allowTerminal: agent.activeJobId == null,
     });
     return job;

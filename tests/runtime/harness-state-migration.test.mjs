@@ -1192,7 +1192,9 @@ describe("Version-three Agent write gate", () => {
           reason: "completed_exact_session",
         },
       }),
-      /state version/i,
+      // The refusal is now stated in lifecycle terms: this route runs no
+      // version-one turn, so no version-one/two receipt can speak for it.
+      /runs no version-one turn/i,
     );
     const after = store.readAgent(agent.agentId);
     assert.equal(after.version, 3);
@@ -1533,7 +1535,7 @@ describe("Version-three turn lifecycle is owned only by the internal generation"
           reason: "completed_exact_session",
         },
       }),
-      /version-three Agent .* state version|route identity/i,
+      /runs no version-one turn|route identity/i,
     );
     // A version-three receipt naming another instance is refused on identity.
     assert.throws(

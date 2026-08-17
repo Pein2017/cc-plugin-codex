@@ -5,6 +5,8 @@ import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
+import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
+import { resolveDriverV2 } from "../../runtime/harness-registry.mjs";
 import {
   createInternalClaudeRuntime,
   preparedStartDisposition,
@@ -17,6 +19,30 @@ import {
   transitionJob,
   writeJobFile,
 } from "../../runtime/job-store.mjs";
+
+/**
+ * Seam the route-time readiness observation, exactly as these suites already
+ * seam `assertReady`, so no test performs a real host probe.
+ */
+function seamRouteInspection(runtime) {
+  runtime.jobs.inspectRouteInstance = async (harnessId) => ({
+    driver: resolveDriverV2(harnessId, { env: runtime.jobs.env }),
+    inspections: [{
+      harnessId,
+      instanceKey: claudeCodeInstanceKey(runtime.jobs.env.CLAUDE_CONFIG_DIR),
+      readiness: "ready",
+      liveValidated: true,
+      maturity: "experimental",
+      detailCode: "ready",
+      routes: {
+        models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+        topologies: ["leaf", "native_orchestrator"],
+        interaction: "noninteractive_fixed_policy",
+      },
+    }],
+  });
+  return runtime;
+}
 
 const roots = [];
 const sharedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-detached-worker-handoff-shared-"));
@@ -41,12 +67,23 @@ function fakeChild({
   onKill = null,
 } = {}) {
   const listeners = new Map();
+  // Events this fake already emitted, so a listener attached afterwards still
+  // observes them. The production launcher attaches its observer before a real
+  // child can finish spawning, so replaying to a late listener models the real
+  // ordering; without it, this fixture's outcome depends on how many awaits the
+  // caller happens to perform before the observer exists.
+  const fired = new Map();
   const child = {
     pid,
     exitCode: null,
     unrefCount: 0,
     killCount: 0,
     once(event, callback) {
+      if (fired.has(event)) {
+        const args = fired.get(event);
+        queueMicrotask(() => callback(...args));
+        return child;
+      }
       const callbacks = listeners.get(event) ?? [];
       callbacks.push(callback);
       listeners.set(event, callbacks);
@@ -55,6 +92,7 @@ function fakeChild({
     emit(event, ...args) {
       const callbacks = listeners.get(event) ?? [];
       listeners.delete(event);
+      fired.set(event, args);
       for (const callback of callbacks) callback(...args);
     },
     unref() {
@@ -158,7 +196,9 @@ function agentRuntimeWithInjectedJobs(seed, launchDependencies) {
   });
   injectedJobs.assertReady = () => readiness(injectedJobs);
   agentRuntime.jobs = injectedJobs;
-  return agentRuntime;
+  // Seam after the injected internal runtime is installed, so the route-time
+  // readiness observation belongs to the same object the suite drives.
+  return seamRouteInspection(agentRuntime);
 }
 
 describe("detached worker handoff", () => {
@@ -223,9 +263,11 @@ describe("detached worker handoff", () => {
 
     await assert.rejects(
       firstRuntime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "safe_spawn",
         message: "safe before spawn",
-        model: "haiku",
+        model: "claude-haiku-4-5",
         reasoning_effort: "low",
         write: false,
       }),
@@ -304,9 +346,11 @@ describe("detached worker handoff", () => {
     };
     await assert.rejects(
       spawnRuntime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "attach_spawn",
         message: "do not leave active",
-        model: "haiku",
+        model: "claude-haiku-4-5",
         reasoning_effort: "low",
         write: false,
       }),
@@ -625,6 +669,8 @@ describe("detached worker handoff", () => {
       },
       getProcessIdentity() {
         return "worker-47103";
+
+
       },
       createWorkerLogStdio() {
         return {
@@ -657,9 +703,11 @@ describe("detached worker handoff", () => {
 
     await assert.rejects(
       agentRuntime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "terminal_handoff",
         message: "preserve before reconciliation",
-        model: "haiku",
+        model: "claude-haiku-4-5",
         reasoning_effort: "low",
         write: false,
       }),
@@ -695,9 +743,11 @@ describe("detached worker handoff", () => {
 
     await assert.rejects(
       agentRuntime.spawnAgent({
+        topology: "leaf",
+        harness: "claude-code",
         task_name: "unknown_handoff",
         message: "do not detach me",
-        model: "haiku",
+        model: "claude-haiku-4-5",
         reasoning_effort: "low",
         write: false,
       }),
