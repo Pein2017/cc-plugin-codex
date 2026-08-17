@@ -284,8 +284,9 @@ function closedFinishReason(finish) {
  *
  * @param {*} response the pinned `{info, parts}` payload, unvalidated
  * @param {*} expected the exact lineage the caller proved before submitting
- * @returns {{ok: true, finalMessage: string, metadata: object, lineage: object}
- *   | {ok: false, code: string, field?: string, providerErrorName?: string}}
+ * @returns {{ok: boolean, finalMessage?: string, metadata?: object, lineage?: object,
+ *   code?: string, field?: string, providerErrorName?: string}} exactly one arm is
+ *   populated: `ok: true` carries the projection, `ok: false` carries a closed code.
  */
 export function selectOpencodeExplorerFinalResult(response, expected) {
   const lineage = requireExpectedLineage(expected);

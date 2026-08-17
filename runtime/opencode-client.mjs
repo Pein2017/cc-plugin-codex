@@ -69,6 +69,9 @@ export const OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES = 8_388_608; // 8 MiB
  * The frozen response ceiling for one request path, resolved before the network
  * call. The catalog path is matched exactly: a neighbouring endpoint such as
  * `/api/provider`, `/provider/auth`, or `/provider/` keeps the global bound.
+ *
+ * @param {string} pathname
+ * @returns {number}
  */
 export function resolveOpencodeResponseCeiling(pathname) {
   return pathname === OPENCODE_PROVIDER_CATALOG_PATH
@@ -201,7 +204,20 @@ function boundResponseSize(response, maxResponseBytes) {
  * controlled-wrapper test; this is an internal seam, not runtime/index
  * public API.
  */
-export function createFixedOriginFetch({ baseOrigin, maxResponseBytes, auditRecords }) {
+function admitDiscoveryRequest(method, pathname) {
+  void pathname; // discovery admits by method alone; the path table bounds size only
+  if (method !== "GET") {
+    throw new OpencodeClientError("mutating_request_blocked", "non-GET request blocked before network");
+  }
+}
+
+export function createFixedOriginFetch({
+  baseOrigin,
+  maxResponseBytes,
+  auditRecords,
+  admitRequest = admitDiscoveryRequest,
+  ceilingForPath = resolveOpencodeResponseCeiling,
+}) {
   return async function fixedOriginFetch(input) {
     const request = input instanceof Request ? input : new Request(input);
     let requestUrl;
@@ -213,16 +229,14 @@ export function createFixedOriginFetch({ baseOrigin, maxResponseBytes, auditReco
     if (requestUrl.origin !== baseOrigin) {
       throw new OpencodeClientError("cross_origin_rejected", "cross-origin request rejected");
     }
-    if (request.method !== "GET") {
-      throw new OpencodeClientError("mutating_request_blocked", "non-GET request blocked before network");
-    }
+    // The admission gate runs before any network call: discovery admits GET
+    // only, a turn admits exactly two POST paths, and each gate owns its own
+    // closed rejection code.
+    admitRequest(request.method, requestUrl.pathname);
     // The size ceiling is chosen from the request's own path before the network
     // call, never from the response, a header, or a caller-supplied widening: a
     // request may only ever shorten the frozen ceiling for its path.
-    const effectiveMaxResponseBytes = boundPositiveInteger(
-      maxResponseBytes,
-      resolveOpencodeResponseCeiling(requestUrl.pathname)
-    );
+    const effectiveMaxResponseBytes = boundPositiveInteger(maxResponseBytes, ceilingForPath(requestUrl.pathname));
     const outboundRequest = new Request(request, { redirect: "error" });
     auditRecords.push({ method: outboundRequest.method, path: requestUrl.pathname });
     const response = await fetch(outboundRequest);
@@ -618,4 +632,281 @@ export async function runOpencodeSideEffectFreeDiscovery(options = {}) {
     );
   }
   return { ok: true, serverUrl: handle.serverUrl, health, profile, provider, capabilities, requestAudit: audit };
+}
+
+// ---------------------------------------------------------------------------
+// The turn-scoped client seam.
+//
+// Discovery is GET-only, which is what keeps a readiness probe incapable of
+// creating anything. A turn needs exactly two mutating requests, so it gets its
+// own client with its own admission gate rather than widening the discovery
+// one: the pinned SDK's `session.create` and `session.prompt` methods, and
+// nothing else the SDK could ever be asked to do (`prompt_async`, `abort`,
+// `fork`, `share`, `summarize`, `command`, `shell`, `revert`, `delete`,
+// `update`, or any GET) is blocked before the network.
+// ---------------------------------------------------------------------------
+
+/** `session.create` in the pinned SDK: POST /session. */
+export const OPENCODE_SESSION_CREATE_PATH = "/session";
+
+/**
+ * `session.prompt` in the pinned SDK: POST /session/{sessionID}/message. The
+ * session segment is matched against a bounded identifier so a crafted id can
+ * never widen the admitted path set (`/session/x/../abort` and
+ * `/session/x/message/y` both fail this).
+ */
+export const OPENCODE_SESSION_PROMPT_PATH_PATTERN = /^\/session\/[A-Za-z0-9_-]{1,128}\/message$/;
+
+/** The bounded session-identifier shape both the path and the refs admit. */
+export const OPENCODE_SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** The pinned schema requires a message id in the `msg_` namespace. */
+export const OPENCODE_MESSAGE_ID_PATTERN = /^msg_[A-Za-z0-9_-]{1,120}$/;
+
+/**
+ * A created session record is a small object (identity, project, title,
+ * timestamps), so it keeps a bound close to the discovery one.
+ */
+export const OPENCODE_MAX_SESSION_RESPONSE_BYTES = 65_536;
+
+/**
+ * The prompt response ceiling, derived rather than guessed:
+ *
+ *   - the admitted final text is at most `OPENCODE_MAX_RAW_FINAL_TEXT_CHARS`
+ *     (262,144) characters before normalization;
+ *   - a character is at most 4 bytes in UTF-8, so that text is at most 1 MiB
+ *     on the wire, and at most ~1.5 MiB once JSON-escaped in the worst case;
+ *   - the remaining ~2.5 MiB bounds everything else one assistant message
+ *     carries: its own fields, the step/tool/reasoning parts of a multi-step
+ *     turn, and the earlier text parts the result selector counts.
+ *
+ * 4 MiB is therefore a real ceiling with headroom, not an unbounded read: a
+ * response beyond it is refused at the declared length or mid-stream, exactly
+ * like every other response this client reads.
+ */
+export const OPENCODE_MAX_TURN_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+/** Whether one method/path pair is one of the two admitted turn requests. */
+export function isAdmittedOpencodeTurnRequest(method, pathname) {
+  if (method !== "POST") return false;
+  if (pathname === OPENCODE_SESSION_CREATE_PATH) return true;
+  return OPENCODE_SESSION_PROMPT_PATH_PATTERN.test(pathname);
+}
+
+/**
+ * The frozen response ceiling for one admitted turn path.
+ *
+ * @param {string} pathname
+ * @returns {number}
+ */
+export function resolveOpencodeTurnResponseCeiling(pathname) {
+  return pathname === OPENCODE_SESSION_CREATE_PATH
+    ? OPENCODE_MAX_SESSION_RESPONSE_BYTES
+    : OPENCODE_MAX_TURN_RESPONSE_BYTES;
+}
+
+function admitTurnRequest(method, pathname) {
+  if (!isAdmittedOpencodeTurnRequest(method, pathname)) {
+    throw new OpencodeClientError(
+      "request_not_admitted",
+      "only the pinned session-create and session-prompt requests are admitted; blocked before network"
+    );
+  }
+}
+
+const TURN_HANDLE_ENTRIES = new WeakMap();
+
+class OpencodeTurnHandle {
+  constructor(serverUrl) {
+    this.serverUrl = serverUrl;
+    Object.freeze(this);
+  }
+}
+
+/** @typedef {InstanceType<typeof OpencodeTurnHandle>} OpencodeTurnHandleType */
+
+function requireTurnEntry(handle) {
+  const entry = handle instanceof OpencodeTurnHandle ? TURN_HANDLE_ENTRIES.get(handle) : undefined;
+  if (!entry) {
+    throw new OpencodeClientError("invalid_turn_handle", "not a valid OpenCode turn handle");
+  }
+  return entry;
+}
+
+/**
+ * Construct the one pinned, fixed-origin client a single Agent's turns use, and
+ * return only an opaque handle. Performs no I/O: like the discovery client it
+ * validates configuration, composes inherited-only auth, and wires exactly one
+ * audited fetch implementation.
+ *
+ * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string,
+ *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number}} [options]
+ */
+export function createOpencodeTurnClient(options = {}) {
+  const rawEnv = options.env ?? process.env;
+  const { env: mergedEnv } = resolveRuntimeEnvironment({ cwd: options.cwd, envFile: options.envFile, env: rawEnv });
+  const serverUrl = resolveOpencodeServerUrl(mergedEnv);
+  const authorizationHeader = buildAuthorizationHeader(readOpencodeSecrets(rawEnv));
+  const baseOrigin = new URL(serverUrl).origin;
+  const requestAudit = { records: [] };
+  const sdkClient = createOpencodeSdkClient({
+    baseUrl: serverUrl,
+    fetch: createFixedOriginFetch({
+      baseOrigin,
+      // No caller-shortened bound: a turn reads exactly the frozen per-path
+      // ceilings for session creation and the prompt result.
+      maxResponseBytes: null,
+      auditRecords: requestAudit.records,
+      admitRequest: admitTurnRequest,
+      ceilingForPath: resolveOpencodeTurnResponseCeiling,
+    }),
+    headers: authorizationHeader ? { authorization: authorizationHeader } : undefined,
+    redirect: "error",
+  });
+  const handle = new OpencodeTurnHandle(serverUrl);
+  TURN_HANDLE_ENTRIES.set(handle, {
+    sdkClient,
+    requestAudit,
+    acceptanceCeilingMs: boundPositiveInteger(options.acceptanceTimeoutMs, OPENCODE_DEADLINES_MS.acceptance),
+    turnCeilingMs: boundPositiveInteger(options.turnTimeoutMs, OPENCODE_DEADLINES_MS.turn),
+  });
+  return handle;
+}
+
+/** The bounded, sanitized request audit summary for a turn handle. */
+export function getOpencodeTurnAudit(handle) {
+  return summarizeRequestAudit(requireTurnEntry(handle).requestAudit);
+}
+
+function boundedDirectory(directory) {
+  if (directory == null) return undefined;
+  if (typeof directory !== "string" || !directory.startsWith("/") || directory.length > 4096) {
+    throw new OpencodeClientError("invalid_workspace_directory", "the workspace directory must be an absolute path");
+  }
+  return directory;
+}
+
+/**
+ * Create one fresh native session for one Agent.
+ *
+ * The body states only the reviewed profile and the exact admitted model. It
+ * never carries a per-session `permission` ruleset (that would be a dynamic
+ * policy selector the route forbids), a title derived from the caller's task
+ * (prompt text does not belong in session metadata), or a parent session.
+ *
+ * @param {OpencodeTurnHandleType} handle
+ * @param {{agent: string, providerId: string, modelId: string, directory?: string,
+ *   signal?: AbortSignal, timeoutMs?: number}} options
+ */
+export async function createOpencodeSession(handle, options) {
+  const entry = requireTurnEntry(handle);
+  const agent = nonEmptyString(options?.agent);
+  const providerId = nonEmptyString(options?.providerId);
+  const modelId = nonEmptyString(options?.modelId);
+  if (!agent || !providerId || !modelId) {
+    throw new OpencodeClientError("session_target_required", "an agent, provider, and model are required");
+  }
+  const directory = boundedDirectory(options?.directory);
+  const timeoutMs = boundPositiveInteger(options?.timeoutMs, entry.acceptanceCeilingMs);
+  const deadlineSignal = composeDeadlineSignal(timeoutMs, options?.signal);
+  admitTurnRequest("POST", OPENCODE_SESSION_CREATE_PATH);
+  try {
+    const result = await entry.sdkClient.session.create(
+      {
+        agent,
+        model: { id: modelId, providerID: providerId },
+        ...(directory === undefined ? {} : { directory }),
+      },
+      { signal: deadlineSignal }
+    );
+    if (result.error !== undefined || !result.data) {
+      return { ok: false, ...classifyDiscoveryFailure(result.error, result.response) };
+    }
+    const session = result.data;
+    if (!isBoundedString(session.id, 128) || !OPENCODE_SESSION_ID_PATTERN.test(session.id)) {
+      return { ok: false, code: "malformed_response", retryable: false };
+    }
+    if (session.parentID !== undefined && session.parentID !== null) {
+      // A child session is a different lineage than the one this Driver asked
+      // for; it is refused rather than adopted.
+      return { ok: false, code: "malformed_response", retryable: false };
+    }
+    return { ok: true, sessionId: session.id };
+  } catch (error) {
+    return { ok: false, ...classifyDiscoveryFailure(error, undefined) };
+  }
+}
+
+/**
+ * Start the one blocking prompt request that owns a turn.
+ *
+ * Everything that can be refused without a network call -- the admitted path,
+ * the bounded identifiers, the workspace -- is checked synchronously, so a
+ * caller that catches a synchronous throw has proof no request was dispatched.
+ * The returned promise is the request itself: the caller keeps it as its live
+ * turn and must not await it before proving lineage.
+ *
+ * The body states the exact model, the reviewed profile, the caller-generated
+ * user-message id, and one text part. It never carries `tools`, `system`,
+ * `variant`, `format`, or `noReply`: a per-call tool map or system override is
+ * exactly the dynamic selector this route refuses, and the prompt text is the
+ * only content the Driver sends.
+ *
+ * @param {OpencodeTurnHandleType} handle
+ * @param {{sessionId: string, messageId: string, agent: string, providerId: string,
+ *   modelId: string, text: string, directory?: string, signal?: AbortSignal,
+ *   timeoutMs?: number}} options
+ */
+export function submitOpencodePrompt(handle, options) {
+  const entry = requireTurnEntry(handle);
+  const sessionId = nonEmptyString(options?.sessionId);
+  const messageId = nonEmptyString(options?.messageId);
+  const agent = nonEmptyString(options?.agent);
+  const providerId = nonEmptyString(options?.providerId);
+  const modelId = nonEmptyString(options?.modelId);
+  const text = typeof options?.text === "string" ? options.text : "";
+  if (!sessionId || !OPENCODE_SESSION_ID_PATTERN.test(sessionId)) {
+    throw new OpencodeClientError("invalid_session_id", "a bounded session identifier is required");
+  }
+  if (!messageId || !OPENCODE_MESSAGE_ID_PATTERN.test(messageId)) {
+    throw new OpencodeClientError("invalid_message_id", "a bounded msg_ identifier is required");
+  }
+  if (!agent || !providerId || !modelId || !text) {
+    throw new OpencodeClientError("prompt_target_required", "an agent, provider, model, and prompt text are required");
+  }
+  const directory = boundedDirectory(options?.directory);
+  const timeoutMs = boundPositiveInteger(options?.timeoutMs, entry.turnCeilingMs);
+  // Proven before dispatch: the exact path this request will use is one of the
+  // two admitted ones.
+  admitTurnRequest("POST", `/session/${sessionId}/message`);
+  const deadlineSignal = composeDeadlineSignal(timeoutMs, options?.signal);
+  const dispatched = entry.sdkClient.session
+    .prompt(
+      {
+        sessionID: sessionId,
+        messageID: messageId,
+        agent,
+        model: { providerID: providerId, modelID: modelId },
+        parts: [{ type: "text", text }],
+        ...(directory === undefined ? {} : { directory }),
+      },
+      { signal: deadlineSignal }
+    )
+    .then((result) => {
+      if (result.error !== undefined || !result.data) {
+        const classified = classifyDiscoveryFailure(result.error, result.response);
+        const status = result.response?.status ?? null;
+        // 400 and 404 are the only refusals the pinned schema declares for this
+        // request. They prove the Server rejected the prompt itself, so no
+        // provider work happened and the outcome is not ambiguous. Every other
+        // outcome leaves acceptance unknown.
+        if (status === 400 || status === 404) {
+          return { ok: false, code: "prompt_refused", retryable: false, status };
+        }
+        return { ok: false, ...classified, status };
+      }
+      return { ok: true, response: result.data };
+    })
+    .catch((error) => ({ ok: false, ...classifyDiscoveryFailure(error, undefined), status: null }));
+  return dispatched;
 }

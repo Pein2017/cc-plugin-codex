@@ -26,6 +26,8 @@ import {
   OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES,
   OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES,
   OPENCODE_MAX_RESPONSE_BYTES,
+  OPENCODE_MAX_SESSION_RESPONSE_BYTES,
+  OPENCODE_MAX_TURN_RESPONSE_BYTES,
   OPENCODE_PROVIDER_CATALOG_PATH,
   OpencodeClientError,
   boundPositiveInteger,
@@ -37,11 +39,16 @@ import {
   discoverOpencodeProviderCatalog,
   getOpencodeDiscoveryAudit,
   isLoopbackOpencodeUrl,
+  createOpencodeTurnClient,
+  isAdmittedOpencodeTurnRequest,
   resolveOpencodeResponseCeiling,
   resolveOpencodeServerUrl,
+  resolveOpencodeTurnResponseCeiling,
   runOpencodeSideEffectFreeDiscovery,
+  submitOpencodePrompt,
   summarizeRequestAudit,
 } from "../../runtime/opencode-client.mjs";
+import { OPENCODE_MAX_RAW_FINAL_TEXT_CHARS } from "../../runtime/opencode-result.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
 
 const PROVIDER_ID = "opencode-go";
@@ -455,6 +462,122 @@ describe("opencode-client: provider-catalog response ceiling", () => {
       code: "response_too_large",
       retryable: false,
     });
+  });
+});
+
+/**
+ * Task 5 gives session creation and the blocking prompt their own client. The
+ * point of a second client rather than a widened first one is that the discovery
+ * handle stays incapable of creating anything, and that the turn handle admits
+ * exactly two POST paths -- every other method and path the pinned SDK could
+ * ever be asked for is refused before the network.
+ */
+describe("opencode-client: turn-scoped admission gate", () => {
+  it("admits exactly the two pinned mutating requests", () => {
+    assert.equal(isAdmittedOpencodeTurnRequest("POST", "/session"), true);
+    assert.equal(isAdmittedOpencodeTurnRequest("POST", "/session/ses_abc/message"), true);
+    for (const [method, pathname] of [
+      ["POST", "/session/ses_abc/abort"],
+      ["POST", "/session/ses_abc/prompt_async"],
+      ["POST", "/session/ses_abc/fork"],
+      ["POST", "/session/ses_abc/share"],
+      ["POST", "/session/ses_abc/summarize"],
+      ["POST", "/session/ses_abc/command"],
+      ["POST", "/session/ses_abc/shell"],
+      ["POST", "/session/ses_abc/revert"],
+      ["POST", "/session/ses_abc/init"],
+      ["POST", "/session/ses_abc/message/msg_1"],
+      ["POST", "/session/ses_abc/permissions/per_1"],
+      ["POST", "/sessions"],
+      ["POST", "/session/message"],
+      ["POST", "/session/ses_abc/../abort"],
+      ["POST", "/api/provider"],
+      ["GET", "/session"],
+      ["GET", "/session/ses_abc/message"],
+      ["DELETE", "/session/ses_abc"],
+      ["PATCH", "/session/ses_abc"],
+      ["PUT", "/session/ses_abc/message"],
+    ]) {
+      assert.equal(isAdmittedOpencodeTurnRequest(method, pathname), false, `${method} ${pathname}`);
+    }
+  });
+
+  it("blocks a non-admitted turn request before any network call reaches it", async () => {
+    const { url, server } = await startServer({});
+    const auditRecords = [];
+    const wrapped = createFixedOriginFetch({
+      baseOrigin: new URL(url).origin,
+      maxResponseBytes: null,
+      auditRecords,
+      admitRequest: (method, pathname) => {
+        if (!isAdmittedOpencodeTurnRequest(method, pathname)) {
+          throw new OpencodeClientError("request_not_admitted", "blocked before network");
+        }
+      },
+      ceilingForPath: resolveOpencodeTurnResponseCeiling,
+    });
+    for (const [method, path] of [
+      ["POST", "/session/ses_abc/abort"],
+      ["POST", "/session/ses_abc/prompt_async"],
+      ["GET", "/session"],
+      ["DELETE", "/session/ses_abc"],
+    ]) {
+      await assert.rejects(
+        () => wrapped(new Request(`${url}${path}`, { method })),
+        (error) => error instanceof OpencodeClientError && error.code === "request_not_admitted",
+        `${method} ${path}`
+      );
+    }
+    assert.deepEqual(server.requests, [], "nothing reached the Server");
+    assert.deepEqual(auditRecords, [], "a blocked request is never audited as dispatched");
+  });
+
+  it("derives the prompt ceiling from the admitted raw final-text bound", () => {
+    assert.equal(resolveOpencodeTurnResponseCeiling("/session"), OPENCODE_MAX_SESSION_RESPONSE_BYTES);
+    assert.equal(resolveOpencodeTurnResponseCeiling("/session/ses_abc/message"), OPENCODE_MAX_TURN_RESPONSE_BYTES);
+    // 262,144 admitted characters at up to 4 UTF-8 bytes each is 1 MiB, ~1.5 MiB
+    // once JSON-escaped in the worst case; the ceiling keeps that plus the rest
+    // of a multi-step assistant message inside one frozen bound.
+    assert.equal(OPENCODE_MAX_TURN_RESPONSE_BYTES, 4 * 1024 * 1024);
+    assert.ok(OPENCODE_MAX_TURN_RESPONSE_BYTES >= OPENCODE_MAX_RAW_FINAL_TEXT_CHARS * 4);
+    assert.ok(OPENCODE_MAX_SESSION_RESPONSE_BYTES < OPENCODE_MAX_TURN_RESPONSE_BYTES);
+  });
+
+  it("refuses an unusable prompt target synchronously, before dispatch", async () => {
+    const { url, server } = await startServer({});
+    const handle = createOpencodeTurnClient({ env: { OPENCODE_SERVER_URL: url } });
+    for (const overrides of [
+      { sessionId: "ses/../escape" },
+      { sessionId: "" },
+      { messageId: "not-a-msg-id" },
+      { messageId: "" },
+      { text: "" },
+      { agent: "" },
+    ]) {
+      assert.throws(
+        () =>
+          submitOpencodePrompt(handle, {
+            sessionId: "ses_abc",
+            messageId: "msg_abc",
+            agent: "codex-explorer",
+            providerId: PROVIDER_ID,
+            modelId: MODEL_ID,
+            text: "prompt",
+            ...overrides,
+          }),
+        (error) => error instanceof OpencodeClientError,
+        JSON.stringify(overrides)
+      );
+    }
+    assert.deepEqual(server.requests, []);
+  });
+
+  it("never exposes the pinned client or a per-call origin override on a turn handle", async () => {
+    const { url } = await startServer({});
+    const handle = createOpencodeTurnClient({ env: { OPENCODE_SERVER_URL: url } });
+    assert.deepEqual(Object.keys(handle), ["serverUrl"]);
+    assert.equal("client" in handle, false);
+    assert.equal(Object.isFrozen(handle), true);
   });
 });
 
