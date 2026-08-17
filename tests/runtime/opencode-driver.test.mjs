@@ -58,6 +58,7 @@ import {
   fakeAssistantMessage,
   fakeTextPart,
 } from "./fixtures/fake-opencode-server.mjs";
+import { inspectInstancesWithOneTransportRetry } from "./fixtures/bounded-transport-retry.mjs";
 
 const WORKSPACE_ROOT = "/opt/operator-owned/workspace";
 const TASK_INPUT = "Map how the static Driver registry admits a Harness.";
@@ -152,7 +153,11 @@ function routeRequest() {
 
 /** Route + prepared turn + scope, each through its real contract validator. */
 async function acceptedTurn(driver, url, { taskInput = TASK_INPUT, scopeOverrides = {} } = {}) {
-  const [inspection] = await driver.inspectInstances(
+  // Setup, not the scenario: every caller of this helper is asserting something
+  // downstream of a ready instance, so one transport-class reading of its own
+  // just-started fake Server is re-observed rather than failing the scenario.
+  const [inspection] = await inspectInstancesWithOneTransportRetry(
+    driver,
     createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT })
   );
   const request = routeRequest();

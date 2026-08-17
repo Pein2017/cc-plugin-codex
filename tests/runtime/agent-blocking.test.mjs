@@ -20,10 +20,11 @@ function blocking(turnFailureClass, supervisorFailureClass, continuationMode = "
 }
 
 describe("Agent blocking projection", () => {
-  it("closes the public reason vocabulary at exactly the nine accepted values", () => {
+  it("closes the public reason vocabulary at exactly the ten accepted values", () => {
     assert.deepEqual(AGENT_BLOCKING_REASON_NAMES, [
       "account_limit",
       "auth_required",
+      "continuation_unsupported",
       "harness_incompatible",
       "interrupted_unflushed",
       "route_unsupported",
@@ -285,5 +286,48 @@ describe("Agent blocking projection", () => {
     assert.throws(() => assertAgentBlocking("blocked"));
     assert.throws(() => assertAgentBlocking({ reason: "auth_required", scope: "harness", retry: "same_agent_followup" }));
     assert.throws(() => assertAgentBlocking({ reason: "worker_lost", scope: "agent", retry: "operator_required" }));
+  });
+});
+
+describe("a route that proves no continuation is named, not defaulted", () => {
+  it("maps both fresh-only continuation projections to one precise Agent-scoped reason", () => {
+    // `classifyVersionThreeContinuation` states the same fact from two sides:
+    // the Driver's declared mode and the route's declared capability. Both mean
+    // the same thing to a caller -- there is no same-Agent second turn.
+    for (const evidence of [
+      "driver_continuation_not_exact_resume",
+      "route_continuation_not_exact_resume",
+    ]) {
+      assert.deepEqual(
+        deriveBlockedContinuationRejection({
+          continuationEvidenceReason: evidence,
+          continuationMode: "blocked",
+        }),
+        { reason: "continuation_unsupported", scope: "agent", retry: "new_agent" },
+        evidence,
+      );
+    }
+  });
+
+  it("still reports unreadable continuation evidence as the anomaly it is", () => {
+    // These five mean the Driver said something this runtime could not read.
+    // That is what the defensive default exists for, and naming them would
+    // claim a diagnosis nobody made.
+    for (const evidence of [
+      "driver_continuation_absent",
+      "driver_continuation_reference_missing",
+      "driver_continuation_reference_unreadable",
+      "route_identity_mismatch",
+      "something_no_table_declares",
+    ]) {
+      assert.equal(
+        deriveBlockedContinuationRejection({
+          continuationEvidenceReason: evidence,
+          continuationMode: "blocked",
+        }).reason,
+        "unclassified",
+        evidence,
+      );
+    }
   });
 });

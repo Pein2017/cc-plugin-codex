@@ -2590,3 +2590,90 @@ describe("durable opaque field canonicalization (reopened acceptance repair)", (
     assert.equal(once.failure.detail.retries[0], 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Every admitted Driver, not just the fixture one (Task 9.1).
+//
+// The cases above prove the contract against `fake-service`, which exists to be
+// bent in ways a real Driver never would. That leaves the real question
+// unasked: does every Driver this checkout actually admits satisfy the same
+// contract? These enumerate `ADMITTED_DRIVER_V2_HARNESS_IDS` rather than a hand
+// list, so a Driver added later joins this suite by existing.
+//
+// Only the STATIC half is shared here. `inspectInstances()` and everything
+// downstream of it need per-Driver scaffolding -- a fake Server for OpenCode, a
+// seamed host observation for Claude -- and those semantics already have their
+// own owning suites. Re-proving them here would duplicate, not generalize.
+// ---------------------------------------------------------------------------
+
+describe("Driver Contract v2 conformance across every admitted Harness", () => {
+  const admittedDrivers = () =>
+    ADMITTED_DRIVER_V2_HARNESS_IDS.map((harnessId) => ({
+      harnessId,
+      driver: resolveDriverV2(harnessId, { env: {} }),
+    }));
+
+  it("admits every statically registered Driver under the same validation", () => {
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
+    for (const { harnessId, driver } of admittedDrivers()) {
+      assert.equal(validateDriverV2(driver), driver, harnessId);
+      assert.equal(admitDriverV2(driver), driver, harnessId);
+      assert.equal(driver.harnessId, harnessId);
+      assert.equal(driver.contractVersion, DRIVER_CONTRACT_VERSION_V2);
+      assert.match(driver.driverVersion, /^[a-z0-9-]+@\d+$/, harnessId);
+    }
+  });
+
+  it("implements every required operation and declares no optional one as a non-function", () => {
+    for (const { harnessId, driver } of admittedDrivers()) {
+      for (const operation of DRIVER_V2_OPERATIONS) {
+        assert.equal(typeof driver[operation], "function", `${harnessId}.${operation}`);
+      }
+      for (const operation of DRIVER_V2_OPTIONAL_OPERATIONS) {
+        if (driver[operation] != null) {
+          assert.equal(typeof driver[operation], "function", `${harnessId}.${operation}`);
+        }
+      }
+    }
+  });
+
+  it("keeps describe() static, argument-free, and free of endpoint or credential identity", () => {
+    for (const { harnessId, driver } of admittedDrivers()) {
+      assert.equal(driver.describe.length, 0, harnessId);
+      const first = driver.describe();
+      const second = driver.describe();
+      assert.deepEqual(first, second, harnessId);
+      assert.equal(first.harnessId, harnessId);
+      assert.equal(first.contractVersion, DRIVER_CONTRACT_VERSION_V2);
+      assert.equal(first.driverVersion, driver.driverVersion);
+      assert.equal(typeof first.maturity, "string");
+      // A description is static metadata, so it can carry no live identity.
+      const serialized = JSON.stringify(first);
+      assert.doesNotMatch(serialized, /https?:\/\/|password|username|token|secret/i, harnessId);
+      // The declared environment keys are names, never values.
+      for (const key of first.environmentKeys ?? []) {
+        assert.match(key, /^[A-Z][A-Z0-9_]*$/, `${harnessId} environmentKeys`);
+      }
+    }
+  });
+
+  it("refuses to resolve a Driver whose registry identity does not match the request", () => {
+    for (const harnessId of ADMITTED_DRIVER_V2_HARNESS_IDS) {
+      // A miscased identity is refused by the identity vocabulary itself, before
+      // the registry is consulted; either refusal is fail-closed.
+      assert.throws(
+        () => resolveDriverV2(harnessId.toUpperCase(), { env: {} }),
+        /Invalid Harness ID|Unknown Harness/,
+        harnessId,
+      );
+    }
+    assert.throws(() => resolveDriverV2("", { env: {} }), /Harness/);
+    assert.throws(() => resolveDriverV2(undefined, { env: {} }), /Harness/);
+  });
+
+  it("gives every admitted Driver a distinct Harness identity and Driver version", () => {
+    const drivers = admittedDrivers();
+    assert.equal(new Set(drivers.map((entry) => entry.harnessId)).size, drivers.length);
+    assert.equal(new Set(drivers.map((entry) => entry.driver.driverVersion)).size, drivers.length);
+  });
+});

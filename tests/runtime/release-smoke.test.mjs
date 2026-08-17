@@ -12,6 +12,8 @@ import {
   runPaidSmoke,
   runReleaseSmoke,
 } from "../../runtime/release-smoke.mjs";
+import { HARNESSDOCK_MCP_TOOL_NAMES } from "../../runtime/mcp-server.mjs";
+import { ADMITTED_GENERATION_HARNESS_IDS } from "../../runtime/harness-registry.mjs";
 import { createClaudeCodeDriver } from "../../runtime/claude-code-driver.mjs";
 import { StreamParser } from "../../runtime/claude-headless-adapter.mjs";
 import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
@@ -158,11 +160,10 @@ describe("release smoke", () => {
         probeOptions = options;
         return {
           healthy: true,
-          tools: [
-            "spawn_agent", "send_message", "followup_task", "wait_agent",
-            "interrupt_agent", "list_agents", "read_agent_messages",
-          ],
+          tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
           agentCount: 0,
+          harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
+          schemaRejected: true,
           paid: { requested: false, status: "skipped" },
         };
       },
@@ -171,7 +172,7 @@ describe("release smoke", () => {
     assert.equal(report.zeroModelCost, true);
     assert.equal(probeOptions.realClaude, false);
     assert.equal(report.skills.length, 8);
-    assert.equal(report.tools.length, 7);
+    assert.equal(report.tools.length, 8);
     assert.equal(report.compatibilityShells.valid, true);
     assert.equal(report.compatibilityShells.count, 0);
     assert.equal(report.compatibilityShells.coverageState, "unmanaged");
@@ -291,7 +292,7 @@ describe("release smoke", () => {
       callListAgents: true,
     });
     assert.equal(report.healthy, true);
-    assert.equal(report.tools.length, 7);
+    assert.equal(report.tools.length, 8);
     assert.equal(report.agentCount, 0);
     assert.deepEqual(report.paid, { requested: false, status: "skipped" });
   });
@@ -685,5 +686,51 @@ describe("release smoke", () => {
     assert.deepEqual(JSON.parse(stdout.join("")), {
       status: "unverified", liveVerified: false, reason: "native_team_witness_error",
     });
+  });
+});
+
+describe("release smoke: the installed surface must be complete, not merely present", () => {
+  it("refuses an installed Plugin whose MCP surface is not the eight-tool contract", async () => {
+    const fixture = matchingSnapshot();
+    await assert.rejects(
+      runReleaseSmoke({
+        installed: fixture.installed,
+        // `healthy: false` is what the probe reports for a surface that is not
+        // exactly the eight tools, an unexpected Agent, a Harness count that
+        // does not match this release, or a schema that accepted an undeclared
+        // argument.
+        probeMcp: async () => ({
+          healthy: false,
+          tools: HARNESSDOCK_MCP_TOOL_NAMES.slice(0, 7),
+          agentCount: 0,
+          harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
+          schemaRejected: true,
+          paid: { requested: false, status: "skipped" },
+        }),
+      }),
+      /eight-tool contract/,
+    );
+  });
+
+  it("carries the zero-model witnesses into the report", async () => {
+    const fixture = matchingSnapshot();
+    const report = await runReleaseSmoke({
+      installed: fixture.installed,
+      probeMcp: async () => ({
+        healthy: true,
+        tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
+        agentCount: 0,
+        harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
+        schemaRejected: true,
+        paid: { requested: false, status: "skipped" },
+      }),
+    });
+    assert.equal(report.status, "pass");
+    // Zero model cost is the property this smoke exists to keep: it observes
+    // Skills, tools, and Harness admission, and starts no turn.
+    assert.equal(report.zeroModelCost, true);
+    assert.deepEqual(report.paid, { requested: false, status: "skipped" });
+    assert.equal(report.skills.length, 8);
+    assert.equal(report.tools.length, 8);
   });
 });

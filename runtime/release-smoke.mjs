@@ -10,6 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { HARNESSDOCK_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
+import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
 import { createExecutionProfile } from "./execution-profile.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
@@ -508,6 +509,8 @@ export async function probeInstalledMcp(options = {}) {
     const listed = await client.listTools(undefined, callOptions(60_000));
     const tools = listed.tools.map((tool) => tool.name);
     let agentCount = null;
+    let harnessCount = null;
+    let schemaRejected = null;
     if (options.callListAgents !== false) {
       const result = await client.callTool({ name: "list_agents", arguments: {}, _meta: meta }, undefined, callOptions(60_000));
       if (result?.isError) throw toolError(result, "list_agents");
@@ -515,6 +518,41 @@ export async function probeInstalledMcp(options = {}) {
       if (!Array.isArray(agents)) throw new Error("list_agents returned no structured Agent array.");
       agentCount = agents.length;
       if (agentCount !== 0) throw new Error("Isolated release-smoke root unexpectedly contains Agents.");
+
+      // Harness discovery is the one multi-Harness observation that is
+      // side-effect free by contract: it starts no work, mutates no Agent, and
+      // does not start, stop, or reconfigure any Harness's Server. It is
+      // therefore the only new call this zero-model smoke may add.
+      const harnesses = await client.callTool(
+        { name: "list_harnesses", arguments: {}, _meta: meta },
+        undefined,
+        callOptions(60_000),
+      );
+      if (harnesses?.isError) throw toolError(harnesses, "list_harnesses");
+      const records = /** @type {any} */ (harnesses?.structuredContent)?.harnesses;
+      if (!Array.isArray(records)) throw new Error("list_harnesses returned no structured Harness array.");
+      harnessCount = records.length;
+      if (harnessCount !== ADMITTED_GENERATION_HARNESS_IDS.length) {
+        throw new Error(
+          `Installed Plugin reported ${harnessCount} admitted Harnesses; this release admits ` +
+          `${ADMITTED_GENERATION_HARNESS_IDS.length}.`
+        );
+      }
+      // Readiness is reported, never required: an operator whose Server is down
+      // still has an admitted Harness, and this smoke spends no model tokens
+      // proving otherwise.
+
+      // The typed schema must refuse what it does not declare. A generation
+      // that silently accepted an unknown field would accept a defaulted route.
+      const rejected = await client.callTool(
+        { name: "list_harnesses", arguments: { harness: "opencode" }, _meta: meta },
+        undefined,
+        callOptions(60_000),
+      );
+      schemaRejected = rejected?.isError === true;
+      if (!schemaRejected) {
+        throw new Error("Installed Plugin accepted an argument list_harnesses does not declare.");
+      }
     }
     let paid = { requested: false, status: "skipped" };
     if (options.realClaude === true) {
@@ -524,9 +562,14 @@ export async function probeInstalledMcp(options = {}) {
       paidCompleted = true;
     }
     return {
-      healthy: exactTools(tools) && (agentCount == null || agentCount === 0),
+      healthy: exactTools(tools) &&
+        (agentCount == null || agentCount === 0) &&
+        (harnessCount == null || harnessCount === ADMITTED_GENERATION_HARNESS_IDS.length) &&
+        (schemaRejected == null || schemaRejected === true),
       tools,
       agentCount,
+      harnessCount,
+      schemaRejected,
       paid,
     };
   } finally {

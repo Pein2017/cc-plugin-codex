@@ -50,6 +50,7 @@ import {
 } from "../../runtime/opencode-client.mjs";
 import { OPENCODE_MAX_RAW_FINAL_TEXT_CHARS } from "../../runtime/opencode-result.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
+import { withOneTransportRetry } from "./fixtures/bounded-transport-retry.mjs";
 
 const PROVIDER_ID = "opencode-go";
 const MODEL_ID = "deepseek-v4-flash";
@@ -667,14 +668,14 @@ describe("opencode-client: side-effect-free discovery against a fake Server", ()
     const agents = Array.from({ length: 300 }, (_, index) => ({ name: `agent-${index}`, mode: "primary", native: false }));
     const { url } = await startServer({ agents: { status: 200, body: agents } });
     const handle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url } });
-    const result = await discoverOpencodeProfile(handle);
+    const result = await withOneTransportRetry(() => discoverOpencodeProfile(handle));
     assert.deepEqual(result, { ok: false, code: "malformed_response", retryable: false });
   });
 
   it("fails closed on an oversized agent field instead of truncating it", async () => {
     const { url } = await startServer({ agents: { status: 200, body: [{ name: "x".repeat(1000), mode: "primary", native: false }] } });
     const handle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url } });
-    const result = await discoverOpencodeProfile(handle);
+    const result = await withOneTransportRetry(() => discoverOpencodeProfile(handle));
     assert.deepEqual(result, { ok: false, code: "malformed_response", retryable: false });
   });
 
@@ -690,7 +691,9 @@ describe("opencode-client: side-effect-free discovery against a fake Server", ()
       },
     });
     const handle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url } });
-    const result = await discoverOpencodeProviderCatalog(handle, { providerId: PROVIDER_ID, modelId: MODEL_ID });
+    const result = await withOneTransportRetry(
+      () => discoverOpencodeProviderCatalog(handle, { providerId: PROVIDER_ID, modelId: MODEL_ID }),
+    );
     assert.deepEqual(result, { ok: false, code: "malformed_response", retryable: false });
   });
 

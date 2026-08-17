@@ -621,3 +621,41 @@ export function createClaudeRuntime() {
     assert.deepEqual(listed.tools.map((tool) => tool.name), HARNESSDOCK_MCP_TOOL_NAMES);
   });
 });
+
+describe("MCP server option admission", () => {
+  it("refuses a bare function where an options object belongs", () => {
+    // The trap this closes: a bare factory is silently ignored, the server
+    // falls back to the isolated worker, and that worker builds its runtime
+    // from the operator's real configuration.
+    assert.throws(
+      () => createCcMcpServer(() => ({})),
+      /takes an options object[\s\S]*bare function is not a runtime factory/i,
+    );
+    for (const argument of [null, [], "runtimeFactory", 7]) {
+      assert.throws(() => createCcMcpServer(argument), /takes an options object/i);
+    }
+  });
+
+  it("refuses an option it does not declare and a non-function seam", () => {
+    assert.throws(
+      () => createCcMcpServer({ runtime: () => ({}) }),
+      /does not accept "runtime"/,
+    );
+    assert.throws(
+      () => createCcMcpServer({ runtimeFactory: {} }),
+      /runtimeFactory must be a function/,
+    );
+    assert.throws(
+      () => createCcMcpServer({ runtimeInvoker: "isolated" }),
+      /runtimeInvoker must be a function/,
+    );
+  });
+
+  it("still accepts the production default and each declared seam", () => {
+    for (const options of [undefined, {}, { runtimeFactory: () => ({}) }, { runtimeInvoker: async () => ({}) }]) {
+      const server = createCcMcpServer(options);
+      assert.ok(server);
+      server.close();
+    }
+  });
+});

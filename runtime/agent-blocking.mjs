@@ -24,6 +24,7 @@ export const AGENT_BLOCKING_REASONS = Object.freeze({
   session_lost: "agent",
   interrupted_unflushed: "agent",
   route_unsupported: "agent",
+  continuation_unsupported: "agent",
   worker_lost: "agent",
   unclassified: "agent",
 });
@@ -100,6 +101,19 @@ const SUPERVISOR_ORIGIN_REASONS = Object.freeze({
   session_drift: "session_lost",
   legacy_agent_model_unsupported: "route_unsupported",
   legacy_agent_model_unproven: "route_unsupported",
+  // A route whose Driver proves it cannot resume its own transcript. This is
+  // the healthy, expected outcome for a fresh-only route, not an anomaly: the
+  // turn settled correctly and there simply is no same-Agent second turn to
+  // offer. The two projection reasons below are the Driver's and the route's
+  // statements of the same fact (`classifyVersionThreeContinuation`,
+  // `runtime/turn-settlement.mjs`).
+  //
+  // Its five siblings -- absent, missing, unreadable, and identity-mismatched
+  // continuation evidence -- are deliberately NOT mapped here. Those mean the
+  // Driver said something this runtime could not read, which is exactly the
+  // anomaly `unclassified` exists to report.
+  driver_continuation_not_exact_resume: "continuation_unsupported",
+  route_continuation_not_exact_resume: "continuation_unsupported",
 });
 
 // Every admitted Driver class must resolve to a reason whose declared scope
@@ -151,7 +165,11 @@ function supervisorReasonOf(value) {
  * `unclassified` is reached only by a value that is neither an admitted turn
  * class nor a named supervisor literal (including absence of both): every
  * currently producible fact has a named home in one of the two tables above,
- * so this is a defensive default, not an expected outcome.
+ * so this is a defensive default, not an expected outcome. A route that proves
+ * fresh-only continuation is the case that most nearly tested that claim --
+ * it is the ordinary settled outcome of every OpenCode Explorer turn -- and it
+ * has its own named reason, `continuation_unsupported`, for exactly that
+ * reason.
  */
 function resolveReason(turnFailureClass, supervisorFailureClass) {
   const turnReason = turnReasonOf(turnFailureClass);

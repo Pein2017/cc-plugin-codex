@@ -325,7 +325,44 @@ export function invokeIsolatedRuntimeOperation(options) {
   });
 }
 
+/**
+ * The two seams this server accepts, and nothing else.
+ *
+ * The default -- no options at all -- is production: every operation runs in an
+ * isolated worker that builds its own runtime from the resolved operator
+ * configuration. That default is why an unrecognized option must be refused
+ * rather than ignored: a caller who believes it supplied a runtime, and is
+ * silently given the isolated worker instead, reaches the operator's real
+ * configuration while believing it reached the one it passed. That exact
+ * mistake -- passing a bare factory function where an options object belongs --
+ * sent a test turn to an operator's live Server.
+ */
+const CC_MCP_SERVER_OPTIONS = Object.freeze(["runtimeFactory", "runtimeInvoker"]);
+
+/**
+ * @param {{runtimeFactory?: (context: any) => any, runtimeInvoker?: (input: any) => Promise<any>}} [options]
+ */
 export function createCcMcpServer(options = {}) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error(
+      "createCcMcpServer takes an options object; it accepts " +
+      `${CC_MCP_SERVER_OPTIONS.join(" and ")}. A bare function is not a runtime factory.`
+    );
+  }
+  for (const key of Object.keys(options)) {
+    if (!CC_MCP_SERVER_OPTIONS.includes(key)) {
+      throw new Error(
+        `createCcMcpServer does not accept ${JSON.stringify(key)}; it accepts ` +
+        `${CC_MCP_SERVER_OPTIONS.join(" and ")}.`
+      );
+    }
+  }
+  for (const key of CC_MCP_SERVER_OPTIONS) {
+    const seam = /** @type {Record<string, unknown>} */ (options)[key];
+    if (seam != null && typeof seam !== "function") {
+      throw new Error(`createCcMcpServer ${key} must be a function when stated.`);
+    }
+  }
   const runtimeFactory = options.runtimeFactory;
   const runtimeInvoker = options.runtimeInvoker ?? invokeIsolatedRuntimeOperation;
   const server = new McpServer(

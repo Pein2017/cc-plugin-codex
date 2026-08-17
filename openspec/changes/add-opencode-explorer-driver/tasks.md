@@ -64,10 +64,10 @@
 
 ## 9. Deterministic Acceptance And Installed-Smoke Preparation
 
-- [ ] 9.1 Run the shared Driver contract suite and a full fake OpenCode path through MCP → runtime → launch claim → session/turn references → completion, including the conditional continuation branch.
-- [ ] 9.2 Cover auth/quota-like/provider/profile/model failures, secret redaction, malformed result, submission uncertainty, worker loss, unknown lease retention, no restart observation, mutation witness, and idempotent reconciliation.
-- [ ] 9.3 Update and unit/integration-test zero-model-cost installed-smoke logic for exactly eight renamed Skills/tools, side-effect-free Harness discovery, explicit schema rejection, legacy Claude control, and no model request or Server lifecycle mutation; defer execution against the installed snapshot until consolidated activation.
-- [ ] 9.4 Run all focused tests, `npm run check`, `git diff --check`, `openspec validate add-opencode-explorer-driver --strict`, and `openspec validate --all --strict`; inspect the complete diff for stale namespace, accidental policy, and unrelated paths.
+- [x] 9.1 Run the shared Driver contract suite and a full fake OpenCode path through MCP → runtime → launch claim → session/turn references → completion, including the conditional continuation branch.
+- [x] 9.2 Cover auth/quota-like/provider/profile/model failures, secret redaction, malformed result, submission uncertainty, worker loss, unknown lease retention, no restart observation, mutation witness, and idempotent reconciliation.
+- [x] 9.3 Update and unit/integration-test zero-model-cost installed-smoke logic for exactly eight renamed Skills/tools, side-effect-free Harness discovery, explicit schema rejection, legacy Claude control, and no model request or Server lifecycle mutation; defer execution against the installed snapshot until consolidated activation.
+- [x] 9.4 Run all focused tests, `npm run check`, `git diff --check`, `openspec validate add-opencode-explorer-driver --strict`, and `openspec validate --all --strict`; inspect the complete diff for stale namespace, accidental policy, and unrelated paths.
 
 ## 10. Run Three Explicitly Authorized Real Explorer Examples
 
