@@ -40,11 +40,11 @@
 
 ## 6. Preserve Metrics, Persistence, And Mutation Evidence
 
-- [ ] 6.1 Map only exact finite provider-reported input/output/reasoning/cache-read/cache-write/cost fields exposed by the pinned assistant schema and keep absent/malformed fields unknown.
-- [ ] 6.2 Key usage by root, Agent, turn, attempt, Harness, instance, full model, Driver/capability version, topology, and authority; prove same-model different-Harness records never merge.
-- [ ] 6.3 Persist bounded route/session/turn/attempt provenance while excluding origin credentials, prompt bodies, full native transcript, tool events/history, raw HTTP/provider errors, and arbitrary Server metadata.
-- [ ] 6.4 Add repository/workspace before-after mutation witnesses to real acceptance; any unapproved mutation fails the example without upgrading prompt/Harness policy to an OS containment claim.
-- [ ] 6.5 Add tests and report fields that keep persistent Server reuse separate from provider cache telemetry and never infer cache hits, uncached input, pricing, savings, or subscription charge from PID/latency.
+- [x] 6.1 Map only exact finite provider-reported input/output/reasoning/cache-read/cache-write/cost fields exposed by the pinned assistant schema and keep absent/malformed fields unknown.
+- [x] 6.2 Key usage by root, Agent, turn, attempt, Harness, instance, full model, Driver/capability version, topology, and authority; prove same-model different-Harness records never merge.
+- [x] 6.3 Persist bounded route/session/turn/attempt provenance while excluding origin credentials, prompt bodies, full native transcript, tool events/history, raw HTTP/provider errors, and arbitrary Server metadata.
+- [x] 6.4 Add repository/workspace before-after mutation witnesses to real acceptance; any unapproved mutation fails the example without upgrading prompt/Harness policy to an OS containment claim.
+- [x] 6.5 Add tests and report fields that keep persistent Server reuse separate from provider cache telemetry and never infer cache hits, uncached input, pricing, savings, or subscription charge from PID/latency.
 
 ## 7. Activate The Eight-Operation Public Generation
 
