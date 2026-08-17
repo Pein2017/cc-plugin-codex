@@ -16,10 +16,10 @@
 
 ## 3. Validate The Exact Route And Explorer Profile
 
-- [ ] 3.1 Add a reviewed `config/opencode/codex-explorer.md` operator template with fixed-policy default deny and only repository read/list/glob/search/LSP inspection admitted.
-- [ ] 3.2 Implement exact route/profile validation for discovered Harness/model, `leaf`, `write=false`, `noninteractive_fixed_policy`, capacity one, and actual resolved profile denial of edit/shell/task/subagent/external/web/skill/deploy/publish/approval/unknown custom or MCP tools.
-- [ ] 3.3 Reject omitted/aliased model, model substitution, reasoning effort not proven by the route, topology change, write authority, dynamic tool/profile/instance/endpoint/session selectors, and any broker-required route before session creation.
-- [ ] 3.4 Add readiness tests for missing/wrong model, profile drift, unsafe permission, unknown tool, broker requirement, full capacity, and exact successful discovery with bounded maturity facts.
+- [x] 3.1 Add a reviewed `config/opencode/codex-explorer.md` operator template with fixed-policy default deny and only repository read/list/glob/search/LSP inspection admitted.
+- [x] 3.2 Implement exact route/profile validation for discovered Harness/model, `leaf`, `write=false`, `noninteractive_fixed_policy`, capacity one, and actual resolved profile denial of edit/shell/task/subagent/external/web/skill/deploy/publish/approval/unknown custom or MCP tools.
+- [x] 3.3 Reject omitted/aliased model, model substitution, reasoning effort not proven by the route, topology change, write authority, dynamic tool/profile/instance/endpoint/session selectors, and any broker-required route before session creation.
+- [x] 3.4 Add readiness tests for missing/wrong model, profile drift, unsafe permission, unknown tool, broker requirement, full capacity, and exact successful discovery with bounded maturity facts.
 
 ## 4. Implement The Narrow Prompt And Result Boundary
 
