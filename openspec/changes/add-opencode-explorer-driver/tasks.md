@@ -30,13 +30,13 @@
 
 ## 5. Implement Launch, Session, And Turn Lineage
 
-- [ ] 5.1 Implement first-turn session creation only after the supervisor's launch claim/attempt and instance lease are durable; prove and persist a secret-free `NativeSessionRef` without treating it as turn acceptance.
-- [ ] 5.2 Start the pinned blocking/synchronous prompt call as the worker-local LiveTurn and prove a distinct `NativeTurnRef` from exact session/user-message/attempt/provider/model lineage before mailbox acknowledgement.
-- [ ] 5.3 Resolve terminal success only from the original settled request plus matching assistant session/parent/provider/model/finish/error evidence and a valid bounded final text.
-- [ ] 5.4 Classify pre-transport rejection separately from acceptance unknown; on connection/worker/deadline ambiguity retain capacity, publish no completion, and never replay, fallback, create a replacement session, or call an observer.
-- [ ] 5.5 Expose no active-input, interrupt, restart-observe, recovery, history, native-orchestration, approval-broker, or write methods in the initial Driver.
-- [ ] 5.6 If the compatibility fixture proves authoritative session/incarnation binding, implement terminal same-Agent exact follow-up; otherwise publish `fresh_only` and reject follow-up before mailbox/native mutation.
-- [ ] 5.7 Add fake-Server tests for immediate/delayed acceptance, response-before-observation, pre/post-submission failure, wrong/duplicate lineage, provider failure, session isolation, restart/reset uncertainty, conditional continuation, and capacity serialization.
+- [x] 5.1 Implement first-turn session creation only after the supervisor's launch claim/attempt and instance lease are durable; prove and persist a secret-free `NativeSessionRef` without treating it as turn acceptance.
+- [x] 5.2 Start the pinned blocking/synchronous prompt call as the worker-local LiveTurn and prove a distinct `NativeTurnRef` from exact session/user-message/attempt/provider/model lineage before mailbox acknowledgement.
+- [x] 5.3 Resolve terminal success only from the original settled request plus matching assistant session/parent/provider/model/finish/error evidence and a valid bounded final text.
+- [x] 5.4 Classify pre-transport rejection separately from acceptance unknown; on connection/worker/deadline ambiguity retain capacity, publish no completion, and never replay, fallback, create a replacement session, or call an observer.
+- [x] 5.5 Expose no active-input, interrupt, restart-observe, recovery, history, native-orchestration, approval-broker, or write methods in the initial Driver.
+- [x] 5.6 If the compatibility fixture proves authoritative session/incarnation binding, implement terminal same-Agent exact follow-up; otherwise publish `fresh_only` and reject follow-up before mailbox/native mutation.
+- [x] 5.7 Add fake-Server tests for immediate/delayed acceptance, response-before-observation, pre/post-submission failure, wrong/duplicate lineage, provider failure, session isolation, restart/reset uncertainty, conditional continuation, and capacity serialization.
 
 ## 6. Preserve Metrics, Persistence, And Mutation Evidence
 
