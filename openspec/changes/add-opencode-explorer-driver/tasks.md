@@ -71,7 +71,7 @@
 
 ## 10. Run Three Explicitly Authorized Real Explorer Examples
 
-- [ ] 10.1 Add `scripts/evaluate-opencode-explorer.mjs` with explicit live authorization, exact compatibility/route/profile preflight, clean/known workspace witness, capacity one, bounded deadlines, and fixed artifact root before any model request.
+- [x] 10.1 Add `scripts/evaluate-opencode-explorer.mjs` with explicit live authorization, exact compatibility/route/profile preflight, clean/known workspace witness, capacity one, bounded deadlines, and fixed artifact root before any model request.
 - [ ] 10.2 Through the loaded Plugin run a fresh architecture Explorer, then either an exact terminal follow-up with proven session/incarnation or a second fresh Agent proving `fresh_only`, then a mixed Claude/OpenCode root or documented fresh substitute.
 - [ ] 10.3 For each success capture Server/client/catalog/profile versions, route/attempt/session/turn lineage, latency, exact provider metrics, Server-reuse facts, repository mutation witness, bounded result, and sampled Codex verification; stop on mutation, wrong route, ambiguity, empty result, material false finding, auth/account/quota.
 - [ ] 10.4 Populate `docs/opencode-worker-evaluation.md` with measured facts, unavailable telemetry, the twelve requested architecture answers, and bounded `GO`, `GO WITH CHANGES`, or `NO-GO`; do not fill unknown cache/economics/reliability with inference.

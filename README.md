@@ -758,6 +758,13 @@ Verify the installed snapshot has exactly the eight Experimental skills and
 one `codex_harnessdock` MCP server whose descriptor-only bootstrap delegates only to
 `/data/CoordExp/cc-plugin-codex`.
 
+## Activation runbook
+
+Production promotion, identity/data cutover, install/refresh, Codex restart, the
+installed smoke, and the three authorized live Explorer examples are operator
+steps, not repository steps. They are sequenced, each with its verification and
+its rollback note, in [`docs/activation-runbook.md`](docs/activation-runbook.md).
+
 ## Architecture roadmap
 
 Sequenced, not scheduled. Each item below is a separate accepted change; none is
