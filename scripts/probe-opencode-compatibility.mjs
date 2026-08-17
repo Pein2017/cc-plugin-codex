@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
+import { createFixedOriginFetch } from "../runtime/opencode-client.mjs";
+
 export const EXPECTED_HARNESS = "opencode";
 export const EXPECTED_PROVIDER_ID = "opencode-go";
 export const EXPECTED_MODEL_ID = "deepseek-v4-flash";
@@ -389,20 +391,22 @@ export function runCliDiscovery({ opencodeBin, timeoutMs = DEFAULT_TIMEOUT_MS, e
 // Server discovery via the pinned v2 SDK client (side-effect-free GETs only).
 // ---------------------------------------------------------------------------
 
-function createAuditedFetch(sink) {
-  return (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    sink.push({ method: request.method, path: new URL(request.url).pathname });
-    return fetch(request);
-  };
-}
-
 export async function runServerDiscovery({ baseUrl = DEFAULT_SERVER_URL, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (!isLoopbackUrl(baseUrl)) {
     return { baseUrl, loopback: false, reachable: false, reason: "non_loopback_or_invalid_url" };
   }
   const requestAudit = [];
-  const client = createOpencodeClient({ baseUrl, fetch: createAuditedFetch(requestAudit) });
+  // The probe shares the runtime client's fixed-origin fetch seam, so even
+  // this diagnostic path gets pre-network origin/GET/redirect enforcement,
+  // the per-path frozen response ceilings, and the same audit record shape.
+  const client = createOpencodeClient({
+    baseUrl,
+    fetch: createFixedOriginFetch({
+      baseOrigin: new URL(baseUrl).origin,
+      maxResponseBytes: null,
+      auditRecords: requestAudit,
+    }),
+  });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

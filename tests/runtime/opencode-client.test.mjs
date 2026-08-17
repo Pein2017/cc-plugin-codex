@@ -23,7 +23,10 @@ import { afterEach, describe, it } from "node:test";
 import {
   DEFAULT_OPENCODE_SERVER_URL,
   OPENCODE_DEADLINES_MS,
+  OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES,
+  OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES,
   OPENCODE_MAX_RESPONSE_BYTES,
+  OPENCODE_PROVIDER_CATALOG_PATH,
   OpencodeClientError,
   boundPositiveInteger,
   createFixedOriginFetch,
@@ -34,6 +37,7 @@ import {
   discoverOpencodeProviderCatalog,
   getOpencodeDiscoveryAudit,
   isLoopbackOpencodeUrl,
+  resolveOpencodeResponseCeiling,
   resolveOpencodeServerUrl,
   runOpencodeSideEffectFreeDiscovery,
   summarizeRequestAudit,
@@ -280,6 +284,177 @@ describe("opencode-client: fixed-origin fetch seam (direct controlled wrapper te
       (error) => error instanceof OpencodeClientError && error.code === "response_too_large"
     );
     assert.ok(Date.now() - start < 2000, "must reject promptly, not after draining 5MB");
+  });
+});
+
+/**
+ * The provider-catalog endpoint legitimately carries the hydrated models.dev
+ * registry: the operator's own Server answers `GET /provider` with 188
+ * providers, a `Content-Length` of ~308 KB compressed and ~5.0 MB decoded. The
+ * 256 KiB discovery bound rejected that response outright, so the model route
+ * could never be confirmed. These tests pin the correction: one separate frozen
+ * ceiling for exactly that path, decided before the network call, enforced at
+ * both the declared-length and streamed level, and with the global bound
+ * unchanged for every other path.
+ */
+describe("opencode-client: provider-catalog response ceiling", () => {
+  /** A valid, realistically large catalog: many providers, each with many models. */
+  function paddedCatalogBody({ providerCount = 200, modelsPerProvider = 24 } = {}) {
+    const all = [
+      {
+        id: PROVIDER_ID,
+        name: "OpenCode Go",
+        models: {
+          [MODEL_ID]: {
+            id: MODEL_ID,
+            providerID: PROVIDER_ID,
+            name: "DeepSeek V4 Flash (2x usage)",
+            family: "deepseek-flash",
+          },
+        },
+      },
+    ];
+    for (let providerIndex = 0; providerIndex < providerCount; providerIndex += 1) {
+      const models = {};
+      for (let modelIndex = 0; modelIndex < modelsPerProvider; modelIndex += 1) {
+        const id = `synthetic-model-${providerIndex}-${modelIndex}-with-a-realistically-long-identifier`;
+        models[id] = {
+          id,
+          providerID: `synthetic-provider-${providerIndex}`,
+          name: `Synthetic Model ${providerIndex}/${modelIndex} for response-size padding only`,
+          family: "synthetic-family-for-padding",
+          release_date: "2026-01-01",
+          cost: { input: 1, output: 2, cache_read: 3, cache_write: 4 },
+        };
+      }
+      all.push({ id: `synthetic-provider-${providerIndex}`, name: `Synthetic Provider ${providerIndex}`, models });
+    }
+    return { all, connected: [PROVIDER_ID], default: {} };
+  }
+
+  it("declares one separate frozen ceiling for exactly the catalog path", () => {
+    assert.equal(OPENCODE_PROVIDER_CATALOG_PATH, "/provider");
+    assert.equal(OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES, 8_388_608);
+    assert.ok(OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES > OPENCODE_MAX_RESPONSE_BYTES);
+    assert.equal(resolveOpencodeResponseCeiling("/provider"), OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES);
+    for (const pathname of [
+      "/global/health",
+      "/agent",
+      "/experimental/capabilities",
+      "/api/provider",
+      "/provider/auth",
+      "/providers",
+      "/provider2",
+      "/provider/",
+    ]) {
+      assert.equal(resolveOpencodeResponseCeiling(pathname), OPENCODE_MAX_RESPONSE_BYTES, pathname);
+    }
+  });
+
+  it("admits a catalog larger than the global bound and projects only the target facts", async () => {
+    const body = paddedCatalogBody();
+    const encodedBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+    assert.ok(encodedBytes > OPENCODE_MAX_RESPONSE_BYTES, `catalog must exceed the global bound: ${encodedBytes}`);
+    assert.ok(encodedBytes < OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES);
+    const { url } = await startServer({ provider: { status: 200, body } });
+    const handle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url } });
+    const result = await discoverOpencodeProviderCatalog(handle, { providerId: PROVIDER_ID, modelId: MODEL_ID });
+    assert.deepEqual(result, {
+      ok: true,
+      providerPresent: true,
+      providerConnected: true,
+      model: {
+        id: MODEL_ID,
+        providerID: PROVIDER_ID,
+        name: "DeepSeek V4 Flash (2x usage)",
+        family: "deepseek-flash",
+      },
+    });
+    // The projection stays closed: no other provider or model reaches the caller.
+    assert.equal(JSON.stringify(result).includes("synthetic"), false);
+  });
+
+  it("bounds catalog entries by their own ceiling instead of the shared array bound", async () => {
+    // A registry grown past the shared 256-entry array bound still reads
+    // cleanly: the live registry already sits at 188 providers.
+    const grown = paddedCatalogBody({ providerCount: 300, modelsPerProvider: 2 });
+    const grownServer = await startServer({ provider: { status: 200, body: grown } });
+    const grownHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: grownServer.url } });
+    const grownResult = await discoverOpencodeProviderCatalog(grownHandle, {
+      providerId: PROVIDER_ID,
+      modelId: MODEL_ID,
+    });
+    assert.equal(grownResult.ok, true);
+    assert.equal(grownResult.providerPresent, true);
+    assert.equal(grownResult.providerConnected, true);
+    // One entry past the catalog's own ceiling still fails closed.
+    const past = paddedCatalogBody({
+      providerCount: OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES,
+      modelsPerProvider: 0,
+    });
+    assert.equal(past.all.length, OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES + 1);
+    const pastServer = await startServer({ provider: { status: 200, body: past } });
+    const pastHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: pastServer.url } });
+    assert.deepEqual(await discoverOpencodeProviderCatalog(pastHandle, { providerId: PROVIDER_ID, modelId: MODEL_ID }), {
+      ok: false,
+      code: "malformed_response",
+      retryable: false,
+    });
+  });
+
+  it("still rejects a catalog beyond the catalog ceiling, by declared length and by streamed bytes", async () => {
+    const declared = await startServer({ oversizedDeclaredLengthPaths: [OPENCODE_PROVIDER_CATALOG_PATH] });
+    const declaredHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: declared.url } });
+    assert.deepEqual(
+      await discoverOpencodeProviderCatalog(declaredHandle, { providerId: PROVIDER_ID, modelId: MODEL_ID }),
+      { ok: false, code: "response_too_large", retryable: false }
+    );
+    const streamed = await startServer({
+      oversizedStreamingPaths: { [OPENCODE_PROVIDER_CATALOG_PATH]: OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES + 65_536 },
+    });
+    const streamedHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: streamed.url } });
+    assert.deepEqual(
+      await discoverOpencodeProviderCatalog(streamedHandle, { providerId: PROVIDER_ID, modelId: MODEL_ID }),
+      { ok: false, code: "response_too_large", retryable: false }
+    );
+  });
+
+  it("keeps the global bound in force for every non-catalog discovery response", async () => {
+    const overGlobalBytes = OPENCODE_MAX_RESPONSE_BYTES + 65_536;
+    const agents = await startServer({ oversizedStreamingPaths: { "/agent": overGlobalBytes } });
+    const agentsHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: agents.url } });
+    assert.deepEqual(await discoverOpencodeProfile(agentsHandle), {
+      ok: false,
+      code: "response_too_large",
+      retryable: false,
+    });
+    const health = await startServer({ oversizedStreamingPaths: { "/global/health": overGlobalBytes } });
+    const healthHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: health.url } });
+    assert.deepEqual(await discoverOpencodeHealth(healthHandle), {
+      ok: false,
+      code: "response_too_large",
+      retryable: false,
+    });
+    const capabilities = await startServer({
+      oversizedStreamingPaths: { "/experimental/capabilities": overGlobalBytes },
+    });
+    const capabilitiesHandle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: capabilities.url } });
+    assert.deepEqual(await discoverOpencodeCapabilities(capabilitiesHandle), {
+      ok: false,
+      code: "response_too_large",
+      retryable: false,
+    });
+  });
+
+  it("lets a caller shorten either ceiling but never widen one", async () => {
+    assert.equal(boundPositiveInteger(16 * 1024 * 1024, OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES), OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES);
+    const { url } = await startServer({ provider: { status: 200, body: paddedCatalogBody() } });
+    const shortened = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url }, maxResponseBytes: 4096 });
+    assert.deepEqual(await discoverOpencodeProviderCatalog(shortened, { providerId: PROVIDER_ID, modelId: MODEL_ID }), {
+      ok: false,
+      code: "response_too_large",
+      retryable: false,
+    });
   });
 });
 

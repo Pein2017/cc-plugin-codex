@@ -40,12 +40,54 @@ export const OPENCODE_DEADLINES_MS = Object.freeze({
   turn: 120_000,
 });
 
-// Absolute ceiling on a single discovery response body, enforced at the
-// fetch seam for both a declared Content-Length and a streamed/chunked body.
+// Absolute ceiling on a single discovery response body, enforced at the fetch
+// seam for both a declared Content-Length and a streamed/chunked body. It is
+// the ceiling for every discovery path except the one documented exception
+// below.
 export const OPENCODE_MAX_RESPONSE_BYTES = 262_144; // 256 KiB
+
+/** The one path whose response is the provider catalog (`provider.list`). */
+export const OPENCODE_PROVIDER_CATALOG_PATH = "/provider";
+
+/**
+ * The provider-catalog endpoint's own hard ceiling.
+ *
+ * That endpoint legitimately carries the Server's hydrated models.dev registry:
+ * an operator Server that reached the registry at start answers it with the
+ * complete provider/model metadata catalog -- measured live at 188 providers,
+ * ~308 KB on the wire and ~5.0 MB decoded, which the 256 KiB discovery bound
+ * refused outright, leaving the exact model route permanently unconfirmable.
+ * Every other discovery response keeps the 256 KiB bound; only this path gets
+ * the larger one, and it is still a hard cap rather than an unbounded read.
+ *
+ * Both ceilings are frozen module constants. A caller may shorten either one
+ * (see `boundPositiveInteger`), and can never widen or bypass one.
+ */
+export const OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES = 8_388_608; // 8 MiB
+
+/**
+ * The frozen response ceiling for one request path, resolved before the network
+ * call. The catalog path is matched exactly: a neighbouring endpoint such as
+ * `/api/provider`, `/provider/auth`, or `/provider/` keeps the global bound.
+ */
+export function resolveOpencodeResponseCeiling(pathname) {
+  return pathname === OPENCODE_PROVIDER_CATALOG_PATH
+    ? OPENCODE_MAX_PROVIDER_CATALOG_RESPONSE_BYTES
+    : OPENCODE_MAX_RESPONSE_BYTES;
+}
 
 const MAX_ARRAY_LENGTH = 256;
 const MAX_FIELD_LENGTH = 512;
+
+/**
+ * Absolute ceiling on the number of provider entries in the catalog payload.
+ * The hydrated models.dev registry is measured live at 188 providers, so the
+ * shared 256-entry array bound left only ~27% headroom before ordinary
+ * registry growth would fail the catalog read as `malformed_response` and
+ * leave readiness permanently unconfirmable. The catalog byte ceiling remains
+ * the real payload limit; this bound only keeps iteration finite.
+ */
+export const OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES = 2048;
 
 export class OpencodeClientError extends Error {
   constructor(code, message) {
@@ -154,7 +196,8 @@ function boundResponseSize(response, maxResponseBytes) {
  * (not after), forces redirect rejection regardless of the incoming
  * Request's own redirect mode, records only a bounded method/path audit
  * entry for allowed requests, and bounds the response size at both the
- * declared-Content-Length and streamed-byte level. Exported for a direct
+ * declared-Content-Length and streamed-byte level using the frozen ceiling for
+ * that request's own path (`maxResponseBytes` may only shorten it). Exported for a direct
  * controlled-wrapper test; this is an internal seam, not runtime/index
  * public API.
  */
@@ -173,10 +216,17 @@ export function createFixedOriginFetch({ baseOrigin, maxResponseBytes, auditReco
     if (request.method !== "GET") {
       throw new OpencodeClientError("mutating_request_blocked", "non-GET request blocked before network");
     }
+    // The size ceiling is chosen from the request's own path before the network
+    // call, never from the response, a header, or a caller-supplied widening: a
+    // request may only ever shorten the frozen ceiling for its path.
+    const effectiveMaxResponseBytes = boundPositiveInteger(
+      maxResponseBytes,
+      resolveOpencodeResponseCeiling(requestUrl.pathname)
+    );
     const outboundRequest = new Request(request, { redirect: "error" });
     auditRecords.push({ method: outboundRequest.method, path: requestUrl.pathname });
     const response = await fetch(outboundRequest);
-    return boundResponseSize(response, maxResponseBytes);
+    return boundResponseSize(response, effectiveMaxResponseBytes);
   };
 }
 
@@ -224,7 +274,11 @@ export function createOpencodeDiscoveryClient(options = {}) {
   const secrets = readOpencodeSecrets(rawEnv);
   const authorizationHeader = buildAuthorizationHeader(secrets);
   const baseOrigin = new URL(serverUrl).origin;
-  const maxResponseBytes = boundPositiveInteger(options.maxResponseBytes, OPENCODE_MAX_RESPONSE_BYTES);
+  // The requested bound is passed through unbounded on purpose: the fetch seam
+  // bounds it against the frozen ceiling for each request's own path, so
+  // pre-bounding it here against the global ceiling would silently cap the
+  // provider catalog back down to 256 KiB.
+  const maxResponseBytes = options.maxResponseBytes ?? null;
   const connectCeilingMs = boundPositiveInteger(options.connectTimeoutMs, OPENCODE_DEADLINES_MS.connect);
   const discoveryCeilingMs = boundPositiveInteger(options.discoveryTimeoutMs, OPENCODE_DEADLINES_MS.discovery);
   const requestAudit = { records: [] };
@@ -351,7 +405,7 @@ export async function discoverOpencodeProviderCatalog(handle, options = {}) {
       !payload ||
       !Array.isArray(payload.all) ||
       !Array.isArray(payload.connected) ||
-      payload.all.length > MAX_ARRAY_LENGTH ||
+      payload.all.length > OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES ||
       payload.connected.length > MAX_ARRAY_LENGTH
     ) {
       return { ok: false, code: "malformed_response", retryable: false };
@@ -404,6 +458,118 @@ export async function discoverOpencodeCapabilities(handle, options = {}) {
     const payload = result.data;
     if (!payload || typeof payload !== "object") return { ok: false, code: "malformed_response", retryable: false };
     return { ok: true, backgroundSubagents: payload.backgroundSubagents === true };
+  } catch (error) {
+    return { ok: false, ...classifyDiscoveryFailure(error, undefined) };
+  }
+}
+
+/**
+ * Absolute ceiling on the number of permission rules one resolved Agent policy
+ * may carry. The Server merges configuration-level rules ahead of an Agent's
+ * own, so a real ruleset is hundreds of rules long; this bound keeps a drifting
+ * or hostile Server from handing the validator an unbounded array.
+ */
+export const OPENCODE_MAX_PERMISSION_RULES = 4096;
+
+/**
+ * Every field the pinned SDK's `Agent` type declares. A resolved Agent that
+ * carries anything else is not the contract this checkout pinned, so the count
+ * of unknown fields is reported rather than silently dropped: a future policy
+ * field (a second tool map, for example) must fail readiness, not be ignored.
+ */
+const OPENCODE_AGENT_FIELDS = Object.freeze([
+  "color",
+  "description",
+  "hidden",
+  "mode",
+  "model",
+  "name",
+  "native",
+  "options",
+  "permission",
+  "prompt",
+  "steps",
+  "temperature",
+  "topP",
+  "variant",
+]);
+
+const OPENCODE_PERMISSION_ACTIONS = Object.freeze(["allow", "deny", "ask"]);
+
+/**
+ * Projects one resolved Agent into the bounded typed policy the Explorer
+ * profile validator consumes, or `null` when the payload is not the pinned
+ * shape. Provider option *values* never cross this boundary (only their count),
+ * and the permission ruleset is passed through verbatim because its patterns
+ * are the policy: they may hold operator-absolute paths, so only the
+ * validator's own closed report is ever serialized.
+ */
+function projectOpencodeAgentPolicy(agent) {
+  if (!Array.isArray(agent.permission) || agent.permission.length > OPENCODE_MAX_PERMISSION_RULES) return null;
+  const ruleset = [];
+  for (const rule of agent.permission) {
+    if (!rule || typeof rule !== "object" || Array.isArray(rule)) return null;
+    if (!isBoundedString(rule.permission) || !isBoundedString(rule.pattern)) return null;
+    if (!OPENCODE_PERMISSION_ACTIONS.includes(rule.action)) return null;
+    ruleset.push({ permission: rule.permission, pattern: rule.pattern, action: rule.action });
+  }
+  if (agent.mode !== undefined && !isBoundedString(agent.mode)) return null;
+  if (agent.variant !== undefined && !isBoundedNullableString(agent.variant)) return null;
+  let model = null;
+  if (agent.model !== undefined && agent.model !== null) {
+    if (typeof agent.model !== "object" || Array.isArray(agent.model)) return null;
+    if (!isBoundedString(agent.model.providerID) || !isBoundedString(agent.model.modelID)) return null;
+    model = { providerID: agent.model.providerID, modelID: agent.model.modelID };
+  }
+  if (agent.options !== undefined) {
+    if (!agent.options || typeof agent.options !== "object" || Array.isArray(agent.options)) return null;
+  }
+  return {
+    name: agent.name,
+    mode: agent.mode === undefined ? null : agent.mode,
+    native: agent.native === true,
+    hidden: agent.hidden === true,
+    model,
+    variant: typeof agent.variant === "string" ? agent.variant : null,
+    optionKeyCount: agent.options === undefined ? 0 : Object.keys(agent.options).length,
+    unknownFieldCount: Object.keys(agent).filter((field) => !OPENCODE_AGENT_FIELDS.includes(field)).length,
+    ruleset,
+  };
+}
+
+/**
+ * Reads the resolved policy of exactly one named Agent profile. This is a
+ * side-effect-free GET like every other discovery call: it creates no session,
+ * message, or prompt, and it never returns the other Agents' names, so a
+ * readiness report cannot disclose the operator's full Agent list.
+ *
+ * @param {OpencodeDiscoveryHandleType} handle
+ * @param {{name?: string, signal?: AbortSignal, timeoutMs?: number}} [options] a bounded
+ *   profile `name` is required; an absent or oversized one is refused.
+ */
+export async function discoverOpencodeAgentPolicy(handle, options = {}) {
+  const entry = requireHandleEntry(handle);
+  const name = nonEmptyString(options.name);
+  if (!name || name.length > MAX_FIELD_LENGTH) {
+    throw new OpencodeClientError("profile_target_required", "a bounded profile name is required");
+  }
+  const timeoutMs = boundPositiveInteger(options.timeoutMs, entry.discoveryCeilingMs);
+  const deadlineSignal = composeDeadlineSignal(timeoutMs, options.signal);
+  try {
+    const result = await entry.sdkClient.app.agents({}, { signal: deadlineSignal });
+    if (result.error !== undefined) return { ok: false, ...classifyDiscoveryFailure(result.error, result.response) };
+    if (!Array.isArray(result.data) || result.data.length > MAX_ARRAY_LENGTH) {
+      return { ok: false, code: "malformed_response", retryable: false };
+    }
+    const matches = result.data.filter(
+      (agent) => agent && typeof agent === "object" && !Array.isArray(agent) && agent.name === name
+    );
+    if (matches.length === 0) return { ok: true, present: false, agent: null };
+    // Two Agents answering to one name is ambiguous policy, not a profile.
+    if (matches.length > 1) return { ok: false, code: "malformed_response", retryable: false };
+    const agent = projectOpencodeAgentPolicy(matches[0]);
+    if (!agent) return { ok: false, code: "malformed_response", retryable: false };
+    return { ok: true, present: true, agent };
   } catch (error) {
     return { ok: false, ...classifyDiscoveryFailure(error, undefined) };
   }

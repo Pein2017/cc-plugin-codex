@@ -362,10 +362,9 @@ describe("opencode compatibility probe: forbids production-risk imports and life
     }
   });
 
-  it("the only raw fetch() call forwards the SDK's own Request object, never a manually built URL", () => {
-    const fetchCalls = [...scriptSource.matchAll(/\bfetch\(([^)]*)\)/g)].map((match) => match[1].trim());
-    assert.equal(fetchCalls.length, 1);
-    assert.equal(fetchCalls[0], "request");
+  it("makes no raw fetch() call at all: every request goes through the client's fixed-origin bounded seam", () => {
+    assert.equal([...scriptSource.matchAll(/\bfetch\(/g)].length, 0);
+    assert.match(scriptSource, /import \{ createFixedOriginFetch \} from "\.\.\/runtime\/opencode-client\.mjs"/);
   });
 
   it("does not hardcode the operator's absolute opencode binary path", () => {
