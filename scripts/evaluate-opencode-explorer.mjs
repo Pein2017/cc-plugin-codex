@@ -44,6 +44,7 @@ import {
 } from "../runtime/opencode-explorer-profile.mjs";
 import {
   closeWorkspaceMutationWitness,
+  gitWorkspaceStatus,
   openWorkspaceMutationWitness,
 } from "../runtime/workspace-mutation-witness.mjs";
 
@@ -235,12 +236,43 @@ export function boundedExampleEvidence({ example, receipt, completion, witness, 
   });
 }
 
-function assertCleanWorkspace(verdict) {
-  if (verdict.clean) return verdict;
+/**
+ * Whether the workspace is already clean, BEFORE anything runs.
+ *
+ * This deliberately does not use a mutation witness. A witness compares a
+ * "before" snapshot to an "after" one, so opening and immediately closing one
+ * compares a snapshot to itself and reports clean no matter how dirty the tree
+ * already was. Pre-existing state is a direct question and needs a direct
+ * answer: the working tree's own status.
+ *
+ * A non-git workspace has no such status to read. That is reported as its own
+ * fact rather than silently accepted as clean, because "we could not tell" and
+ * "it was clean" are different statements, and the run-wide witness still
+ * covers mutation during the run either way.
+ */
+export function inspectPreRunWorkspace(workspace, { readGitStatus = gitWorkspaceStatus } = {}) {
+  const status = readGitStatus(workspace);
+  if (status === null) {
+    return Object.freeze({ gitWorkspace: false, clean: true, unverifiable: true, entries: Object.freeze([]) });
+  }
+  const entries = status.split("\n").map((line) => line.trim()).filter(Boolean);
+  return Object.freeze({
+    gitWorkspace: true,
+    clean: entries.length === 0,
+    unverifiable: false,
+    // Basenames only: the same bound the witness verdict applies, so a stop
+    // receipt never carries an operator's full paths.
+    entries: Object.freeze(entries.slice(0, 20).map((entry) => entry.slice(0, 2).trim() || "?")
+      .map((code, index) => `${code} ${path.basename(entries[index].slice(2).trim())}`)),
+  });
+}
+
+function assertCleanWorkspace(inspection) {
+  if (inspection.clean) return inspection;
   throw new EvaluationStop(
     assertStopCondition("workspace_not_clean"),
     "The evaluation workspace must be clean and known before any model request.",
-    verdict,
+    inspection,
   );
 }
 
@@ -356,14 +388,18 @@ export async function runOpencodeExplorerEvaluation(options) {
   const evidence = [];
   const stopped = { condition: null, detail: null, evidence: null };
 
-  // 3. The run-wide witness. A workspace that is not already clean never
-  //    reaches a model request.
+  // 3. A workspace that is not already clean never reaches a model request.
+  //    This is a direct reading of the working tree, not a witness diff.
+  const preRun = (options.inspectWorkspace ?? inspectPreRunWorkspace)(workspace);
+
+  //    The run-wide witness opens ONCE here and closes once at report time, so
+  //    its verdict spans everything: the examples, and every moment between
+  //    them that no per-example window covers.
   const runWitness = openWitness(workspace);
-  const openingVerdict = closeWitness(runWitness);
-  let finalWitness = openingVerdict;
+  let finalWitness = null;
 
   try {
-    assertCleanWorkspace(openingVerdict);
+    assertCleanWorkspace(preRun);
 
     // 4. Preflight: the compatibility, route, and profile facts, observed
     //    side-effect-free. Ready or refuse -- never repaired, never started.
@@ -451,8 +487,9 @@ export async function runOpencodeExplorerEvaluation(options) {
     stopped.detail = error.detail;
     stopped.evidence = error.evidence;
   } finally {
-    // The run-wide witness closes over everything that happened.
-    finalWitness = closeWitness(openWitness(workspace));
+    // Closing the one handle opened before the run is what makes this the whole
+    // run's diff rather than a statement about an instant.
+    finalWitness = closeWitness(runWitness);
   }
 
   const report = Object.freeze({
@@ -469,6 +506,7 @@ export async function runOpencodeExplorerEvaluation(options) {
       ? Object.freeze({ condition: stopped.condition, detail: stopped.detail, evidence: stopped.evidence })
       : null,
     workspaceWitness: finalWitness,
+    preRunWorkspace: preRun,
     // Stated so a reader never has to infer it from absence.
     automaticFallback: "none",
   });

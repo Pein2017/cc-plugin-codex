@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import { createFixedOriginFetch } from "../runtime/opencode-client.mjs";
+import { createFixedOriginFetch, isLoopbackOpencodeUrl } from "../runtime/opencode-client.mjs";
 
 export const EXPECTED_HARNESS = "opencode";
 export const EXPECTED_PROVIDER_ID = "opencode-go";
@@ -54,17 +54,19 @@ const INCARNATION_CANDIDATE_KEYS = new Set([
 // Pure parsing / sanitization helpers (no I/O; unit-testable in isolation).
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether one stated Server origin may be probed.
+ *
+ * This delegates to the runtime client's own predicate rather than restating
+ * it. The probe pins the SAME origin the runtime pins, so a looser rule here
+ * would be a second, weaker door into the same room: this probe previously
+ * admitted `localhost`, which is a NAME resolved by the resolver at connect
+ * time, so the address actually contacted is decided after the check passes.
+ * The runtime admits literal loopback addresses only for exactly that reason,
+ * and one owner for the rule is what keeps the two from drifting apart again.
+ */
 export function isLoopbackUrl(rawUrl) {
-  let url;
-  try {
-    url = new URL(String(rawUrl));
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-  if (url.username || url.password) return false;
-  if (url.search || url.hash) return false;
-  return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+  return isLoopbackOpencodeUrl(rawUrl);
 }
 
 export function parseCliVersion(stdout) {

@@ -116,8 +116,20 @@ function resolveDiscoverableOpencodePath() {
 describe("opencode compatibility probe: pure parsing/sanitization", () => {
   it("accepts only loopback origins without credentials/query/fragment", () => {
     assert.equal(isLoopbackUrl("http://127.0.0.1:4096"), true);
-    assert.equal(isLoopbackUrl("http://localhost:4096"), true);
+    assert.equal(isLoopbackUrl("http://[::1]:4096"), true);
+    // A NAME is not an address. `localhost` is resolved by the DNS resolver at
+    // connect time, so admitting it here would pin an origin whose address is
+    // decided later and could differ from the one that was checked. The runtime
+    // client closes that gap by admitting literal loopback addresses only, and
+    // this probe pins the same origin, so it must close it identically.
+    assert.equal(isLoopbackUrl("http://localhost:4096"), false);
+    assert.equal(isLoopbackUrl("http://LOCALHOST:4096"), false);
+    // A bare `::1` never round-trips through URL parsing as a hostname; the
+    // bracketed form above is the only IPv6 loopback spelling that exists.
+    assert.equal(isLoopbackUrl("http://::1:4096"), false);
+    assert.equal(isLoopbackUrl("http://127.0.0.1:4096/probe"), false);
     assert.equal(isLoopbackUrl("http://example.com:4096"), false);
+    assert.equal(isLoopbackUrl("http://127.0.0.1.example.com:4096"), false);
     assert.equal(isLoopbackUrl("http://user:pass@127.0.0.1:4096"), false);
     assert.equal(isLoopbackUrl("http://127.0.0.1:4096/?x=1"), false);
     assert.equal(isLoopbackUrl("http://127.0.0.1:4096#frag"), false);
@@ -364,7 +376,7 @@ describe("opencode compatibility probe: forbids production-risk imports and life
 
   it("makes no raw fetch() call at all: every request goes through the client's fixed-origin bounded seam", () => {
     assert.equal([...scriptSource.matchAll(/\bfetch\(/g)].length, 0);
-    assert.match(scriptSource, /import \{ createFixedOriginFetch \} from "\.\.\/runtime\/opencode-client\.mjs"/);
+    assert.match(scriptSource, /import \{ createFixedOriginFetch, isLoopbackOpencodeUrl \} from "\.\.\/runtime\/opencode-client\.mjs"/);
   });
 
   it("does not hardcode the operator's absolute opencode binary path", () => {

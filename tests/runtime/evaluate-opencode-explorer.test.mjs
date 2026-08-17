@@ -27,6 +27,7 @@ import {
   unauthorizedEvaluationReceipt,
 } from "../../scripts/evaluate-opencode-explorer.mjs";
 import { OPENCODE_EXPLORER_MODEL, OPENCODE_HARNESS_ID } from "../../runtime/opencode-explorer-profile.mjs";
+import { closeWorkspaceMutationWitness } from "../../runtime/workspace-mutation-witness.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -235,9 +236,18 @@ describe("Task 10.1 — nothing is requested before the preflight, root, and ann
     assert.equal(options.runtime.calls.length, 0, "no Agent is spawned after a refused preflight");
   });
 
-  it("stops when the workspace is not already clean", async () => {
-    const dirty = fakeWitness([{ clean: false, changedBasenames: ["scratch.txt"], enforcement: "harness_policy", osContainment: false }]);
-    const options = baseOptions({ witness: dirty, openWitness: dirty.open, closeWitness: dirty.close });
+  it("stops a dirty workspace before the preflight, read directly from the tree", async () => {
+    // The pre-run gate reads the working tree's own status. A witness cannot
+    // answer this question, so the check is injected here and proven against
+    // real directories in the dedicated suite below.
+    const options = baseOptions({
+      inspectWorkspace: () => ({
+        gitWorkspace: true,
+        clean: false,
+        unverifiable: false,
+        entries: [" M scratch.txt"],
+      }),
+    });
     let observed = 0;
     options.observeReadiness = async () => { observed += 1; return { ready: true }; };
 
@@ -245,6 +255,14 @@ describe("Task 10.1 — nothing is requested before the preflight, root, and ann
     assert.equal(report.stop.condition, "workspace_not_clean");
     assert.equal(observed, 0, "a dirty workspace stops before the preflight");
     assert.equal(options.runtime.calls.length, 0);
+  });
+
+  it("records a non-git workspace as unverifiable rather than silently clean", async () => {
+    const options = baseOptions();
+    const report = await runOpencodeExplorerEvaluation(options);
+    assert.equal(report.status, "completed");
+    assert.equal(report.preRunWorkspace.gitWorkspace, false);
+    assert.equal(report.preRunWorkspace.unverifiable, true);
   });
 });
 
@@ -339,9 +357,9 @@ describe("Task 10.1 — a stop condition ends the run and retries nothing", () =
       name: "a mutated workspace",
       condition: "workspace_mutated",
       options: () => {
-        // Clean to start and for the first example's open, dirty at its close.
+        // The run-wide witness now opens once and closes last, so the FIRST
+        // close is the first example's own window.
         const witness = fakeWitness([
-          { clean: true, enforcement: "harness_policy", osContainment: false },
           { clean: false, changedBasenames: ["notes.md"], enforcement: "harness_policy", osContainment: false },
         ]);
         return { witness, openWitness: witness.open, closeWitness: witness.close };
@@ -413,4 +431,109 @@ describe("Task 10.1 — a stop condition ends the run and retries nothing", () =
       assert.equal(fs.existsSync(path.join(path.resolve(options.artifactRoot), "evaluation.json")), true);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// The two witnesses that must not be vacuous (11.2 disposition, P2-2).
+//
+// A witness compares a "before" snapshot to an "after" one. Opening a witness
+// and immediately closing it compares a snapshot to itself, which is clean by
+// construction no matter what state the workspace was already in. That made the
+// pre-run cleanliness gate unable to fire and made the run-wide verdict a
+// statement about nothing. Both are proven here against real directories.
+// ---------------------------------------------------------------------------
+
+import { spawnSync } from "node:child_process";
+
+function gitWorkspace(label) {
+  const root = scratch(label);
+  const run = (...args) => spawnSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  run("init", "-q");
+  run("config", "user.email", "evaluation@test.invalid");
+  run("config", "user.name", "evaluation test");
+  fs.writeFileSync(path.join(root, "tracked.txt"), "base\n");
+  run("add", "-A");
+  run("commit", "-qm", "base");
+  return { root, run };
+}
+
+describe("Task 10.1 — the pre-run cleanliness gate is not a self-comparison", () => {
+  it("stops a modified tracked file before readiness is observed", async () => {
+    const { root } = gitWorkspace("dirty-modified");
+    fs.appendFileSync(path.join(root, "tracked.txt"), "uncommitted change\n");
+
+    let observed = 0;
+    const options = baseOptions({
+      workspace: root,
+      observeReadiness: async () => { observed += 1; return { ready: true }; },
+    });
+    // The real witness module, not a fake: this is the mechanism under test.
+    delete options.openWitness;
+    delete options.closeWitness;
+
+    const report = await runOpencodeExplorerEvaluation(options);
+    assert.equal(report.status, "stopped");
+    assert.equal(report.stop.condition, "workspace_not_clean");
+    assert.equal(observed, 0, "a dirty workspace stops before the preflight");
+    assert.equal(options.runtime.calls.length, 0, "and before any model request");
+  });
+
+  it("stops an untracked file too", async () => {
+    const { root } = gitWorkspace("dirty-untracked");
+    fs.writeFileSync(path.join(root, "scratch.md"), "left over from something else\n");
+
+    const options = baseOptions({ workspace: root });
+    delete options.openWitness;
+    delete options.closeWitness;
+
+    const report = await runOpencodeExplorerEvaluation(options);
+    assert.equal(report.stop.condition, "workspace_not_clean");
+    assert.equal(options.runtime.calls.length, 0);
+  });
+
+  it("runs on a clean tree", async () => {
+    const { root } = gitWorkspace("clean");
+    const options = baseOptions({ workspace: root });
+    delete options.openWitness;
+    delete options.closeWitness;
+
+    const report = await runOpencodeExplorerEvaluation(options);
+    assert.equal(report.status, "completed");
+    assert.equal(report.examplesRun, 3);
+    assert.equal(report.workspaceWitness.clean, true);
+  });
+});
+
+describe("Task 10.1 — the run-wide witness spans the whole run", () => {
+  it("catches a mutation that happens between examples, outside every per-example window", async () => {
+    const { root } = gitWorkspace("between-examples");
+    const options = baseOptions({ workspace: root });
+    delete options.openWitness;
+
+    // Mutate once in the gap BETWEEN examples: after the first example's own
+    // witness has closed and before the second one opens. The loop runs no
+    // seam there, so the write is staged from the close itself -- which is
+    // precisely the moment no per-example window covers.
+    let closes = 0;
+    options.closeWitness = (witness) => {
+      const verdict = closeWorkspaceMutationWitness(witness);
+      closes += 1;
+      if (closes === 1) fs.writeFileSync(path.join(root, "between.txt"), "written between examples\n");
+      return verdict;
+    };
+
+    const report = await runOpencodeExplorerEvaluation(options);
+
+    // Every example's own window stayed clean, so the run completes...
+    assert.equal(report.status, "completed");
+    assert.equal(report.examplesRun, 3);
+    for (const entry of report.examples) {
+      assert.equal(entry.witness.clean, true);
+    }
+    // ...and the run-wide verdict is the one that reports the truth.
+    assert.equal(report.workspaceWitness.clean, false);
+    assert.equal(report.workspaceWitness.changedBasenames.includes("between.txt"), true);
+    assert.equal(report.workspaceWitness.enforcement, "harness_policy");
+    assert.equal(report.workspaceWitness.osContainment, false);
+  });
 });
