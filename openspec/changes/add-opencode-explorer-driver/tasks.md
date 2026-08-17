@@ -1,18 +1,18 @@
 ## 1. Revalidate Prerequisites And Probe The Installed Contract
 
-- [ ] 1.1 Verify `rename-to-codex-harnessdock` and `generalize-multi-harness-agent-control-plane` are candidate-accepted at exact trees with fresh checkout-level gates/reviews, v3 validation/launch claims/session-turn references/legacy Claude adapter/unknown leases work, and no incompatible active or unknown job exists; the renamed intermediate generation need not be installed.
-- [ ] 1.2 Add a zero-model compatibility probe that records sanitized `opencode --version`, Server health/version, exact `opencode models` match for DeepSeek V4 Flash, resolved `codex-explorer` profile, available OpenAPI/SDK version/types, and authoritative server/session incarnation evidence if any.
-- [ ] 1.3 Run the probe against the operator-owned configured Server without creating a model request; if the actual full model identifier differs from `opencode-go/deepseek-v4-flash` or required protocol facts are unavailable, stop for an OpenSpec update rather than aliasing.
-- [ ] 1.4 Capture sanitized compatibility fixtures and pin exactly one proven client dependency/version; add tests forbidding a Server-spawning helper, CLI stdout lifecycle parser, raw provider client, range/latest dependency, or silent HTTP fallback.
-- [ ] 1.5 Record whether OpenCode continuation is `exact_resume` with authoritative session/incarnation evidence or `fresh_only`; do not make this an implementation guess.
+- [x] 1.1 Verify `rename-to-codex-harnessdock` and `generalize-multi-harness-agent-control-plane` are candidate-accepted at exact trees with fresh checkout-level gates/reviews, v3 validation/launch claims/session-turn references/legacy Claude adapter/unknown leases work, and no incompatible active or unknown job exists; the renamed intermediate generation need not be installed.
+- [x] 1.2 Add a zero-model compatibility probe that records sanitized `opencode --version`, Server health/version, exact `opencode models` match for DeepSeek V4 Flash, resolved `codex-explorer` profile, available OpenAPI/SDK version/types, and authoritative server/session incarnation evidence if any.
+- [x] 1.3 Run the probe against the operator-owned configured Server without creating a model request; if the actual full model identifier differs from `opencode-go/deepseek-v4-flash` or required protocol facts are unavailable, stop for an OpenSpec update rather than aliasing.
+- [x] 1.4 Capture sanitized compatibility fixtures and pin exactly one proven client dependency/version; add tests forbidding a Server-spawning helper, CLI stdout lifecycle parser, raw provider client, range/latest dependency, or silent HTTP fallback.
+- [x] 1.5 Record whether OpenCode continuation is `exact_resume` with authoritative session/incarnation evidence or `fresh_only`; do not make this an implementation guess.
 
 ## 2. Build The Fixed-Origin Secret-Safe Client
 
-- [ ] 2.1 Add failing tests proving OpenCode username/password come only from the inherited operator environment allowlist, are rejected in tracked dotenv, and never enter merged env, logs, errors, prompts, references, receipts, or fixtures.
-- [ ] 2.2 Add the one tracked loopback Server URL setting and test normalization/rejection for credentials, remote/non-loopback hosts, query/fragment, redirect, proxy routing, and per-call endpoint override.
-- [ ] 2.3 Implement `runtime/opencode-client.mjs` with the pinned client, fixed-origin authenticated fetch, loopback proxy bypass, composed deadlines/cancellation, response bounds, and closed sanitized errors.
-- [ ] 2.4 Implement side-effect-free health/catalog/profile inspection and fake-Server cases for ready, auth failure, unavailable, redirect, network loss, deadline, malformed response, and proof of no session/model request.
-- [ ] 2.5 Run focused environment/client/compatibility tests and inspect dependency/lockfile changes for unrelated churn.
+- [x] 2.1 Add failing tests proving OpenCode username/password come only from the inherited operator environment allowlist, are rejected in tracked dotenv, and never enter merged env, logs, errors, prompts, references, receipts, or fixtures.
+- [x] 2.2 Add the one tracked loopback Server URL setting and test normalization/rejection for credentials, remote/non-loopback hosts, query/fragment, redirect, proxy routing, and per-call endpoint override.
+- [x] 2.3 Implement `runtime/opencode-client.mjs` with the pinned client, fixed-origin authenticated fetch, loopback proxy bypass, composed deadlines/cancellation, response bounds, and closed sanitized errors.
+- [x] 2.4 Implement side-effect-free health/catalog/profile inspection and fake-Server cases for ready, auth failure, unavailable, redirect, network loss, deadline, malformed response, and proof of no session/model request.
+- [x] 2.5 Run focused environment/client/compatibility tests and inspect dependency/lockfile changes for unrelated churn.
 
 ## 3. Validate The Exact Route And Explorer Profile
 

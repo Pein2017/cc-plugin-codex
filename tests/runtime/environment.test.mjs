@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import { resolveRuntimeEnvironment } from "../../runtime/environment.mjs";
+import { readOpencodeSecrets, resolveRuntimeEnvironment } from "../../runtime/environment.mjs";
 
 const cleanups = [];
 afterEach(() => {
@@ -135,5 +135,50 @@ describe("runtime environment", () => {
     assert.equal(result.env.CONDA_EXE, "/root/miniconda3/bin/conda");
     assert.equal(result.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "0");
     assert.equal(JSON.stringify(result.receipt).includes("AUTO_MEMORY"), false);
+  });
+
+  it("rejects OPENCODE_SERVER_USERNAME in a tracked env file", () => {
+    const { root, codexHome } = fixture();
+    const envFile = path.join(codexHome, ".env");
+    fs.writeFileSync(envFile, "OPENCODE_SERVER_USERNAME=admin\n");
+    assert.throws(
+      () => resolveRuntimeEnvironment({ cwd: root, env: {}, envFile }),
+      /OPENCODE_SERVER_USERNAME.*not allowed/
+    );
+  });
+
+  it("rejects OPENCODE_SERVER_PASSWORD in a tracked env file", () => {
+    const { root, codexHome } = fixture();
+    const envFile = path.join(codexHome, ".env");
+    fs.writeFileSync(envFile, "OPENCODE_SERVER_PASSWORD=hunter2\n");
+    assert.throws(
+      () => resolveRuntimeEnvironment({ cwd: root, env: {}, envFile }),
+      /OPENCODE_SERVER_PASSWORD.*not allowed/
+    );
+  });
+
+  it("never merges OpenCode secrets into the resolved environment even when inherited from the operator process", () => {
+    const { root } = fixture();
+    const result = resolveRuntimeEnvironment({
+      cwd: root,
+      env: {
+        CODEX_HOME: path.join(root, "missing-codex-home"),
+        OPENCODE_SERVER_USERNAME: "admin",
+        OPENCODE_SERVER_PASSWORD: "hunter2",
+      },
+    });
+    assert.equal("OPENCODE_SERVER_USERNAME" in result.env, false);
+    assert.equal("OPENCODE_SERVER_PASSWORD" in result.env, false);
+    const serialized = JSON.stringify(result);
+    assert.equal(serialized.includes("hunter2"), false);
+  });
+
+  it("readOpencodeSecrets reads username/password only from the exact given raw environment", () => {
+    assert.deepEqual(readOpencodeSecrets({ OPENCODE_SERVER_USERNAME: "admin", OPENCODE_SERVER_PASSWORD: "hunter2", OTHER: "x" }), {
+      username: "admin",
+      password: "hunter2",
+    });
+    assert.deepEqual(readOpencodeSecrets({}), { username: null, password: null });
+    assert.deepEqual(readOpencodeSecrets({ OPENCODE_SERVER_USERNAME: "  " }), { username: null, password: null });
   });
 });

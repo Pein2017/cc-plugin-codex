@@ -24,7 +24,14 @@ const SUPPORTED_KEYS = new Set([
   "CC_RUNTIME_CHECKOUT",
   "CC_CLAUDE_RECONNECT_ATTEMPTS",
   "CC_CLAUDE_RECONNECT_BASE_DELAY_MS",
+  "OPENCODE_SERVER_URL",
 ]);
+
+// Official OpenCode Basic-auth credentials. These are intentionally excluded
+// from SUPPORTED_KEYS: they may only be read from the inherited operator
+// process environment (see readOpencodeSecrets), never from a tracked dotenv
+// file or the merged runtime environment.
+const OPENCODE_SECRET_KEYS = new Set(["OPENCODE_SERVER_USERNAME", "OPENCODE_SERVER_PASSWORD"]);
 
 function parseEnvFile(filePath) {
   const values = {};
@@ -35,6 +42,9 @@ function parseEnvFile(filePath) {
     const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
     if (!match) throw new Error(`Invalid env syntax at ${filePath}:${index + 1}.`);
     const [, key, rawValue] = match;
+    if (OPENCODE_SECRET_KEYS.has(key)) {
+      throw new Error(`${key} is not allowed in tracked env file: ${filePath}:${index + 1}.`);
+    }
     let value = rawValue.trim();
     if (
       value.length >= 2 &&
@@ -107,6 +117,9 @@ export function resolveRuntimeEnvironment(options = {}) {
   // neither an inherited value nor that file can disable native Auto Memory.
   env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "0";
   if (selectedEnv) env.CC_RUNTIME_ENV_FILE = selectedEnv;
+  // OpenCode Basic-auth credentials never enter the merged runtime environment,
+  // even if inherited from the operator process; see readOpencodeSecrets.
+  for (const secretKey of OPENCODE_SECRET_KEYS) delete env[secretKey];
 
   return {
     env,
@@ -124,4 +137,17 @@ export function resolveRuntimeEnvironment(options = {}) {
   };
 }
 
-export { DEFAULT_CLAUDE_CONFIG_DIR, DEFAULT_ENV_FILE, SUPPORTED_KEYS };
+/**
+ * Reads the official OpenCode Basic-auth credentials only from the exact
+ * given raw environment (the inherited operator process environment by
+ * default). This never reads the tracked-dotenv-merged runtime environment,
+ * so tracked config can never supply these values.
+ */
+export function readOpencodeSecrets(rawEnv = process.env) {
+  return {
+    username: nonEmpty(rawEnv?.OPENCODE_SERVER_USERNAME),
+    password: nonEmpty(rawEnv?.OPENCODE_SERVER_PASSWORD),
+  };
+}
+
+export { DEFAULT_CLAUDE_CONFIG_DIR, DEFAULT_ENV_FILE, OPENCODE_SECRET_KEYS, SUPPORTED_KEYS };
