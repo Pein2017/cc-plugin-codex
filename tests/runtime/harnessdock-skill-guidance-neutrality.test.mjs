@@ -11,6 +11,7 @@ const skills = [
   "followup-task",
   "interrupt-agent",
   "list-agents",
+  "list-harnesses",
   "read-agent-messages",
   "send-message",
   "spawn-agent",
@@ -57,6 +58,7 @@ describe("HarnessDock Skill guidance neutrality", () => {
       "followup-task": "followup_task",
       "interrupt-agent": "interrupt_agent",
       "list-agents": "list_agents",
+      "list-harnesses": "list_harnesses",
       "read-agent-messages": "read_agent_messages",
       "send-message": "send_message",
       "spawn-agent": "spawn_agent",
@@ -79,66 +81,71 @@ describe("HarnessDock Skill guidance neutrality", () => {
   it("keeps operation-local targeting, acknowledgement, blocking, and safety facts", () => {
     const followup = readSkill("followup-task");
     assert.match(followup, /exact current-root `target` and\s+`message`/i);
-    assert.match(followup, /Omitted `write` inherits[\s\S]*Pass `false`[\s\S]*`true`/i);
-    assert.match(followup, /Model and delegation mode are immutable/i);
+    // The route and its authority are frozen at creation, not restated here.
+    assert.match(followup, /frozen at creation and inherited unchanged/i);
+    assert.match(followup, /accepts no `write`,[\s\S]*`harness`,[\s\S]*`topology`/i);
+    assert.match(followup, /a different route means a new Agent/i);
     assert.match(followup, /`activation_pending`[\s\S]*do not resend/i);
     assert.match(followup, /blocked Agent rejects with a closed `reason`\/`scope`\/`retry`/i);
-    assert.match(followup, /auth_required[\s\S]*safe-fresh recover/i);
-    assert.match(followup, /one concise sentence from `agent_name` and `delivery`/i);
+    assert.match(followup, /auth_required[\s\S]*safe-fresh\s+recover/i);
+    assert.match(followup, /one sentence from `agent_name` and `delivery`/i);
 
     const interrupt = readSkill("interrupt-agent");
     assert.match(interrupt, /exact current-root `target`/i);
-    assert.match(interrupt, /ends only the current turn[\s\S]*never deletes the[\s\S]*durable Agent/i);
+    assert.match(interrupt, /ends only the current turn[\s\S]*never deletes the[\s\S]*Agent/i);
     assert.match(interrupt, /graceful\s+interrupt request may be accepted, rejected, or left pending/i);
     assert.match(interrupt, /`status`[\s\S]*`interrupted`,\s*`still_working`,\s*or\s*`failed`/i);
     assert.match(interrupt, /`still_working`[\s\S]*never\s+a\s+forced\s+termination/i);
-    assert.match(interrupt, /Exact-session[\s\S]*continuation is offered only when native evidence proves/i);
-    assert.match(interrupt, /non-public legacy record/i);
-    assert.doesNotMatch(interrupt, /Forced unflushed\s+termination becomes failed and non-resumable/i);
+    assert.match(interrupt, /Exact-session\s+continuation needs native evidence of a safe flush/i);
     assert.doesNotMatch(interrupt, /force-terminat/i);
-    assert.match(interrupt, /Native Agent Team lead[\s\S]*fresh team under the durable parent/i);
-    assert.match(interrupt, /one concise sentence from\s+`agent_name` and `status`/i);
+    assert.match(interrupt, /one concise sentence from `agent_name` and\s+`status`/i);
 
     const list = readSkill("list-agents");
     assert.match(list, /list_agents` with no fields[\s\S]*optional `path_prefix`/i);
-    assert.match(list, /logical state snapshot/i);
+    assert.match(list, /state snapshot/i);
     assert.match(list, /starting`, `working`,\s+`completed`, `failed`, or `interrupted`/i);
-    assert.match(list, /completion comes from `\$codex-harnessdock:wait-agent`/i);
+    assert.match(list, /completion comes from\s+`\$codex-harnessdock:wait-agent`/i);
     assert.match(list, /never call this\s+solely to recheck completion after a quiet `wait_agent` timeout/i);
-    assert.match(list, /only its durable parent Card appears here/i);
+
+    const harnesses = readSkill("list-harnesses");
+    assert.match(harnesses, /accepts no fields/i);
+    assert.match(harnesses, /`readiness`[\s\S]*`liveValidated`/);
+    assert.match(harnesses, /never orders Harnesses by fitness, selects one, or implies a default/i);
+    assert.match(harnesses, /operator fact, not model-quality evidence/i);
 
     const history = readSkill("read-agent-messages");
     assert.match(history, /exact current-root `target`[\s\S]*optional `before`\/`limit`/i);
     assert.match(history, /cannot reactivate Codex/i);
-    assert.match(history, /extend Claude retention/i);
+    assert.match(history, /extend native retention/i);
     assert.match(history, /latest outer-assistant text, newest first/i);
     assert.match(history, /Thinking, tools, attachments, child transcripts, and Codex history\s+are excluded/i);
-    assert.match(history, /Current completion comes directly from[\s\S]*wait-agent/i);
-    assert.match(history, /Missing native-team evidence remains unverified/i);
+    assert.match(history, /Current completion comes from[\s\S]*wait-agent/i);
+    assert.match(history, /`unsupported`[\s\S]*no transcript is looked for/i);
 
     const send = readSkill("send-message");
     assert.match(send, /exact current-root `target` and\s+`message`/i);
-    assert.match(send, /Queueing never activates an idle Claude Agent or Codex/i);
+    assert.match(send, /Queueing never activates an idle Agent or Codex/i);
     assert.match(send, /blocked Agent rejects instead of queueing[\s\S]*closed `reason`\/`scope`\/`retry`/i);
     assert.match(send, /`dispatched_active`[\s\S]*`activation_pending`[\s\S]*`queued_no_turn`/i);
-    assert.match(send, /`activation_pending` means an activation already owns the message/i);
-    assert.match(send, /no Plugin mailbox or cross-session bridge/i);
+    assert.match(send, /`activation_pending` means an activation already owns it/i);
+    assert.match(send, /never a native teammate, never another Harness/i);
 
     const spawn = readSkill("spawn-agent");
-    assert.match(spawn, /with `task_name`, self-contained `message`,\s+exact `model`, and explicit `write`/i);
-    assert.match(spawn, /optional fields are `description`,\s+`reasoning_effort`, and `delegation_mode`/i);
+    assert.match(spawn, /with `task_name`, a self-contained\s+`message`, and the whole route/i);
+    assert.match(spawn, /`harness`, `model`, `topology`, `write`/);
+    assert.doesNotMatch(spawn, /delegation_mode/);
     assert.match(spawn, /never pass environment, session, or fork selectors/i);
     for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
       assert.match(spawn, new RegExp(model));
     }
-    assert.match(spawn, /low`, `medium`, `high`, `xhigh`, `max`/i);
+    assert.match(spawn, /opencode-go\/deepseek-v4-flash/);
+    assert.match(spawn, /`low`, `medium`, `high`, `xhigh`, or `max`/i);
     assert.match(spawn, /`write: false` is behavioral read\/review-only[\s\S]*`write: true`/i);
     assert.match(spawn, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);
-    assert.match(spawn, /Use `claude_orchestrator` only with exact Opus or Fable/i);
-    assert.match(spawn, /named member must launch asynchronously[\s\S]*correlated `SendMessage`/i);
-    assert.match(spawn, /Native `SendMessage` can\s+technically reach other sessions/i);
-    assert.match(spawn, /transport never\s+auto-reconnects/i);
-    assert.match(spawn, /`Workflow`\s+remains disabled/i);
+    assert.match(spawn, /Use\s+`native_orchestrator` only with exact Opus or Fable/i);
+    assert.match(spawn, /named member must launch asynchronously and a correlated `SendMessage`/i);
+    assert.match(spawn, /Transport never auto-reconnects/i);
+    assert.match(spawn, /`Workflow` remains disabled/i);
     assert.match(spawn, /subscription[\s\S]*quota exhaustion[\s\S]*stop further real Claude tests/i);
 
     const wait = readSkill("wait-agent");
@@ -147,11 +154,10 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(wait, /One to\s+eight unique exact current-root targets/i);
     assert.match(wait, /multiple\s+targets form one completion-only all-settled barrier/i);
     assert.match(wait, /wake_on_progress: true[\s\S]*exactly one target/i);
-    assert.match(wait, /completion has priority[\s\S]*completion_message[\s\S]*token/i);
+    assert.match(wait, /Completion has priority[\s\S]*completion_message[\s\S]*token/i);
     assert.match(wait, /progress returns at most one sanitized update/i);
-    assert.match(wait, /timeout means no unread current-root completion was visible/i);
-    assert.match(wait, /wait cannot reactivate an ended Codex turn/i);
-    assert.match(wait, /Claude-native same-team settle signals/i);
+    assert.match(wait, /timeout means no eligible completion was visible/i);
+    assert.match(wait, /Wait cannot reactivate an ended Codex turn/i);
     assert.match(waitMetadata, /mcp__codex_harnessdock__wait_agent/i);
     assert.match(waitMetadata, /one to eight exact targets[\s\S]*all-settled barrier/i);
     assert.match(waitMetadata, /one-hour completion bound/i);

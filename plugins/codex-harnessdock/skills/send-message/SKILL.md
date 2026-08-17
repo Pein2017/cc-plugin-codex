@@ -1,34 +1,28 @@
 ---
 name: send-message
-description: 'Experimental: durably deliver or queue a message for a named CC Agent without implicitly activating an idle Agent.'
+description: 'Experimental: durably deliver or queue a message for a named Agent without activating an idle one.'
 ---
 
 # Send Agent Message
 
-> **Experimental.** Queueing never activates an idle Claude Agent or Codex.
+> **Experimental.** Queueing never activates an idle Agent or Codex.
 
 Call `mcp__codex_harnessdock__send_message` with exact current-root `target` and
-`message`. Trusted Codex metadata owns cwd/root. If unavailable, report Plugin
-startup or discovery failure; never use a shell fallback.
+`message`. Trusted Codex metadata owns cwd/root. If unavailable, report Plugin startup or discovery failure; never use a shell fallback.
 
-Release drift: use the exact retained Skill path. Latest-version instructions
+Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
-A running Agent receives durable delivery. `queued_no_turn` requires
-`$codex-harnessdock:followup-task`; a blocked Agent rejects instead of queueing,
-naming only a closed `reason`/`scope`/`retry`, never raw internal evidence.
-`retry: new_agent` means that blocked identity and name stay unusable: there
-is no unblock, close, archive, or reuse; the lane needs a new Agent under a new name.
+A running Agent on a route taking active input receives durable delivery. A
+route taking only its first input queues the message instead; the Explorer
+route is such a route. `queued_no_turn` requires
+`$codex-harnessdock:followup-task`. A blocked Agent rejects instead of queueing
+with a closed `reason`/`scope`/`retry`; `retry: new_agent` leaves that identity
+unusable and needs a new Agent under a new name.
+
 Present one concise sentence from `agent_name` and `delivery`: sent for
 `dispatched_active`, durably accepted for `activation_pending`, or queued and
 idle for `queued_no_turn`. Do not repeat the message or JSON unless debug was
-explicitly requested.
-
-`activation_pending` means an activation already owns the message; join or
-observe that Agent rather than submitting a duplicate follow-up. `queued_no_turn`
-means the message is still idle and requires `$codex-harnessdock:followup-task` when
-the work must run.
-
-This targets only a durable parent CC Agent. It cannot address experimental
-Native Agent Team teammates: same-team `SendMessage` is Claude-local, current-
-team-only coordination and has no Plugin mailbox or cross-session bridge.
+explicitly requested. `activation_pending` means an activation already owns it;
+observe that Agent rather than sending a duplicate. This targets only a durable
+parent Agent in this root: never a native teammate, never another Harness.

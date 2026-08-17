@@ -170,7 +170,7 @@ describe("release smoke", () => {
     assert.equal(report.status, "pass");
     assert.equal(report.zeroModelCost, true);
     assert.equal(probeOptions.realClaude, false);
-    assert.equal(report.skills.length, 7);
+    assert.equal(report.skills.length, 8);
     assert.equal(report.tools.length, 7);
     assert.equal(report.compatibilityShells.valid, true);
     assert.equal(report.compatibilityShells.count, 0);

@@ -1,31 +1,27 @@
 ---
 name: read-agent-messages
-description: 'Experimental: read recent outer-assistant text messages from the native Claude history bound to a current-root CC Agent, without activating it.'
+description: 'Experimental: read recent outer-assistant text from an Agent bound native history, without activating it.'
 ---
 
 # Read Agent Messages
 
-> **Experimental.** Retrospective native history cannot reactivate Codex or
-> extend Claude retention.
+> **Experimental.** History cannot reactivate Codex or extend native retention.
 
 Call `mcp__codex_harnessdock__read_agent_messages` with exact current-root `target`
 and optional `before`/`limit`. Trusted Codex metadata owns cwd/root; never infer
-a transcript path or session ID. If unavailable, report Plugin startup or
-discovery failure; never use shell.
+a transcript path or session ID. If unavailable, report Plugin startup or discovery failure; never use a shell fallback.
 
-Release drift: use the exact retained Skill path. Latest-version instructions
+Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
-- Default returns the latest outer-assistant text, newest first. Paginate older
+- Default returns the latest outer-assistant text, newest first; paginate older
   messages only with returned `next_before`.
-- Text is complete within codex-harnessdock; host transport may impose external
+- Text is complete within codex-harnessdock; host transport may impose its own
   capacity. Thinking, tools, attachments, child transcripts, and Codex history
-  are excluded, and this operation never activates or changes the Agent.
-- Current completion comes directly from `$codex-harnessdock:wait-agent`'s complete
-  `completion_message`; use history only for earlier output or recovery.
-- Report missing retained history honestly. Present message text plus minimal
-  context, not raw JSON, unless debug was explicitly requested.
-
-For an experimental exact Opus/Fable Native Agent Team lead, this never reads
-teammate transcripts or local memory; only the durable parent history is in
-scope. Missing native-team evidence remains unverified.
+  are excluded, and this never activates the Agent.
+- A route proving no readable history answers `unsupported` and no messages, and
+  no transcript is looked for; the Explorer route is such a route.
+- Current completion comes from `$codex-harnessdock:wait-agent`'s complete
+  `completion_message`; use history only for earlier output.
+- Report missing history honestly; present message text plus minimal context,
+  not raw JSON, unless debug was requested.

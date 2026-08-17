@@ -1,4 +1,4 @@
-# HarnessDock for Codex: durable Claude Agents for Codex
+# HarnessDock for Codex: durable multi-Harness Agents for Codex
 
 The Plugin visual identity uses two interlocking relay tracks around one signal
 node: the Codex lead and Claude worker remain distinct while exchanging durable,
@@ -10,14 +10,18 @@ with or endorsed by OpenAI. The public maintainer is Pein2017:
 https://github.com/Pein2017.
 
 HarnessDock for Codex is a checkout-owned Codex Plugin with one durable Agent supervisor
-and a static Harness Driver seam. Claude Code is the only admitted production
-Harness and runs in headless stream-json mode. Claude Code remains responsible
-for authentication, configuration, hooks, skills/MCP surfaces, sessions, and
-tool execution. Future Harnesses require their own accepted OpenSpec and Driver;
-they are not public placeholders in the current API.
+and a static Harness Driver seam. Two Harnesses are admitted: **Claude Code**,
+which runs in headless stream-json mode, and the Experimental **OpenCode
+Explorer**, a read-only repository scout served by an operator-owned loopback
+Server. Each Harness remains responsible for its own authentication,
+configuration, sessions, and tool execution. A caller states the whole route --
+Harness, full model, topology, and behavioral authority -- on every spawn; there
+is no default Harness and nothing is inferred. A further Harness requires its
+own accepted OpenSpec and Driver; none is a public placeholder in the current
+API.
 
-> **Experimental feature:** the seven HarnessDock Agent skills are an evolving local
-> orchestration surface. They preserve durable Claude work, but cannot make an
+> **Experimental feature:** the eight HarnessDock Agent skills are an evolving local
+> orchestration surface. They preserve durable Agent work, but cannot make an
 > idle Codex parent start a new model turn after it has already ended. A parent
 > that needs a child result must keep the join obligation inside its active
 > turn.
@@ -42,22 +46,28 @@ compatibility or release guarantee.
 
 ## Typed MCP lifecycle
 
-The Plugin exposes one stdio MCP server named `codex_harnessdock`. Its seven typed
+The Plugin exposes one stdio MCP server named `codex_harnessdock`. Its eight typed
 tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 
 ```text
-spawn_agent({ task_name, message, model, write, description?, reasoning_effort?, delegation_mode? })
+list_harnesses({})
+spawn_agent({ task_name, message, harness, model, topology, write, description?, reasoning_effort? })
 send_message({ target, message })
-followup_task({ target, message, write?, reasoning_effort? })
+followup_task({ target, message, reasoning_effort? })
 wait_agent({ targets?, wake_on_progress?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
 ```
 
+`spawn_agent` requires `harness`, `model`, `topology`, and `write` together;
+`followup_task` accepts none of them, because an Agent's route and behavioral
+authority are frozen at creation. A different route means a new Agent.
+
 Codex sees the tools as:
 
 ```text
+mcp__codex_harnessdock__list_harnesses
 mcp__codex_harnessdock__spawn_agent
 mcp__codex_harnessdock__send_message
 mcp__codex_harnessdock__followup_task
@@ -67,10 +77,11 @@ mcp__codex_harnessdock__read_agent_messages
 mcp__codex_harnessdock__list_agents
 ```
 
-The installed Plugin also exposes the same seven namespaced skills as
+The installed Plugin also exposes the same eight namespaced skills as
 orchestration guidance:
 
 ```text
+$codex-harnessdock:list-harnesses
 $codex-harnessdock:spawn-agent
 $codex-harnessdock:send-message
 $codex-harnessdock:followup-task
@@ -80,12 +91,14 @@ $codex-harnessdock:read-agent-messages
 $codex-harnessdock:list-agents
 ```
 
-Successful `spawn-agent` calls return a compact Agent Card: `agent_name`,
-`model`, nullable retained `reasoning_effort`, behavioral `authority`,
-immutable `delegation_mode`, `status`, safe `phase`, nullable timestamps, and
-query-time elapsed seconds. `write: false` is behavioral read/review authority,
-not a process sandbox. The parent reports one concise sentence with the model
-role, Agent name, authority, and status—never final Claude text or raw JSON.
+Successful `spawn-agent` calls return a compact Agent Card: `agent_name`, its
+`harness` and nullable `route_maturity`, `model`, nullable retained
+`reasoning_effort`, behavioral `authority`, immutable `delegation_mode`,
+`status`, safe `phase`, nullable timestamps, and query-time elapsed seconds.
+`write: false` is behavioral read/review authority, not a process sandbox; its
+enforcement is route-specific and observable. The parent reports one concise
+sentence with the model role, Agent name, authority, and status—never final
+model text or raw JSON.
 `send-message` and `followup-task`
 return only `agent_name` plus their delivery disposition. `interrupt-agent`
 returns only `agent_name` and operation status. `list-agents` reports compact
@@ -131,11 +144,12 @@ arguments, and `x-high` maps to `xhigh`. Older model IDs, dated backend snapshot
 IDs, and other Claude models fail before Claude launches. Follow-up turns
 inherit the Agent's selected model.
 
-Every Agent defaults to immutable `delegation_mode: "leaf"`. The Claude runtime
-appends a bounded Codex-lead role envelope and denies Claude Code's native
-`Agent` and `Workflow` tools for leaf turns. Only exact `claude-opus-5` or
-`claude-fable-5` with explicit `delegation_mode: "claude_orchestrator"` may act
-as an experimental Native Agent Team lead. The public registry stays flat: only
+Every Agent states an immutable `topology`. A `leaf` Agent runs its own task;
+for Claude that maps to the runtime's `delegation_mode: "leaf"`, which appends a
+bounded Codex-lead role envelope and denies Claude Code's native `Agent` and
+`Workflow` tools. Only exact `claude-opus-5` or `claude-fable-5` with
+`topology: "native_orchestrator"` may act as an experimental Native Agent Team
+lead; the OpenCode Explorer admits `leaf` only. The public registry stays flat: only
 the durable parent is a CC Agent. Initialization definition/tool names are
 necessary, but transport is live-validated only after a named member launches
 asynchronously and a correlated `SendMessage` to that launched member name
@@ -410,6 +424,54 @@ Inspect the current evidence without a model call with:
 node plugins/codex-harnessdock/bootstrap/harnessdock-runtime.mjs readiness
 ```
 
+## OpenCode Explorer (Experimental)
+
+The second admitted Harness is a read-only repository scout. Everything it needs
+is operator-owned; the Plugin starts, installs, configures, and repairs nothing.
+
+- **Server.** One loopback Server, named by `OPENCODE_SERVER_URL` in the tracked
+  environment file (default `http://127.0.0.1:4096`). The Driver admits only a
+  literal loopback origin, never a DNS name, and refuses proxy routing for it.
+  The operator starts and stops that Server.
+- **Authentication.** Optional Basic-auth credentials are read only from the
+  operator process environment through an exact allowlist
+  (`OPENCODE_SERVER_USERNAME`, `OPENCODE_SERVER_PASSWORD`). They are never
+  tracked in the environment file and never appear in receipts, errors, logs,
+  instance keys, or any model-facing listing.
+- **Profile.** `config/opencode/codex-explorer.md` is the reviewed operator
+  template for the `codex-explorer` profile: deny-by-default permissions with
+  read/list/glob/grep/lsp allowed, dotenv reads denied, and external-directory
+  access denied. The Driver validates the Server's own resolved policy against
+  that contract and refuses a route whose policy has drifted.
+- **Route.** Exact `opencode-go/deepseek-v4-flash`, `leaf` only, `write: false`
+  only, no reasoning effort, capacity one turn at a time, `fresh_only`
+  continuation. Interruption and assistant history are unsupported and answer
+  with a receipt rather than an error. Driver and capability maturity are
+  Experimental.
+- **CLI attach is diagnostic only.** Attaching to the Server with the OpenCode
+  CLI is an operator debugging aid. It is never a runtime dependency, never a
+  fallback path, and no Skill or MCP tool may invoke it. TUI automation is
+  forbidden.
+
+Inspect what is admitted and ready, for both Harnesses, without a model call:
+
+```bash
+node runtime/operator-cli.mjs list-harnesses --all --json
+```
+
+Model-facing callers use `$codex-harnessdock:list-harnesses` for the same facts.
+Either surface reports readiness; neither selects a route.
+
+## Route refusal is Codex-led
+
+The Plugin never falls back on its own. A route it cannot serve -- an
+unavailable Harness, a model that Harness does not admit, a topology or
+authority its capabilities refuse, or an instance already at capacity -- is
+reported as a refusal with a closed reason. It is never silently retried on
+another Harness, another model, or another instance, and an unavailable Harness
+is never removed from the static registry. Codex decides what to do next and
+states the next route explicitly.
+
 ## Operator doctor and release smoke
 
 Run the unified operator doctor after a Codex or Claude Code update, after a
@@ -420,10 +482,14 @@ npm run doctor
 npm run doctor -- --json
 ```
 
-Doctor is zero-model-cost and not exposed as a Skill or MCP tool. It checks the
+Doctor covers the Claude CLI, the fixed environment, and the installed
+snapshot; it does not probe the operator's OpenCode Server. Use
+`list-harnesses --all` for that Harness's readiness, and treat an unavailable
+reading as an operator fact rather than a Plugin defect. Doctor is
+zero-model-cost and not exposed as a Skill or MCP tool. It checks the
 canonical checkout and installed snapshot, production Node dependencies,
 Claude CLI version/static compatibility and login, the fixed Claude config and
-9090 proxy envelope, exactly seven
+9090 proxy envelope, exactly eight
 MCP tools, bounded checkout-routed compatibility shells, their durable predecessor
 coverage, and aggregate local storage. A first install is reported explicitly with no
 invented predecessor; an unmanaged legacy installation warns that coverage is unavailable.
@@ -488,8 +554,8 @@ npm run smoke:release -- --json
 ```
 
 It resolves the enabled `codex-harnessdock@pein-local` installation, requires an exact
-checkout/snapshot match, discovers exactly seven installed Skills, launches the
-absolute canonical-checkout descriptor bootstrap, lists exactly seven MCP
+checkout/snapshot match, discovers exactly eight installed Skills, launches the
+absolute canonical-checkout descriptor bootstrap, lists exactly eight MCP
 tools, verifies at most two discovery-only compatibility shells plus the durable
 successful-version coverage record, and calls
 `list_agents` with a synthetic root and temporary runtime home. This exercises
@@ -547,11 +613,18 @@ than pretending to honor it.
 The fixed file is parsed as literal `KEY=VALUE`, never evaluated as shell code.
 It authoritatively pins `CLAUDE_NATIVE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
 Claude native Auto Memory enabled with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`,
-`CONDA_EXE`, the Claude binary, lower- and upper-case 9090 proxy variables, and
-localhost bypasses. Those values overlay conflicting inherited values; valid
-unrelated host state such as `PATH`, Codex root identity, and runtime-state
-location is preserved. Receipts expose only selected non-secret fields and
-redact proxy credentials.
+`CONDA_EXE`, the Claude binary, the OpenCode Explorer's loopback
+`OPENCODE_SERVER_URL`, lower- and upper-case 9090 proxy variables, and localhost
+bypasses. Those values overlay conflicting inherited values; valid unrelated
+host state such as `PATH`, Codex root identity, and runtime-state location is
+preserved. Receipts expose only selected non-secret fields and redact proxy
+credentials.
+
+`OPENCODE_SERVER_USERNAME` and `OPENCODE_SERVER_PASSWORD` are the one deliberate
+exception to that file's authority: they are read only from the operator process
+environment through an exact allowlist, are never tracked in the file, and are
+removed from the environment the runtime passes onward. They appear in no
+receipt, error, log, instance key, or model-facing listing.
 
 Readiness and `doctor` inspect credential metadata only. Their
 `liveValidated: false` field is intentional: a successful local `claude auth
@@ -681,9 +754,30 @@ repair coverage with `npm run release:local`, and start a new Codex task wheneve
 MCP returns `HARNESSDOCK_MCP_RESTART_REQUIRED`. Versions older than the two retained
 predecessors are outside this bounded compatibility promise.
 
-Verify the installed snapshot has exactly the seven Experimental skills and
+Verify the installed snapshot has exactly the eight Experimental skills and
 one `codex_harnessdock` MCP server whose descriptor-only bootstrap delegates only to
 `/data/CoordExp/cc-plugin-codex`.
+
+## Architecture roadmap
+
+Sequenced, not scheduled. Each item below is a separate accepted change; none is
+a placeholder in the current API. The multi-Harness plan of record is
+`docs/handoffs/2026-08-13-multi-harness-implementation.md`, which this section
+links rather than restates.
+
+- **Phase R -- physical rename.** The remaining `cc-`/`CC` identifiers become
+  HarnessDock names in one mechanical pass. It runs *after* Phase B is complete
+  and *before* a third Harness is admitted, so exactly one generation carries
+  both the rename and a two-Harness surface.
+- **DeepSeek Harness** and **Grok Build** are later, independent probes. Each
+  needs its own accepted OpenSpec, its own Driver, and its own readiness
+  evidence; neither depends on the other, and neither is admitted by adding a
+  model identifier to an existing route.
+- **Pi is reference-only.** It informs design and is never a runtime, install,
+  Git-object, remote, merge, or worktree dependency.
+- **TUI automation is forbidden.** No Harness is driven by scripting its
+  terminal interface. A Harness is admitted through a documented programmatic
+  surface -- a headless protocol or a local API -- or it is not admitted.
 
 ## Provenance
 

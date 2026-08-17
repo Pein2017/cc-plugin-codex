@@ -565,13 +565,14 @@ export async function runReleaseSmoke(options = {}) {
     "followup-task",
     "interrupt-agent",
     "list-agents",
+    "list-harnesses",
     "read-agent-messages",
     "send-message",
     "spawn-agent",
     "wait-agent",
   ];
   if (JSON.stringify(skills) !== JSON.stringify(expectedSkills)) {
-    throw new Error(`Installed Plugin does not expose exactly seven canonical Skills: ${skills.join(", ")}.`);
+    throw new Error(`Installed Plugin does not expose exactly eight canonical Skills: ${skills.join(", ")}.`);
   }
   const compatibilityShells = inspectCompatibilityShells({
     snapshotRoot: parity.installed.snapshotRoot,
@@ -594,7 +595,7 @@ export async function runReleaseSmoke(options = {}) {
     realClaudeMaxMs: options.realClaudeMaxMs,
     onPaidStart: options.onPaidStart,
   });
-  if (!mcp.healthy) throw new Error("Installed MCP smoke did not satisfy the seven-tool contract.");
+  if (!mcp.healthy) throw new Error("Installed MCP smoke did not satisfy the eight-tool contract.");
   return {
     version: 1,
     status: "pass",

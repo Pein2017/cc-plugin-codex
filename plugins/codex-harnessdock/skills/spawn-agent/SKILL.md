@@ -1,80 +1,77 @@
 ---
 name: spawn-agent
-description: 'Experimental: start a durable current-root Claude Agent asynchronously with explicit model/write; exact Opus/Fable Native Agent Team lead only when requested.'
+description: 'Experimental: start a durable Agent asynchronously on one fully stated route (harness, model, topology, write).'
 ---
 
-# Spawn Claude Agent
+# Spawn Agent
 
-> **Experimental.** Claude continues in the background, but cannot reactivate
-> an ended Codex turn. The caller owns joining any completion evidence it needs.
+> **Experimental.** The Agent runs in the background and cannot reactivate an
+> ended Codex turn; the caller owns joining any evidence it needs.
 
-Call `mcp__codex_harnessdock__spawn_agent` with `task_name`, self-contained `message`,
-exact `model`, and explicit `write`; optional fields are `description`,
-`reasoning_effort`, and `delegation_mode`. Trusted Codex metadata owns cwd/root;
-never pass environment, session, or fork selectors. If unavailable, report
-Plugin startup or discovery failure; never use a shell fallback.
+Call `mcp__codex_harnessdock__spawn_agent` with `task_name`, a self-contained
+`message`, and the whole route: `harness`, `model`, `topology`, `write`.
+Optional: `description` and `reasoning_effort` where admitted.
+There is no default Harness, model, topology, or authority. Trusted Codex
+metadata owns cwd/root; never pass environment, session, or fork selectors. If unavailable, report Plugin startup or discovery failure; never use a shell fallback.
 
-Release drift: use the exact retained Skill path. Latest-version instructions
+Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
-## Model and effort
+## Routes
 
-Use only full model IDs and a separate effort (`low`, `medium`, `high`, `xhigh`, `max`):
+`$codex-harnessdock:list-harnesses` reports what is ready; use full model IDs.
 
-- `claude-haiku-4-5`
-- `claude-sonnet-5`
-- `claude-opus-5`
-- `claude-fable-5`
+`claude-code`: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`,
+`claude-fable-5`; `leaf` or `native_orchestrator`; either authority; separate
+effort `low`, `medium`, `high`, `xhigh`, or `max`. Map “x-high” to `xhigh`.
 
-State the selected model and effort briefly. Map “x-high” to `xhigh`; never infer
-a model from an Agent label such as Ops5, use partial IDs, or substitute another
-model after rejection. Ask when no model family was selected.
+`opencode`: Experimental Explorer, exact `opencode-go/deepseek-v4-flash`, `leaf`
+only, `write: false` only, no reasoning effort, one turn at a time, `fresh_only`
+continuation; interruption and history are unsupported.
+
+Never infer a model from an Agent label such as Ops5, use partial IDs, or
+substitute another model after rejection. Ask when no model family was selected.
+A refused route is reported as refused; the Plugin never retries elsewhere.
 
 If a real CC test reports subscription, usage, periodic allowance, credit, or
 quota exhaustion, stop further real Claude tests in that workflow. Do not
 retry/fallback; local edits and fake/unit/integration tests may continue. A
 generic transient 429 may follow bounded reconnect and is not this stop rule.
 
-## Authority and delegation
+## Authority and topology
 
-- `write: false` is behavioral read/review-only authority; `write: true` permits
-  task-scoped mutation. Both use fixed config, `IS_SANDBOX=1`, full-access
-  terminal parity, and `--dangerously-skip-permissions`; it is not an OS-level
-  process-permission switch. Never omit `write`.
-- Names are unique flat `/root/<task_name>` paths. Never adopt a Terminal Claude
-  session. The message must stand alone without Codex history.
-- `delegation_mode` may be omitted or set to `leaf`; `leaf` disables native
-  `Agent` and `Workflow`.
-- Use `claude_orchestrator` only with exact Opus or Fable (`claude-opus-5` or
-  `claude-fable-5`): it is an experimental Native Agent Team lead, not a
-  Plugin-owned child lifecycle. A named member must launch asynchronously and
-  a correlated `SendMessage` to that launched current-team name must succeed
-  before transport is live-validated; a synchronous Agent result or failed or
-  uncorrelated message is rejected. Haiku and Sonnet cannot lead.
-- The lead may select only definition-owned `haiku-scout`, `sonnet`, or `opus`
-  teammates. Do not pass a call-level model override: requested models remain
-  pinned by the definitions, while effective teammate model, effort, and cost
-  are unknown without authoritative native facts. State intended effort; when no
-  teammate effort fact exists, only inherited lead effort is known.
-- `write` remains behavioral, not an OS-level boundary. In a read-only turn,
-  task/workspace/repository/external mutation is forbidden except local
-  native-memory maintenance under `.claude/agent-memory-local/<member-type>/`.
-  Native numerical limits are behavioral: at most three active teammates and
-  six creations; depth/tool denial is hard, while concurrency is only a
-  residual ordinary-subagent guard.
-- Same-team `SendMessage`, shared tasks, and native idle/failure delivery are
-  instructed to stay inside the current team. Native `SendMessage` can
-  technically reach other sessions, so recipient and completed-peer-resume
-  restrictions are behavioral/prompt-governed, not hard containment. No nested
-  delegation, isolation, fork, or completed-peer resume. Native teammate settle
-  evidence remains Claude-local; transport never
-  auto-reconnects: an explicit follow-up forms a fresh native team in the
-  durable parent session. Only that parent enters the CC registry; `Workflow`
-  remains disabled.
+`write: false` is behavioral read/review-only authority; `write: true` permits
+task-scoped mutation. It is frozen at creation and is not an OS-level
+process-permission switch or CLI permission flag. Enforcement is route-specific
+and observable: Claude is prompt-level under fixed config, `IS_SANDBOX=1`,
+terminal parity, and `--dangerously-skip-permissions`; the Explorer is
+Harness-policy tool denial. Never omit `write`.
+
+Names are unique flat `/root/<task_name>` paths. Never adopt a Terminal Claude
+session; the message must stand alone. There is no message path between Agents
+on different Harnesses.
+
+`leaf` runs the task itself and disables native `Agent` and `Workflow`. Use
+`native_orchestrator` only with exact Opus or Fable: it is an
+experimental Native Agent Team lead, not a Plugin-owned child lifecycle. A
+named member must launch asynchronously and a correlated `SendMessage` to that
+current-team name must succeed before transport is live-validated; a synchronous result or failed
+message is rejected. Haiku and Sonnet cannot lead.
+
+The lead selects only definition-owned `haiku-scout`, `sonnet`, or `opus`
+teammates: requested models stay pinned by the definitions, while effective teammate model,
+effort, and cost are unknown without native facts. State intended effort;
+absent a teammate effort fact, only inherited lead effort is known. A read-only lead may still maintain local native-memory under
+`.claude/agent-memory-local/<member-type>/`. At most three active teammates and
+six creations: these native limits are behavioral, not containment. Same-team
+`SendMessage` stays in the current team by prompt; no nested delegation, fork,
+or completed-peer resume. Transport never auto-reconnects: an explicit follow-up
+forms a fresh native team under the durable parent, which alone enters the
+registry; `Workflow` remains disabled.
+
 On success, report one sentence from `model`, role, `agent_name`, authority, and
 `status`; no final Claude text, JSON, or internal IDs. Use operator diagnostics
-for deeper evidence and preserve actionable failure/recovery detail.
-
-For non-null `blocking`, branch on `retry`: `same_agent_followup` continues
-this Agent, `new_agent` identifies a new lane, and `operator_required` stops
-further spawning in this workflow.
+for deeper evidence and preserve actionable failure/recovery detail. For
+non-null `blocking`, branch on `retry`: `same_agent_followup` continues this
+Agent, `new_agent` identifies a new lane, `operator_required` stops further
+spawning.

@@ -16,6 +16,7 @@ describe("native plugin contract", () => {
     "followup-task",
     "interrupt-agent",
     "list-agents",
+    "list-harnesses",
     "read-agent-messages",
     "send-message",
     "spawn-agent",
@@ -33,7 +34,7 @@ describe("native plugin contract", () => {
     "wait_agent",
   ];
 
-  it("publishes only the seven canonical Agent skills and no Codex hook", () => {
+  it("publishes only the eight canonical Agent skills and no Codex hook", () => {
     const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "codex-harnessdock");
@@ -115,6 +116,7 @@ describe("native plugin contract", () => {
       ["wait-agent", "wait_agent"],
       ["interrupt-agent", "interrupt_agent"],
       ["list-agents", "list_agents"],
+      ["list-harnesses", "list_harnesses"],
       ["read-agent-messages", "read_agent_messages"],
     ]) {
       const text = fs.readFileSync(path.join(root, "plugins", "codex-harnessdock", "skills", name, "SKILL.md"), "utf8");
@@ -253,7 +255,15 @@ describe("native plugin contract", () => {
     assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
     assert.match(text, /`write: false`[\s\S]*behavioral read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation[\s\S]*not an OS-level/i);
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
-    assert.match(text, /`leaf`[\s\S]*native[\s\S]*`Agent`[\s\S]*`Workflow`[\s\S]*`claude_orchestrator`[\s\S]*exact Opus or Fable/i);
+    assert.match(text, /`leaf`[\s\S]*native[\s\S]*`Agent`[\s\S]*`Workflow`[\s\S]*`native_orchestrator`[\s\S]*exact Opus or Fable/i);
+    // Every route field is stated by the caller; nothing is defaulted.
+    assert.match(text, /`harness`[\s\S]*`model`[\s\S]*`topology`[\s\S]*`write`/);
+    assert.match(text, /no default (?:Harness|route)/i);
+    assert.doesNotMatch(text, /delegation_mode/);
+    // OpenCode Explorer route truth, stated plainly and without aspiration.
+    assert.match(text, /opencode-go\/deepseek-v4-flash/);
+    assert.match(text, /`opencode`[\s\S]*leaf[\s\S]*`write: false`/i);
+    assert.match(text, /no reasoning effort/i);
     assert.match(text, /experimental Native Agent Team lead/i);
     assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
     assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
@@ -273,10 +283,14 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "codex-harnessdock", "skills", "followup-task", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /Omitted `write` inherits[\s\S]*latest behavioral authority/i);
-    assert.match(text, /Pass `false`[\s\S]*and `true`/i);
-    assert.match(text, /full-access terminal parity[\s\S]*prompt-enforced/i);
+    // The route and its behavioral authority are frozen at creation: a
+    // follow-up inherits them and cannot restate, widen, or narrow either.
+    assert.match(text, /frozen at creation[\s\S]*inherit/i);
+    assert.match(text, /a different route means a new Agent/i);
+    assert.doesNotMatch(text, /Omitted `write` inherits/i);
     assert.match(text, /`agent_name`[\s\S]*`delivery`[\s\S]*raw JSON/i);
+    // A route proving fresh-only continuation has no same-Agent second turn.
+    assert.match(text, /fresh_only[\s\S]*new Agent/i);
   });
 
   it("keeps send-message receipts and presentation compact", () => {
@@ -334,7 +348,7 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("keeps the seven self-contained Skill instructions within the context budget", () => {
+  it("keeps the eight self-contained Skill instructions within the context budget", () => {
     let words = 0;
     for (const name of canonicalSkills) {
       const text = fs.readFileSync(
@@ -345,10 +359,12 @@ describe("native plugin contract", () => {
       assert.match(text, /Experimental/i);
       assert.match(text, /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin/i);
     }
-    assert.ok(words <= 2_350, `Agent Skill guidance uses ${words} words`);
+    // `canonical-agent-orchestration`: the eight installed Skills' aggregate
+    // whitespace-delimited word count SHALL NOT exceed 2,200.
+    assert.ok(words <= 2_200, `Agent Skill guidance uses ${words} words`);
   });
 
-  it("marks all seven skill prompts and discovery descriptions Experimental", () => {
+  it("marks all eight skill prompts and discovery descriptions Experimental", () => {
     for (const name of canonicalSkills) {
       const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills", name);
       assert.match(fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8"), /Experimental/i);
@@ -368,6 +384,47 @@ describe("native plugin contract", () => {
       assert.match(text, /latest-version instructions\s+are emergency-only/i);
       assert.match(text, /HARNESSDOCK_MCP_RESTART_REQUIRED[\s\S]*new Codex task/i);
       assert.match(text, /Never repair Plugin Cache/i);
+    }
+  });
+
+  it("keeps list-harnesses inspection-only and free of route policy", () => {
+    const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills", "list-harnesses");
+    const text = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+    // It reports what exists; it never chooses.
+    assert.match(text, /readiness/i);
+    assert.match(text, /liveValidated/);
+    assert.match(text, /maturity/i);
+    assert.match(text, /capacity/i);
+    assert.match(text, /never orders[\s\S]*selects[\s\S]*implies a default/i);
+    assert.match(text, /the caller[\s\S]*states[\s\S]*whole route/i);
+    assert.match(text, /accepts no (?:fields|arguments)/i);
+    // An unavailable Harness is still admitted; absence is not removal.
+    assert.match(text, /unavailable[\s\S]*still admitted|admitted[\s\S]*not[\s\S]*removed/i);
+    assert.doesNotMatch(text, /endpoint|credential|password|username/i);
+  });
+
+  it("states each Harness's unsupported capabilities where a caller would hit them", () => {
+    const skills = path.join(root, "plugins", "codex-harnessdock", "skills");
+    const read = (name) => fs.readFileSync(path.join(skills, name, "SKILL.md"), "utf8");
+    // An unsupported operation answers with a receipt, never an exception and
+    // never a substitute call.
+    assert.match(read("interrupt-agent"), /`unsupported`[\s\S]*turn (?:keeps|is still) running/i);
+    assert.match(read("read-agent-messages"), /`unsupported`[\s\S]*no messages/i);
+    assert.match(read("send-message"), /queue/i);
+  });
+
+  it("keeps every Skill free of route ranking or preference language", () => {
+    // Deliberately narrower than the runtime's policy guard: Skills legitimately
+    // say "shell fallback" and name `reported_cost_usd`. What may never appear
+    // is a preference between admitted routes.
+    const policy =
+      /\brank(?:ing|ed|s)?\b|\brecommend\w*\b|\bpreferred\b|\bprefer\b|cheape|\bthreshold\b|\bbest (?:model|Harness|route)\b|auto[_-]?(?:delegate|select|route|choose)/i;
+    for (const name of canonicalSkills) {
+      const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills", name);
+      for (const file of ["SKILL.md", path.join("agents", "openai.yaml")]) {
+        const text = fs.readFileSync(path.join(skillRoot, file), "utf8");
+        assert.doesNotMatch(text, policy, `${name}/${file} states route policy`);
+      }
     }
   });
 

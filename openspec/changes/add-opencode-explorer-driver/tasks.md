@@ -57,10 +57,10 @@
 
 ## 8. Update Skills, Operator Surfaces, And Architecture Roadmap
 
-- [ ] 8.1 Add `plugins/codex-harnessdock/skills/list-harnesses/` and update the seven existing Skills for the exact eight-operation surface, explicit spawn route, Experimental capability truth, and concise context budget.
-- [ ] 8.2 Keep guidance policy-thin: no routing threshold/ranking, auto-delegation/fan-out/fallback/retry, conflict resolution, cost optimizer, research ontology, implementation policy, or cross-Harness messaging.
-- [ ] 8.3 Update manifests/package checks, README/operator docs, doctor/status/inspect/reconcile guidance, and examples for operator-owned loopback Server/auth/profile, CLI attach as diagnostic, unsupported first-release capabilities, and Codex-led fallback.
-- [ ] 8.4 Document Phase R physical rename after Phase B, then independent DeepSeek Harness and Grok Build probes; record Pi as reference-only and forbid TUI automation.
+- [x] 8.1 Add `plugins/codex-harnessdock/skills/list-harnesses/` and update the seven existing Skills for the exact eight-operation surface, explicit spawn route, Experimental capability truth, and concise context budget.
+- [x] 8.2 Keep guidance policy-thin: no routing threshold/ranking, auto-delegation/fan-out/fallback/retry, conflict resolution, cost optimizer, research ontology, implementation policy, or cross-Harness messaging.
+- [x] 8.3 Update manifests/package checks, README/operator docs, doctor/status/inspect/reconcile guidance, and examples for operator-owned loopback Server/auth/profile, CLI attach as diagnostic, unsupported first-release capabilities, and Codex-led fallback.
+- [x] 8.4 Document Phase R physical rename after Phase B, then independent DeepSeek Harness and Grok Build probes; record Pi as reference-only and forbid TUI automation.
 
 ## 9. Deterministic Acceptance And Installed-Smoke Preparation
 
