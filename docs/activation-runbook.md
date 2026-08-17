@@ -1,8 +1,8 @@
-# HarnessDock activation runbook (DRAFT — Task 11.3)
+# HarnessDock activation runbook (Task 11.3, accepted 2026-08-17)
 
-> **Draft status.** Placeholders below are marked `<<FILL AT 11.3 ACCEPTANCE>>`
-> and are filled by the change owner from measured evidence at acceptance. No
-> placeholder may survive into the accepted version.
+> **Accepted version.** Every acceptance placeholder is filled from measured
+> evidence. Two fields are deliberately recorded by the operator at execution
+> time and are marked as such; they are instructions, not gaps.
 
 This runbook is executed by an operator, in order, after the candidate review
 (11.1) and disposition (11.2) are complete. Every step below is one of the
@@ -35,9 +35,10 @@ find /data/CoordExp/.codex/plugins/data/codex-harnessdock/state \
   -exec sh -c 'test -z "$(find "$1" -type f -print -quit)"' _ {} \; -print | wc -l
 ```
 
-The command above reported **2,373** empty roots when this draft was written
-(`<<FILL AT 11.3 ACCEPTANCE: recount immediately before executing>>`). Delete only roots that contain **no files**; a root holding
-any file is real state and is out of scope for this step.
+The command above reported **2,373** empty roots at acceptance time.
+**Operator: re-run the count immediately before executing and record the number
+here at execution.** Delete only roots that contain **no files**; a root holding
+any file is examined in step 4 before the namespace move, not deleted here.
 
 ```bash
 find /data/CoordExp/.codex/plugins/data/codex-harnessdock/state \
@@ -60,26 +61,32 @@ and means real Agent state is present.
 
 ## 2. Record the candidate freeze facts
 
+These facts were measured in the development worktree that produced the
+candidate; step 3's verification compares the production checkout against them.
+
 ```bash
-git -C /data/CoordExp/cc-plugin-codex rev-parse HEAD
-git -C /data/CoordExp/cc-plugin-codex rev-parse HEAD^{tree}
-git -C /data/CoordExp/cc-plugin-codex status --porcelain   # must be empty
+git -C /data/CoordExp/codex-harnessdock-dev rev-parse HEAD HEAD^{tree}
+git -C /data/CoordExp/codex-harnessdock-dev status --porcelain   # must be empty
 ```
 
 | Fact | Value |
 | --- | --- |
-| Candidate commit | `<<FILL AT 11.3 ACCEPTANCE>>` |
-| Candidate tree digest | `<<FILL AT 11.3 ACCEPTANCE>>` |
-| Runtime suite | `<<FILL AT 11.3 ACCEPTANCE: passed/total>>` |
-| Integration suite | `<<FILL AT 11.3 ACCEPTANCE: passed/total>>` |
-| OpenSpec strict (change) | `<<FILL AT 11.3 ACCEPTANCE>>` |
-| OpenSpec strict (all) | `<<FILL AT 11.3 ACCEPTANCE>>` |
-| Probed OpenCode Server / client / model / profile | `<<FILL AT 11.3 ACCEPTANCE>>` |
+| Candidate commit | `e1a7f5f878d6d48310059bc97c6ebba64094c9b2` |
+| Candidate tree digest | git tree `9dc49511cd38cb22068f5d818fc232f66be01ee5` (637 git-visible paths, 6,116,535 file bytes) |
+| Runtime suite | 1519/1519 pass, data-root delta 0 |
+| Integration suite | 20/20 pass |
+| OpenSpec strict (change) | `add-opencode-explorer-driver` valid |
+| OpenSpec strict (all) | 25 passed, 0 failed |
+| Probed OpenCode Server / client / model / profile | Server `1.18.18` on the literal loopback origin; pinned `@opencode-ai/sdk@1.18.18` (lockfile integrity held); exact `opencode-go/deepseek-v4-flash` confirmed on both the CLI catalog and the Server surface; `codex-explorer` resolved live (mode `primary`, 91 merged rules, readiness `ready`/`liveValidated` with zero blockers) |
 | Continuation mode | `fresh_only` |
-| Recorded unknown states | `<<FILL AT 11.3 ACCEPTANCE>>` |
+| Recorded unknown states | no authoritative Server session/incarnation evidence (hence `fresh_only`); turn restart observation unavailable; unknown settlement retains its leases and no operator force-clear exists; live reliability, provider cache behavior, and economics unmeasured until the Task 10.5 maturity work |
+
+Commits after the candidate commit are acceptance bookkeeping only (OpenSpec
+ledger, this runbook, the handoff checkpoint); they change no runtime, test, or
+Skill content.
 
 **Verification.** The working tree is clean and the recorded commit is the one
-reviewed in 11.1 and dispositioned in 11.2.
+reviewed in 11.1 and dispositioned/rechecked in 11.2.
 
 **Abort/rollback.** Nothing has changed yet; abort by stopping.
 
@@ -111,20 +118,36 @@ state.
 The deferred Phase 0 tasks: the durable namespace still carries the pre-rename
 identity.
 
-```bash
-# 1. Back up first. This is the only step in this runbook that is not
-#    reconstructible from the repository.
-tar -czf ~/harnessdock-data-backup-$(date -u +%Y%m%dT%H%M%SZ).tgz \
-  -C /data/CoordExp/.codex/plugins/data codex-harnessdock
+The live data namespace is `cc`; `codex-harnessdock` currently holds only
+test-era residue (production has never written it — the loaded Plugin still
+uses the `cc` namespace). The move target must not exist when the atomic rename
+runs, so the residue namespace is inspected and retired first.
 
-# 2. Atomic namespace move (single rename, same filesystem).
-mv /data/CoordExp/.codex/plugins/data/<<FILL AT 11.3 ACCEPTANCE: old namespace>> \
+```bash
+# 1. Back up BOTH namespaces first. `cc` is the live data being moved and is
+#    the one artifact in this runbook that is not reconstructible; the residue
+#    namespace is kept for forensic completeness.
+tar -czf ~/harnessdock-data-backup-$(date -u +%Y%m%dT%H%M%SZ).tgz \
+  -C /data/CoordExp/.codex/plugins/data cc codex-harnessdock
+
+# 2. Inspect what step 1's cleanup left in the residue namespace. Expect only
+#    file-bearing caches (e.g. Claude CLI compatibility config.json roots)
+#    written by pre-isolation test runs. If ANY agent, job, mailbox, or lease
+#    record is present, STOP — that would be real state nobody expected here.
+grep -rl '"agent"\|"job"\|"mailbox"\|"lease"' \
+  /data/CoordExp/.codex/plugins/data/codex-harnessdock/ && echo "STOP" || true
+
+# 3. Retire the residue namespace (it is inside the backup), then perform the
+#    single atomic rename.
+rm -rf /data/CoordExp/.codex/plugins/data/codex-harnessdock
+mv /data/CoordExp/.codex/plugins/data/cc \
    /data/CoordExp/.codex/plugins/data/codex-harnessdock
 
-# 3. Record the cutover timestamp alongside the backup.
+# 4. Record the cutover timestamp alongside the backup.
+date -u +%Y-%m-%dT%H:%M:%SZ
 ```
 
-Cutover timestamp: `<<FILL AT 11.3 ACCEPTANCE>>`.
+Cutover timestamp: **operator records the step-4 output here at execution.**
 
 Then remove the old-name discovery entry so no stale identity is discoverable.
 Concurrent legacy `cc_for_pein` discovery is already rejected by release smoke,
