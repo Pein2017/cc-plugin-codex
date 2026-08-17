@@ -118,6 +118,30 @@ Before freezing any phase implementation, run `openspec list` again. The current
 - Phase B Task 3 is the active milestone; `codex-explorer` remains the only
   readiness blocker and is owned by Task 3.
 
+## Phase B completion checkpoint — 2026-08-17
+
+- Phase B `add-opencode-explorer-driver` candidate implementation is COMPLETE
+  at commit `e1a7f5f878d6d48310059bc97c6ebba64094c9b2` (tree `9dc49511…`,
+  637 paths); commits after it are acceptance bookkeeping. Tasks 1–9, 10.1,
+  and 11.1–11.4 are checked (49/53); 10.2–10.5 are the live/maturity work
+  deliberately left beyond the manual boundary.
+- Gates at the final candidate: runtime 1519/1519 with operator data-root
+  delta 0, integration 20/20, OpenSpec strict 25/25, diff clean.
+- One fresh independent read-only review (Opus, new context) returned PASS
+  over all nine 11.1 risk classes; its two P2 findings were fixed and
+  rechecked CLOSED by the same reviewer.
+- Execution model was hybrid per the accepted specs: new spawns on both
+  Harnesses write v3 identity records; claude-code executes on the v1
+  supervisor, opencode on the detached v3 worker path; generation 6 exposes
+  exactly eight operations.
+- The consolidated activation is one operator-executed procedure:
+  [`docs/activation-runbook.md`](../activation-runbook.md). It includes the
+  pre-cutover cleanup of test-era state roots and the `cc` →
+  `codex-harnessdock` data cutover.
+- Outstanding beyond this change: the shared `agent-routing` Skill update
+  (Codex sol-lead-owned, outside this repo) and the final global fresh
+  `claude-fable-5/xhigh` acceptance after it; then Phase R.
+
 ## Immediate next action and stop rule
 
 1. Bind Git/Serena to `/data/CoordExp/codex-harnessdock-dev`, inspect exact HEAD/status, and re-run `openspec list` before selecting work.
