@@ -68,6 +68,14 @@ import { resolvePluginStateRoot } from "./paths.mjs";
 import { validateProcessIdentity } from "./process-control.mjs";
 import { runVersionThreeWorkerLoop } from "./v3-worker-loop.mjs";
 import { SOURCE_ROOT } from "./version.mjs";
+import {
+  MAX_WITNESS_BASENAME_CHARS,
+  MAX_WITNESS_REPORTED_BASENAMES,
+  MAX_WITNESS_SNAPSHOT_PATHS,
+  boundedWorkspaceBasenames as boundedBasenames,
+  changedWorkspacePaths as changedPaths,
+  snapshotWorkspaceState as snapshotWorkspace,
+} from "./workspace-mutation-witness.mjs";
 
 /** The exact route this smoke is authorized for. Nothing here is an option. */
 export const PHASE_A_MODEL = "claude-haiku-4-5";
@@ -143,11 +151,8 @@ const ACCOUNT_DETAIL_CODES = Object.freeze(["not_authenticated"]);
 const PHASE_A_CAPACITY_CLASS = "phase-a-leaf-smoke";
 const PHASE_A_JOB_KIND = "phase_a_leaf_smoke";
 const DEFAULT_MAX_MS = 30 * 60 * 1000;
-const MAX_SNAPSHOT_PATHS = 4096;
 const MAX_SOURCE_INVENTORY_PATHS = 50_000;
 const MAX_SOURCE_INVENTORY_BYTES = 512 * 1024 * 1024;
-const MAX_REPORTED_BASENAMES = 16;
-const MAX_BASENAME_CHARS = 64;
 const CLEANUP_PROOF_TIMEOUT_MS = 5_000;
 const CLEANUP_PROOF_INTERVAL_MS = 50;
 
@@ -285,63 +290,6 @@ function initializeWorkspace() {
   );
   if (committed.status !== 0) failed();
   return cwd;
-}
-
-/**
- * Path, type, size, mode, and content digest of every path in the disposable
- * workspace outside `.git`. This is the mutation gate: the turn holds no write
- * authority, so any changed path at all is a refusal.
- */
-function snapshotWorkspace(root) {
-  const paths = new Map();
-  let overflow = false;
-  const visit = (relative) => {
-    if (paths.size >= MAX_SNAPSHOT_PATHS) {
-      overflow = true;
-      return;
-    }
-    const absolute = path.join(root, relative);
-    const stat = fs.lstatSync(absolute);
-    const metadata = {
-      type: stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file",
-      size: stat.size,
-      mode: stat.mode,
-    };
-    if (stat.isFile()) {
-      metadata.sha256 = createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
-    }
-    paths.set(relative || ".", metadata);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
-    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
-      // `.git` is this workspace's own disposable bookkeeping, not turn state.
-      if (!relative && entry.name === ".git") continue;
-      visit(relative ? path.join(relative, entry.name) : entry.name);
-    }
-  };
-  visit("");
-  return { paths, overflow };
-}
-
-function changedPaths(before, after) {
-  const union = new Set([...before.paths.keys(), ...after.paths.keys()]);
-  return [...union]
-    .filter((relative) =>
-      JSON.stringify(before.paths.get(relative) ?? null) !== JSON.stringify(after.paths.get(relative) ?? null))
-    .sort();
-}
-
-/**
- * Only the basename of a mutated path, bounded in count and length. A full
- * relative path can carry task-shaped structure; a basename is enough to say
- * what was touched.
- */
-function boundedBasenames(relatives) {
-  const names = new Set();
-  for (const relative of relatives) {
-    if (names.size >= MAX_REPORTED_BASENAMES) break;
-    names.add(path.basename(String(relative)).slice(0, MAX_BASENAME_CHARS));
-  }
-  return [...names].sort();
 }
 
 /** The closed acceptance value one durable launch claim proves. */

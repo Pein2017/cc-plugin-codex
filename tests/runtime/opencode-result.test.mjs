@@ -533,15 +533,19 @@ describe("opencode result: provider errors and malformed payloads", () => {
     });
     assert.equal(result.ok, true);
     const serialized = JSON.stringify(result);
-    for (const sentinel of [OPERATOR_CWD, OPERATOR_ROOT, "STRUCTURED-SENTINEL", "0.0021", "1234"]) {
+    for (const sentinel of [OPERATOR_CWD, OPERATOR_ROOT, "STRUCTURED-SENTINEL"]) {
       assert.equal(serialized.includes(sentinel), false, sentinel);
     }
     for (const text of collectStrings(result)) {
       assert.equal(text.startsWith("/"), false, `projected an absolute path: ${text}`);
     }
-    // Metrics belong to the usage ledger, not to the result projection.
+    // Metrics are exact provider facts on their own field (Task 6); the text
+    // metadata still carries none of them, and `tokens.total` is never carried.
     assert.equal(Object.hasOwn(result.metadata, "tokens"), false);
     assert.equal(Object.hasOwn(result.metadata, "cost"), false);
+    assert.equal(Object.hasOwn(result.providerMetrics, "total"), false);
+    assert.equal(serialized.includes("1234"), false, "tokens.total is not a carried fact");
+    assert.equal(result.finalMessage.includes("0.0021"), false);
   });
 
   it("keeps the projection free of native tool history for a long realistic turn", () => {

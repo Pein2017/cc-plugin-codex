@@ -92,7 +92,12 @@ import {
   renderOpencodeExplorerPrompt,
 } from "./opencode-prompt.mjs";
 import { selectOpencodeExplorerFinalResult } from "./opencode-result.mjs";
+import {
+  buildOpencodeServerReuseFacts,
+  buildOpencodeUsageRecord,
+} from "./opencode-usage.mjs";
 import { plainRecordSnapshot } from "./plain-record.mjs";
+import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const OPENCODE_DRIVER_VERSION = "opencode@1";
 export const OPENCODE_DRIVER_TITLE = "OpenCode read-only Explorer (experimental)";
@@ -400,6 +405,63 @@ export function createOpencodeDriver(options = {}) {
     return boundedDriverReceipt(OPENCODE_HARNESS_ID, OPENCODE_DRIVER_VERSION, receipt);
   }
 
+  /**
+   * The exact provider-reported facts, mapped onto the closed Harness-neutral
+   * metrics vocabulary. Only the five fields that vocabulary already models are
+   * carried here; the sixth exact fact this schema reports -- reasoning tokens --
+   * has no slot in it and travels in the route-keyed usage record instead, which
+   * is where the spec puts these facts with their lineage anyway. Nothing is
+   * zero-filled: an absent or malformed provider field stays null.
+   */
+  function terminalMetricsFor(providerMetrics, toolCallCount) {
+    return terminalMetricsFromEvidence({
+      providerReported: providerMetrics
+        ? {
+            duration_ms: null,
+            duration_api_ms: null,
+            turn_count: null,
+            input_tokens: providerMetrics.inputTokens,
+            output_tokens: providerMetrics.outputTokens,
+            cache_creation_input_tokens: providerMetrics.cacheWriteTokens,
+            cache_read_input_tokens: providerMetrics.cacheReadTokens,
+            reported_cost_usd: providerMetrics.reportedCost,
+          }
+        : null,
+      toolCallCount: Number.isSafeInteger(toolCallCount) ? toolCallCount : 0,
+      attemptCount: 1,
+      recoveryAttemptCount: 0,
+    });
+  }
+
+  /**
+   * The route-keyed usage record for one settled turn. Usage evidence never
+   * decides settlement: if the record cannot be built -- an unattributable
+   * identity, a bound, a refused provenance field -- the receipt records the
+   * closed reason and the turn still settles on its own evidence.
+   */
+  function usageReceiptFor(context, status, providerMetrics, toolCallCount) {
+    try {
+      return {
+        usage: buildOpencodeUsageRecord({
+          identity: context.usageIdentity,
+          status,
+          providerMetrics: providerMetrics ?? null,
+          plugin: {
+            toolCallCount: Number.isSafeInteger(toolCallCount) ? toolCallCount : null,
+            attemptCount: 1,
+            recoveryAttemptCount: 0,
+          },
+          serverReuse: buildOpencodeServerReuseFacts({
+            latencyMs: context.latencyMs,
+            serverVersion: context.serverVersion,
+          }),
+        }),
+      };
+    } catch (error) {
+      return { usageUnattributable: typeof error?.code === "string" ? error.code : "usage_unavailable" };
+    }
+  }
+
   function continuationEvidence() {
     // Fresh-only, and honest about why: the compatibility probe found no
     // authoritative Server/session incarnation field, so a persisted session
@@ -411,7 +473,18 @@ export function createOpencodeDriver(options = {}) {
     };
   }
 
-  function failedTerminal({ nativeTurnRef, failureClass, absence, continuity, reason, metadata, status = "failed" }) {
+  function failedTerminal({
+    nativeTurnRef,
+    failureClass,
+    absence,
+    continuity,
+    reason,
+    metadata,
+    status = "failed",
+    context = null,
+    providerMetrics = null,
+    toolCallCount = null,
+  }) {
     return {
       harnessId: OPENCODE_HARNESS_ID,
       driverVersion: OPENCODE_DRIVER_VERSION,
@@ -436,13 +509,17 @@ export function createOpencodeDriver(options = {}) {
       finalMessage: null,
       finalMessageAbsenceReason: absence,
       progress: null,
-      metrics: null,
+      metrics: terminalMetricsFor(providerMetrics, toolCallCount),
       resultMetadata: metadata,
-      driverReceipt: driverReceipt({ promptPrefixVersion: OPENCODE_PROMPT_PREFIX_VERSION, outcome: absence }),
+      driverReceipt: driverReceipt({
+        promptPrefixVersion: OPENCODE_PROMPT_PREFIX_VERSION,
+        outcome: absence,
+        ...(context ? usageReceiptFor(context, status, providerMetrics, toolCallCount) : {}),
+      }),
     };
   }
 
-  function completedTerminal({ nativeTurnRef, selected }) {
+  function completedTerminal({ nativeTurnRef, selected, context }) {
     return {
       harnessId: OPENCODE_HARNESS_ID,
       driverVersion: OPENCODE_DRIVER_VERSION,
@@ -459,7 +536,7 @@ export function createOpencodeDriver(options = {}) {
       finalMessage: selected.finalMessage,
       finalMessageAbsenceReason: null,
       progress: null,
-      metrics: null,
+      metrics: terminalMetricsFor(selected.providerMetrics, selected.toolCallCount),
       resultMetadata: {
         promptPrefixVersion: OPENCODE_PROMPT_PREFIX_VERSION,
         finishReason: selected.metadata.finishReason,
@@ -472,6 +549,7 @@ export function createOpencodeDriver(options = {}) {
         promptPrefixVersion: OPENCODE_PROMPT_PREFIX_VERSION,
         outcome: "final_message_projected",
         finishReason: selected.metadata.finishReason,
+        ...usageReceiptFor(context, "completed", selected.providerMetrics, selected.toolCallCount),
       }),
     };
   }
@@ -492,6 +570,7 @@ export function createOpencodeDriver(options = {}) {
           continuity: settled.continuity,
           reason: `the OpenCode Server answered the prompt request with a ${settled.absence} outcome`,
           metadata: { promptPrefixVersion: OPENCODE_PROMPT_PREFIX_VERSION, resultFailureCode: settled.absence },
+          context,
         });
       }
       const unknown = UNKNOWN_PROMPT_FAILURES[outcome.code] ?? "unreadable_transport";
@@ -511,7 +590,7 @@ export function createOpencodeDriver(options = {}) {
       agent: OPENCODE_EXPLORER_PROFILE_NAME,
       attemptId: context.attemptId,
     });
-    if (selected.ok) return completedTerminal({ nativeTurnRef, selected });
+    if (selected.ok) return completedTerminal({ nativeTurnRef, selected, context });
     const refused = /** @type {{code: string, providerErrorName?: string}} */ (selected);
 
     if (refused.code === "provider_error") {
@@ -528,6 +607,9 @@ export function createOpencodeDriver(options = {}) {
           resultFailureCode: refused.code,
           providerErrorName: refused.providerErrorName,
         },
+        context,
+        providerMetrics: selected.providerMetrics ?? null,
+        toolCallCount: selected.toolCallCount ?? null,
       });
     }
     return failedTerminal({
@@ -537,6 +619,9 @@ export function createOpencodeDriver(options = {}) {
       continuity: "preserved",
       reason: `the native assistant message did not satisfy the Explorer return contract (${refused.code})`,
       metadata: { promptPrefixVersion: OPENCODE_PROMPT_PREFIX_VERSION, resultFailureCode: refused.code },
+      context,
+      providerMetrics: selected.providerMetrics ?? null,
+      toolCallCount: selected.toolCallCount ?? null,
     });
   }
 
@@ -630,8 +715,10 @@ export function createOpencodeDriver(options = {}) {
         driverVersion: OPENCODE_DRIVER_VERSION,
         route: input.route,
         promptEnvelope,
+        // JSON-array domain separation: unambiguous by construction, with no
+        // separator character that could appear inside a component.
         inputDigest: `sha256:${createHash("sha256")
-          .update(`${OPENCODE_PROMPT_PREFIX_VERSION} ${route.model} ${promptText}`)
+          .update(JSON.stringify([OPENCODE_PROMPT_PREFIX_VERSION, route.model, promptText]))
           .digest("hex")}`,
         turnOptions: null,
       };
@@ -823,6 +910,20 @@ export function createOpencodeDriver(options = {}) {
           directory: workspaceRoot ?? undefined,
           signal: scope?.signal ?? undefined,
         });
+        const dispatchedAt = Date.now();
+        const usageIdentity = {
+          rootId: scope?.rootId ?? null,
+          agentId: scope?.agentId ?? null,
+          turnId: scope?.turnId ?? null,
+          attemptId,
+          harnessId: OPENCODE_HARNESS_ID,
+          instanceKey: fixedInstanceKey,
+          model: route.model,
+          driverVersion: OPENCODE_DRIVER_VERSION,
+          capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION,
+          topology: route.topology,
+          authority: route.authority,
+        };
         let settled = false;
         const result = dispatched.then(
           (outcome) => {
@@ -831,6 +932,11 @@ export function createOpencodeDriver(options = {}) {
               sessionId,
               userMessageId,
               attemptId,
+              usageIdentity,
+              // Plugin-observed wall clock only. Nothing derives a cache hit, a
+              // price, or a charge from it.
+              latencyMs: Math.max(0, Date.now() - dispatchedAt),
+              serverVersion: input?.launchContext?.serverVersion ?? null,
             });
             settled = true;
             if (releaseCapacity) {

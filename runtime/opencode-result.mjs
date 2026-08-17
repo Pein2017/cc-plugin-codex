@@ -43,12 +43,20 @@
  * ## What never crosses this boundary
  *
  * `info.path` holds the operator's absolute `cwd`/`root`; an `APIError` holds
- * raw `responseBody`/`responseHeaders`; `info.tokens`/`cost` belong to the
- * usage ledger; `info.structured`, tool `state`, file `url`, patch `files`,
- * snapshot payloads, and subtask prompts are native detail. None of them are
- * read into the projection. A provider error is reduced to its closed variant
- * name, and an unrecognized name or finish reason becomes the literal
- * `unrecognized` rather than an echoed string.
+ * raw `responseBody`/`responseHeaders`; `info.structured`, tool `state`, file
+ * `url`, patch `files`, snapshot payloads, and subtask prompts are native
+ * detail. None of them are read into the projection. A provider error is
+ * reduced to its closed variant name, and an unrecognized name or finish reason
+ * becomes the literal `unrecognized` rather than an echoed string.
+ *
+ * `info.tokens`/`info.cost` ARE read, but only as exact provider-reported
+ * numbers on a separate `providerMetrics` field, never into the final text or
+ * its metadata (Task 6.1). They are read from this same single-read snapshot of
+ * the lineage-matched message rather than from a second request or a second
+ * read, so the numbers a receipt carries are provably the ones this boundary
+ * validated. Metrics accompany a refused projection too -- a provider error or
+ * an empty final answer still consumed provider work -- but never a payload
+ * whose lineage or shape was rejected, because such a payload proves nothing.
  */
 
 import { types } from "node:util";
@@ -117,6 +125,94 @@ export const OPENCODE_RESULT_FAILURE_CODES = Object.freeze([
 ]);
 
 const UNRECOGNIZED = "unrecognized";
+
+/**
+ * The exact provider-reported numeric facts the pinned assistant schema
+ * declares: `tokens.{input,output,reasoning}`, `tokens.cache.{read,write}`, and
+ * `cost`. Nothing else is a metric here -- `tokens.total` is derivable and is
+ * deliberately not carried, and no duration, latency, or price is inferred.
+ */
+export const OPENCODE_PROVIDER_METRIC_FIELDS = Object.freeze([
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "inputTokens",
+  "outputTokens",
+  "reasoningTokens",
+  "reportedCost",
+]);
+
+function admittedTokenCount(value) {
+  // Present-but-zero is a fact; absent is unknown; anything non-integer,
+  // negative, or non-finite is malformed and stays unknown rather than being
+  // coerced into a number a receipt would then present as reported.
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function admittedCostValue(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function snapshotOrNull(value, label) {
+  if (value === undefined || value === null) return null;
+  try {
+    return plainRecordSnapshot(value, label);
+  } catch {
+    return undefined; // present but unreadable: malformed, not absent
+  }
+}
+
+/**
+ * Read the exact provider-reported metrics from one already-lineage-validated
+ * assistant message snapshot. Every field is independent: a malformed cache
+ * object leaves the cache facts unknown without discarding the token counts,
+ * and a missing `tokens` object leaves a present `cost` intact.
+ */
+function readProviderMetrics(info) {
+  const malformed = [];
+  const metrics = {
+    inputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    reportedCost: null,
+  };
+
+  const tokens = snapshotOrNull(info.tokens, "OpenCode assistant tokens");
+  if (tokens === undefined) {
+    malformed.push("inputTokens", "outputTokens", "reasoningTokens", "cacheReadTokens", "cacheWriteTokens");
+  } else if (tokens !== null) {
+    for (const [field, raw] of [
+      ["inputTokens", tokens.input],
+      ["outputTokens", tokens.output],
+      ["reasoningTokens", tokens.reasoning],
+    ]) {
+      const admitted = admittedTokenCount(raw);
+      if (admitted === null && raw !== undefined && raw !== null) malformed.push(field);
+      metrics[field] = admitted;
+    }
+    const cache = snapshotOrNull(tokens.cache, "OpenCode assistant cache tokens");
+    if (cache === undefined) {
+      malformed.push("cacheReadTokens", "cacheWriteTokens");
+    } else if (cache !== null) {
+      for (const [field, raw] of [["cacheReadTokens", cache.read], ["cacheWriteTokens", cache.write]]) {
+        const admitted = admittedTokenCount(raw);
+        if (admitted === null && raw !== undefined && raw !== null) malformed.push(field);
+        metrics[field] = admitted;
+      }
+    }
+  }
+
+  const cost = admittedCostValue(info.cost);
+  if (cost === null && info.cost !== undefined && info.cost !== null) malformed.push("reportedCost");
+  metrics.reportedCost = cost;
+
+  return Object.freeze({
+    ...metrics,
+    provenance: "provider_reported",
+    malformedFields: Object.freeze([...new Set(malformed)].sort()),
+  });
+}
 
 const EXPECTED_LINEAGE_FIELDS = Object.freeze([
   "agent",
@@ -269,6 +365,24 @@ function requireExpectedLineage(expected) {
   });
 }
 
+/**
+ * Tool parts of one message, counted without reading a tool name, input, or
+ * output. Used by the provider-error arm, which returns before the part walk.
+ */
+function countToolParts(parts, info) {
+  let count = 0;
+  for (const rawPart of parts) {
+    let part;
+    try {
+      part = plainRecordSnapshot(rawPart, "OpenCode message part");
+    } catch {
+      return count;
+    }
+    if (part.type === "tool" && part.sessionID === info.sessionID && part.messageID === info.id) count += 1;
+  }
+  return count;
+}
+
 function closedProviderErrorName(error) {
   if (!isPlainObject(error)) return UNRECOGNIZED;
   return OPENCODE_PROVIDER_ERROR_NAMES.includes(error.name) ? error.name : UNRECOGNIZED;
@@ -285,8 +399,10 @@ function closedFinishReason(finish) {
  * @param {*} response the pinned `{info, parts}` payload, unvalidated
  * @param {*} expected the exact lineage the caller proved before submitting
  * @returns {{ok: boolean, finalMessage?: string, metadata?: object, lineage?: object,
- *   code?: string, field?: string, providerErrorName?: string}} exactly one arm is
- *   populated: `ok: true` carries the projection, `ok: false` carries a closed code.
+ *   code?: string, field?: string, providerErrorName?: string, providerMetrics?: object,
+ *   toolCallCount?: number}} exactly one arm is populated: `ok: true` carries the
+ *   projection, `ok: false` carries a closed code. `providerMetrics` accompanies
+ *   every arm whose message lineage validated, including refusals.
  */
 export function selectOpencodeExplorerFinalResult(response, expected) {
   const lineage = requireExpectedLineage(expected);
@@ -323,15 +439,24 @@ export function selectOpencodeExplorerFinalResult(response, expected) {
     return failure("lineage_mismatch", { field: "agent" });
   }
 
+  // Lineage is proven, so this message's own numbers are trustworthy evidence
+  // even when its text is not.
+  const providerMetrics = readProviderMetrics(info);
+
   // A provider/native error is classified here but never merged with a partial
   // answer: a turn that errored has no admitted final text.
   if (info.error != null) {
-    return failure("provider_error", { providerErrorName: closedProviderErrorName(info.error) });
+    return failure("provider_error", {
+      providerErrorName: closedProviderErrorName(info.error),
+      providerMetrics,
+      toolCallCount: countToolParts(parts, info),
+    });
   }
 
   /** @type {string[]} */
   const candidates = [];
   let nonTextPartCount = 0;
+  let toolCallCount = 0;
   for (const rawPart of parts) {
     let part;
     try {
@@ -349,6 +474,8 @@ export function selectOpencodeExplorerFinalResult(response, expected) {
     if (part.messageID !== info.id) return failure("lineage_mismatch", { field: "part.messageID" });
     if (part.type !== "text") {
       nonTextPartCount += 1;
+      // A count is not tool history: no tool name, input, or output is read.
+      if (part.type === "tool") toolCallCount += 1;
       continue;
     }
     if (typeof part.text !== "string") return failure("malformed_response");
@@ -358,26 +485,32 @@ export function selectOpencodeExplorerFinalResult(response, expected) {
     candidates.push(part.text);
   }
 
-  if (candidates.length === 0) return failure("no_final_text");
+  if (candidates.length === 0) return failure("no_final_text", { providerMetrics, toolCallCount });
 
   let selected = null;
   let selectedIndex = -1;
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const raw = candidates[index];
-    if (raw.length > OPENCODE_MAX_RAW_FINAL_TEXT_CHARS) return failure("final_text_too_large");
+    if (raw.length > OPENCODE_MAX_RAW_FINAL_TEXT_CHARS) {
+      return failure("final_text_too_large", { providerMetrics, toolCallCount });
+    }
     const normalized = normalizeWithCounters(raw);
-    if (normalized.text.length > OPENCODE_MAX_FINAL_TEXT_CHARS) return failure("final_text_too_large");
+    if (normalized.text.length > OPENCODE_MAX_FINAL_TEXT_CHARS) {
+      return failure("final_text_too_large", { providerMetrics, toolCallCount });
+    }
     if (normalized.text.length > 0) {
       selected = normalized;
       selectedIndex = index;
       break;
     }
   }
-  if (selected === null) return failure("empty_final_text");
+  if (selected === null) return failure("empty_final_text", { providerMetrics, toolCallCount });
 
   return Object.freeze({
     ok: true,
     finalMessage: selected.text,
+    providerMetrics,
+    toolCallCount,
     metadata: Object.freeze({
       textPartCount: candidates.length,
       precedingTextPartCount: selectedIndex,

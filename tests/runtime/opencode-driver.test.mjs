@@ -476,8 +476,49 @@ describe("opencode driver: session and turn lineage", () => {
     assert.equal(terminal.finalMessage, "The fake Explorer answer.");
     assert.equal(terminal.finalMessageAbsenceReason, null);
     assert.equal(terminal.failure.class, null);
-    assert.equal(terminal.metrics, null);
     assert.equal(terminal.progress, null);
+    // Task 6: the exact provider-reported facts, mapped onto the closed
+    // Harness-neutral vocabulary, with nothing derived and nothing zero-filled.
+    assert.deepEqual(terminal.metrics, {
+      version: 1,
+      provider_reported: {
+        duration_ms: null,
+        duration_api_ms: null,
+        turn_count: null,
+        input_tokens: 80,
+        output_tokens: 20,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        reported_cost_usd: 0.001,
+      },
+      plugin_observed: { tool_call_count: 0, attempt_count: 1, recovery_attempt_count: 0 },
+    });
+    const usage = terminal.driverReceipt.receipt.usage;
+    assert.equal(usage.version, 1);
+    assert.match(usage.key, /^ocu1:[0-9a-f]{32}$/);
+    assert.equal(usage.status, "completed");
+    assert.deepEqual(usage.identity, {
+      rootId: "root_1",
+      agentId: "agent_1",
+      turnId: "job_1",
+      attemptId: "att_1",
+      harnessId: OPENCODE_HARNESS_ID,
+      instanceKey: opencodeExplorerInstanceKey(url),
+      model: OPENCODE_EXPLORER_MODEL,
+      driverVersion: OPENCODE_DRIVER_VERSION,
+      capabilitySchemaVersion: OPENCODE_EXPLORER_CAPABILITIES.capabilitySchemaVersion,
+      topology: OPENCODE_EXPLORER_TOPOLOGY,
+      authority: OPENCODE_EXPLORER_AUTHORITY,
+    });
+    // The sixth exact fact the pinned schema reports has no slot in the shared
+    // metrics vocabulary, so the route-keyed record is where it lives.
+    assert.equal(usage.provider.reasoningTokens, 0);
+    assert.equal(usage.provider.provenance, "provider_reported");
+    assert.deepEqual([...usage.provider.malformedFields], []);
+    assert.equal(usage.serverReuse.serverIncarnationProven, false);
+    assert.equal(usage.serverReuse.derivedFromCacheTelemetry, false);
+    assert.equal(usage.serverReuse.sessionLifecycle, "fresh_session_per_agent");
+    assert.equal(Number.isSafeInteger(usage.serverReuse.latencyMs), true);
     assert.equal(terminal.resultMetadata.promptPrefixVersion, OPENCODE_PROMPT_PREFIX_VERSION);
     assert.equal(terminal.resultMetadata.finishReason, "stop");
     assertNoDisclosure({ ...terminal, finalMessage: null }, "terminal result");
@@ -716,6 +757,12 @@ describe("opencode driver: terminal settlement", () => {
       assert.equal(terminal.finalMessage, null);
       assert.equal(terminal.finalMessageAbsenceReason, "prompt_refused");
       assert.deepEqual({ ...terminal.executionWorld }, { continuity: "not_applicable", settlement: "settled" });
+      // A turn the Server refused reports no provider numbers at all: there is
+      // no assistant message, so nothing is zero-filled in its place.
+      assert.equal(terminal.metrics.provider_reported, null);
+      assert.equal(terminal.metrics.plugin_observed.attempt_count, 1);
+      assert.equal(terminal.driverReceipt.receipt.usage.provider, null);
+      assert.equal(terminal.driverReceipt.receipt.usage.status, "failed");
       await live.dispose();
       assert.equal(opencodeHeldCapacity(opencodeExplorerInstanceKey(url)), 0, "a settled failure releases capacity");
     }
@@ -862,6 +909,12 @@ describe("opencode driver: terminal settlement", () => {
       assert.equal(terminal.failure.class, failureClass, name);
       assert.equal(terminal.finalMessageAbsenceReason, "provider_error", name);
       assert.equal(terminal.resultMetadata.providerErrorName, name, name);
+      // Task 6: a refused turn still consumed provider work, so its exact
+      // metrics and its route-keyed usage record travel with the failure.
+      assert.equal(terminal.metrics.provider_reported.input_tokens, 80, name);
+      assert.equal(terminal.driverReceipt.receipt.usage.status, status, name);
+      assert.equal(terminal.driverReceipt.receipt.usage.provider.reportedCost, 0.001, name);
+      assert.equal(terminal.driverReceipt.receipt.usage.serverReuse.derivedFromCacheTelemetry, false, name);
       const serialized = JSON.stringify(terminal);
       assert.equal(serialized.includes("PROVIDER-SENTINEL"), false, name);
       assert.equal(serialized.includes("RAW-SENTINEL"), false, name);
