@@ -23,10 +23,10 @@
 
 ## 4. Implement The Narrow Prompt And Result Boundary
 
-- [ ] 4.1 Implement `runtime/opencode-prompt.mjs` with one versioned stable prefix limited to Explorer/read-only/leaf authority, admitted-tool boundary, caller task text, concise evidence/unknowns request, and outer-final-only return contract.
-- [ ] 4.2 Bound task input and total prompt without adding generic public `scope` or `questions` fields or Plugin-owned task decomposition/methodology.
-- [ ] 4.3 Implement `runtime/opencode-result.mjs` to select exactly one matching nonempty bounded outer-assistant final text and optional closed metadata; do not parse terminal UI, native tool history, or require a repository JSON ontology.
-- [ ] 4.4 Add tests for empty/oversized/multiple/wrong-lineage parts, provider errors, unexpected binary/structured content, control characters, and deterministic bounded text normalization.
+- [x] 4.1 Implement `runtime/opencode-prompt.mjs` with one versioned stable prefix limited to Explorer/read-only/leaf authority, admitted-tool boundary, caller task text, concise evidence/unknowns request, and outer-final-only return contract.
+- [x] 4.2 Bound task input and total prompt without adding generic public `scope` or `questions` fields or Plugin-owned task decomposition/methodology.
+- [x] 4.3 Implement `runtime/opencode-result.mjs` to select exactly one matching nonempty bounded outer-assistant final text and optional closed metadata; do not parse terminal UI, native tool history, or require a repository JSON ontology.
+- [x] 4.4 Add tests for empty/oversized/multiple/wrong-lineage parts, provider errors, unexpected binary/structured content, control characters, and deterministic bounded text normalization.
 
 ## 5. Implement Launch, Session, And Turn Lineage
 
