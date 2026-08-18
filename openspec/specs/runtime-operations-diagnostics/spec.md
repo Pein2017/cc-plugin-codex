@@ -4,6 +4,7 @@
 
 Define redacted, read-only operator health and storage diagnostics without expanding the model-facing Agent API.
 ## Requirements
+
 ### Requirement: One operator doctor reports actionable health
 The checkout SHALL provide one Linux operator command that evaluates checkout identity, installed Plugin parity, required Node dependencies, Claude CLI availability and static compatibility, Claude authentication, the fixed config/proxy envelope, exactly seven MCP tools, and storage health. Each check SHALL return a stable identifier, bounded status, redacted summary, and actionable recovery when failed. The command SHALL NOT be exposed through Plugin Skills or MCP tools.
 
@@ -13,7 +14,7 @@ The checkout SHALL provide one Linux operator command that evaluates checkout id
 
 #### Scenario: Required dependency is absent
 - **WHEN** the MCP SDK or Zod cannot be resolved from the canonical checkout
-- **THEN** doctor fails with an instruction to run `npm install` in `/data/CoordExp/cc-plugin-codex`
+- **THEN** doctor fails with an instruction to run `npm install` in `/data/CoordExp/codex-harnessdock`
 
 ### Requirement: Diagnostic output is redacted and read-only
 Doctor SHALL NOT expose credentials, email, organization identity, raw authentication output, proxy credentials, arbitrary environment values, message bodies, prompts, or Claude session contents. It SHALL NOT reconcile lifecycle state, acknowledge completion, prune jobs, acquire a session lease, launch a model, or otherwise mutate Agent/runtime/Claude state.

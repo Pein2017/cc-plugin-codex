@@ -7,15 +7,15 @@ Define the fixed developer/main checkout topology, tested linear promotion, acti
 ## Requirements
 
 ### Requirement: Development and live execution use distinct fixed worktrees
-The repository SHALL use `/data/CoordExp/cc-plugin-codex-dev` on branch `developer` for implementation and verification, and `/data/CoordExp/cc-plugin-codex` on branch `main` as the sole live Plugin runtime checkout. Both worktrees SHALL share the same independent Git common directory. The development worktree SHALL NOT become an executable Plugin runtime source.
+The repository SHALL use `/data/CoordExp/codex-harnessdock-dev` on branch `developer` for implementation and verification, and `/data/CoordExp/codex-harnessdock` on branch `main` as the sole live Plugin runtime checkout. Both worktrees SHALL share the same independent Git common directory. The development worktree SHALL NOT become an executable Plugin runtime source.
 
 #### Scenario: Development begins
 - **WHEN** an operator edits the Plugin on the development track
-- **THEN** the edit occurs in `/data/CoordExp/cc-plugin-codex-dev` without changing files in the live main checkout
+- **THEN** the edit occurs in `/data/CoordExp/codex-harnessdock-dev` without changing files in the live main checkout
 
 #### Scenario: Plugin runtime resolves source
 - **WHEN** Codex invokes an installed CC lifecycle operation
-- **THEN** executable source resolves only from `/data/CoordExp/cc-plugin-codex` and never from the developer worktree
+- **THEN** executable source resolves only from `/data/CoordExp/codex-harnessdock` and never from the developer worktree
 
 ### Requirement: Local promotion is clean and linear
 The local promotion command SHALL verify exact checkout paths, expected branches, common repository identity, clean status in both worktrees, and that `developer` is a descendant of `main`. It SHALL run the configured repository acceptance command before updating `main`, and SHALL update `main` only with a fast-forward. It SHALL NOT commit, push, install, refresh, release, or restart Codex.

@@ -4,6 +4,7 @@
 
 Define Claude Code headless transport, execution profiles, session capture, and exact-session continuation.
 ## Requirements
+
 ### Requirement: Claude runs through the headless streaming protocol
 The runtime SHALL execute only a statically admitted Claude executable, using
 print mode, stream-json input and output, verbose partial messages, and hook
@@ -104,7 +105,7 @@ behavioral rather than process-enforced.
 
 #### Scenario: Lead-owned decision blocks progress
 - **WHEN** Claude cannot continue without a decision reserved to the Codex lead or user
-- **THEN** the envelope instructs Claude to end the turn with the precise question and supporting evidence so the same durable CC Agent can receive a follow-up
+- **THEN** the envelope instructs Claude to end the turn with the precise question and supporting evidence so the same durable Claude Agent can receive a follow-up
 
 #### Scenario: Leaf transport reconnects
 - **WHEN** bounded transport recovery reconnects a leaf job in the exact parent Claude session
@@ -120,7 +121,7 @@ behavioral rather than process-enforced.
 
 #### Scenario: Follow-up changes write intent
 - **WHEN** a follow-up activates the same parent Claude session with a new explicit write intent
-- **THEN** the new job receives a fresh native team and envelope for the new intent without changing durable CC Agent identity
+- **THEN** the new job receives a fresh native team and envelope for the new intent without changing durable Claude Agent identity
 
 #### Scenario: Native Claude customizations exist
 - **WHEN** hooks, memories, skills, plugins, Serena MCP, or other native configuration is enabled
@@ -316,7 +317,7 @@ produce that classification.
 - **WHEN** a named Agent returns a synchronous/interactive result or no correlated `SendMessage` succeeds for the launched member name
 - **THEN** the turn fails as Harness-incompatible and does not accept that result as native-team completion
 
-### Requirement: CC Agent turns enable native Auto Memory by default
+### Requirement: Claude Agent turns enable native Auto Memory by default
 Every model-facing Claude Code turn launched by the CC runtime SHALL receive
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` from the canonical effective environment
 after the one env file is resolved, so a selected file cannot accidentally
@@ -330,7 +331,7 @@ remain Claude-owned at `.claude/agent-memory-local/<member-type>/`.
 - **WHEN** inherited environment or the selected env file contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, or omits the setting
 - **THEN** the canonical effective child environment replaces it with `0` before Claude starts
 
-#### Scenario: New CC Agent starts
+#### Scenario: New Claude Agent starts
 - **WHEN** `spawn_agent` activates a new Claude Code turn
 - **THEN** the Claude child environment contains `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`
 

@@ -5,26 +5,27 @@ Define one bounded experimental Claude Native Agent Team inside an
 orchestrating CC Agent turn without creating a second Plugin-owned lifecycle or
 weakening Codex's ownership of final acceptance.
 ## Requirements
+
 ### Requirement: Every orchestrator turn uses one fresh native team
-An orchestrating CC Agent turn SHALL enable Claude Code's experimental Native
+An orchestrating Claude Agent turn SHALL enable Claude Code's experimental Native
 Agent Teams transport only for that process. The lead SHALL use named native
 teammates rather than silently substituting ordinary unnamed subagents. The
 team SHALL exist only inside the current Claude process/turn: a later CC
 follow-up that resumes the parent Claude session SHALL form a new team and
 SHALL NOT address or resume a teammate from the earlier process. The Plugin
-SHALL NOT create durable CC Agent identities, mailbox entries, completion
+SHALL NOT create durable Claude Agent identities, mailbox entries, completion
 events, public receipts, or transcript pointers for native teammates.
 
 #### Scenario: Lead starts a team
 - **WHEN** an Opus or Fable orchestrator starts and native team admission succeeds
-- **THEN** the first named teammate forms one Native Agent Team with the current Claude session as lead while the lead remains the only durable CC Agent
+- **THEN** the first named teammate forms one Native Agent Team with the current Claude session as lead while the lead remains the only durable Claude Agent
 
 #### Scenario: Named teammate and message prove team transport
 - **WHEN** a correlated named Agent result proves asynchronous launch and a later correlated `SendMessage` to that launched member name succeeds
 - **THEN** the runtime marks the current turn's native-team transport live-validated without treating init tool names or launch status alone as proof
 
-#### Scenario: Same CC Agent receives a follow-up turn
-- **WHEN** a durable orchestrating CC Agent resumes its parent Claude session in a new process
+#### Scenario: Same Claude Agent receives a follow-up turn
+- **WHEN** a durable orchestrating Claude Agent resumes its parent Claude session in a new process
 - **THEN** it forms a fresh native team and does not reuse the earlier process's in-process teammates
 
 #### Scenario: Native team gate is unavailable
@@ -46,7 +47,7 @@ boundary.
 
 #### Scenario: Lead parallelizes independent work
 - **WHEN** a team lead has three independent delegated tasks
-- **THEN** its envelope instructs it to run at most three named teammates concurrently while the lead remains the only durable CC Agent
+- **THEN** its envelope instructs it to run at most three named teammates concurrently while the lead remains the only durable Claude Agent
 
 #### Scenario: Team reaches its creation budget
 - **WHEN** six teammate creations have already been requested during the turn

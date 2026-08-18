@@ -114,7 +114,7 @@ The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass
 - **THEN** the runtime rejects the request before creating an Agent reservation or launching Claude
 
 ### Requirement: Claude-native delegation is explicit and bounded
-Every new Claude Agent SHALL persist immutable topology selected explicitly at spawn. `leaf` SHALL deny native `Agent`, `Workflow`, and the reviewed high-blast-radius tools. Exact Opus 5 and Fable 5 MAY use `native_orchestrator`; Haiku and Sonnet SHALL reject it. An orchestrator SHALL enable the experimental native team transport for that Claude process and SHALL fail observably rather than accept ordinary-subagent work as a native team when required definitions or transport proof are unavailable. The Plugin SHALL track only the durable parent CC Agent and instruct it to return one self-contained synthesis. OpenCode SHALL admit only `leaf` and SHALL not project its task/subagent facilities as Plugin Agent communication.
+Every new Claude Agent SHALL persist immutable topology selected explicitly at spawn. `leaf` SHALL deny native `Agent`, `Workflow`, and the reviewed high-blast-radius tools. Exact Opus 5 and Fable 5 MAY use `native_orchestrator`; Haiku and Sonnet SHALL reject it. An orchestrator SHALL enable the experimental native team transport for that Claude process and SHALL fail observably rather than accept ordinary-subagent work as a native team when required definitions or transport proof are unavailable. The Plugin SHALL track only the durable parent Claude Agent and instruct it to return one self-contained synthesis. OpenCode SHALL admit only `leaf` and SHALL not project its task/subagent facilities as Plugin Agent communication.
 
 #### Scenario: Claude leaf is spawned
 - **WHEN** a supported Claude model is combined with explicit `topology=leaf`
@@ -327,7 +327,7 @@ The model-facing runtime, CLI, and skill surfaces SHALL NOT expose `cancel`, `ca
 - **THEN** it is rejected as removed and directs the caller to `interrupt_agent` without executing a compatibility alias
 
 ### Requirement: All canonical Agent skills disclose Experimental status
-Each of the eight model-visible CC Agent Skills and its discovery metadata SHALL identify the feature as Experimental and SHALL state that the local Plugin cannot automatically start a new Codex model turn after the parent has ended.
+Each of the eight model-visible HarnessDock Agent Skills and its discovery metadata SHALL identify the feature as Experimental and SHALL state that the local Plugin cannot automatically start a new Codex model turn after the parent has ended.
 
 #### Scenario: A newly started Codex task discovers the plugin
 - **WHEN** the eight Agent Skills are loaded from the installed local snapshot

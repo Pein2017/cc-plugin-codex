@@ -6,10 +6,10 @@ Define the checkout-owned runtime, host Claude dependency, environment selection
 ## Requirements
 
 ### Requirement: Checkout-owned executable runtime
-The installed HarnessDock for Codex Plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/cc-plugin-codex` checkout until the separately specified physical source rename is accepted. Both lifecycle and MCP bootstraps SHALL NOT accept caller or ambient runtime-checkout selection. They SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned Plugin Cache path.
+The installed HarnessDock for Codex Plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/codex-harnessdock` checkout until the separately specified physical source rename is accepted. Both lifecycle and MCP bootstraps SHALL NOT accept caller or ambient runtime-checkout selection. They SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned Plugin Cache path.
 
 #### Scenario: Matching independent checkout delegates successfully
-- **WHEN** an installed lifecycle or MCP bootstrap validates `/data/CoordExp/cc-plugin-codex`
+- **WHEN** an installed lifecycle or MCP bootstrap validates `/data/CoordExp/codex-harnessdock`
 - **THEN** it delegates execution to that checkout's matching public runtime entrypoint while reporting the HarnessDock public identity
 
 #### Scenario: Source root mismatch fails closed
@@ -28,7 +28,7 @@ The runtime SHALL use the host `claude` CLI for authentication, Claude configura
 - **THEN** readiness fails without substituting an upstream package or cached runtime
 
 ### Requirement: Harness dependencies remain explicit behind checkout-owned Drivers
-Each admitted Harness SHALL declare its host executable, native configuration/session identity, authentication boundary, compatibility detector, and redacted readiness evidence through its checkout-owned Driver. Those host components MAY remain external execution dependencies, but Driver source, registry, lifecycle orchestration, and durable state ownership SHALL remain inside `/data/CoordExp/cc-plugin-codex`. No Driver SHALL load source or Git objects from upstream repositories, registered development worktrees, or versioned Plugin Cache paths.
+Each admitted Harness SHALL declare its host executable, native configuration/session identity, authentication boundary, compatibility detector, and redacted readiness evidence through its checkout-owned Driver. Those host components MAY remain external execution dependencies, but Driver source, registry, lifecycle orchestration, and durable state ownership SHALL remain inside `/data/CoordExp/codex-harnessdock`. No Driver SHALL load source or Git objects from upstream repositories, registered development worktrees, or versioned Plugin Cache paths.
 
 #### Scenario: Claude Code Driver becomes ready
 - **WHEN** the current registry validates its only admitted Driver
@@ -50,10 +50,10 @@ Model-facing lifecycle calls SHALL NOT accept a Harness executable path, Driver 
 - **THEN** the sole admitted `claude-code` Driver is recorded internally without inferring a Driver from an arbitrary executable or ambient model alias
 
 ### Requirement: Exactly one environment file is selected
-The installed model-facing lifecycle and MCP bootstraps SHALL load exactly `/data/CoordExp/cc-plugin-codex/config/runtime.env`. They SHALL NOT select an environment from invocation arguments, MCP tool arguments, `CC_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, or a workspace `.codex/.env`. They SHALL parse the fixed file as data and SHALL NOT evaluate it as shell code.
+The installed model-facing lifecycle and MCP bootstraps SHALL load exactly `/data/CoordExp/codex-harnessdock/config/runtime.env`. They SHALL NOT select an environment from invocation arguments, MCP tool arguments, `CODEX_HARNESSDOCK_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, or a workspace `.codex/.env`. They SHALL parse the fixed file as data and SHALL NOT evaluate it as shell code.
 
 #### Scenario: Ambient environment selectors conflict
-- **WHEN** inherited `CC_RUNTIME_ENV_FILE`, `CODEX_HOME`, or workspace `.codex/.env` point to other files
+- **WHEN** inherited `CODEX_HARNESSDOCK_RUNTIME_ENV_FILE`, `CODEX_HOME`, or workspace `.codex/.env` point to other files
 - **THEN** the active bootstrap ignores them as selectors and loads only the canonical checkout environment file
 
 #### Scenario: Invocation supplies an environment selector
@@ -115,7 +115,7 @@ Executable runtime source SHALL remain checkout-owned and SHALL NOT require Plug
 - **THEN** it updates exactly one cachebuster, installs the resulting snapshot, and directs schema/Skill acceptance to a new task
 
 #### Scenario: Local marketplace root drifts
-- **WHEN** refresh or release mode detects that `pein-local` points somewhere other than `/data/CoordExp/cc-plugin-codex`
+- **WHEN** refresh or release mode detects that `pein-local` points somewhere other than `/data/CoordExp/codex-harnessdock`
 - **THEN** it fails closed instead of silently refreshing from the wrong source; initial installation may explicitly rebind the marketplace once
 
 ### Requirement: Recent Plugin discovery shells survive version refresh
@@ -126,7 +126,7 @@ eligible cached shells with that durable archive, and after installation it
 SHALL restore at most the two most-recent non-current versions. A retained shell
 SHALL contain only the Plugin snapshot's discovery configuration, Skills, and
 descriptor bootstraps, and all executable lifecycle operations SHALL still
-resolve to `/data/CoordExp/cc-plugin-codex`.
+resolve to `/data/CoordExp/codex-harnessdock`.
 
 The installer SHALL retain bounded coverage metadata for the last successful
 installed version. If that known predecessor differs from the requested version
@@ -197,7 +197,7 @@ Each model-facing lifecycle call SHALL use the canonical Codex turn workspace as
 - **THEN** the runtime may pass the already-canonical workspace through the internal worker's `--cwd` argument
 
 ### Requirement: Installed bootstraps report missing checkout dependencies actionably
-Before starting a checkout runtime entrypoint, each installed lifecycle and MCP bootstrap SHALL verify that the canonical checkout can resolve the required production dependencies. A missing dependency SHALL fail with a bounded message that names `/data/CoordExp/cc-plugin-codex` and instructs `npm install`, without exposing the generic Node module-loader stack as the primary error.
+Before starting a checkout runtime entrypoint, each installed lifecycle and MCP bootstrap SHALL verify that the canonical checkout can resolve the required production dependencies. A missing dependency SHALL fail with a bounded message that names `/data/CoordExp/codex-harnessdock` and instructs `npm install`, without exposing the generic Node module-loader stack as the primary error.
 
 #### Scenario: Checkout node_modules is missing
 - **WHEN** an installed bootstrap cannot resolve the MCP SDK or Zod from the canonical checkout

@@ -151,7 +151,7 @@ Successful MCP tools SHALL return the matching operation's complete bounded publ
 - **THEN** the MCP call reports the sanitized runtime error and does not replace it with a generic success or fallback execution
 
 ### Requirement: Installed MCP bootstrap remains descriptor-only
-The Plugin snapshot SHALL declare an absolute canonical checkout bootstrap and working directory for the `codex_harnessdock` stdio server. The current snapshot and any retained new-identity descriptor-only compatibility shell SHALL validate and start `/data/CoordExp/cc-plugin-codex/runtime/mcp-server.mjs` with the fixed checkout environment. A pre-cutover `cc_for_pein` descriptor MAY exist only inside the explicit rollback backup and SHALL NOT remain enabled or discoverable after acceptance. No route SHALL import or execute an MCP lifecycle implementation from the Plugin Cache.
+The Plugin snapshot SHALL declare an absolute canonical checkout bootstrap and working directory for the `codex_harnessdock` stdio server. The current snapshot and any retained new-identity descriptor-only compatibility shell SHALL validate and start `/data/CoordExp/codex-harnessdock/runtime/mcp-server.mjs` with the fixed checkout environment. A pre-cutover `cc_for_pein` descriptor MAY exist only inside the explicit rollback backup and SHALL NOT remain enabled or discoverable after acceptance. No route SHALL import or execute an MCP lifecycle implementation from the Plugin Cache.
 
 #### Scenario: New task starts installed MCP server
 - **WHEN** Codex launches the installed HarnessDock Plugin's stdio command

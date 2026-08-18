@@ -3,6 +3,7 @@
 Define one truthful, reversible public identity transition from CC for Pein to HarnessDock for Codex without splitting runtime ownership, Agent state, or installed discovery.
 
 ## Requirements
+
 ### Requirement: One canonical HarnessDock identity is used across public surfaces
 The Plugin SHALL use display name `HarnessDock for Codex`, Plugin and Skill namespace `codex-harnessdock`, MCP server namespace `codex_harnessdock`, and runtime package/bin name `codex-harnessdock-runtime`. Public metadata SHALL identify Pein2017 by public handle/link, declare Apache-2.0, omit private email, and state that the Plugin is an unofficial third-party project not affiliated with or endorsed by OpenAI. These names SHALL remain consistent across manifests, package metadata, discovery, Skills, typed tools, receipts, documentation, doctor output, and local refresh/release tooling.
 
@@ -41,8 +42,23 @@ Checkout-level identity, parity, migration, and fake-Claude tests plus fresh rea
 - **THEN** cutover acceptance fails and the operator rolls back to one enabled identity
 
 ### Requirement: Phase-zero rename does not move source ownership
-This identity transition SHALL continue loading the canonical production checkout at `/data/CoordExp/cc-plugin-codex` and MAY use `/data/CoordExp/codex-harnessdock-dev` as the successor development worktree. It SHALL NOT rename the canonical production checkout, Git common directory, remotes, GitHub ownership, or historical records. A later separately specified physical rename SHALL update those production/deployment boundaries only after the neutral control plane and OpenCode Driver are accepted.
+The phase-zero identity transition SHALL NOT itself rename the canonical production checkout, Git common directory, remotes, GitHub ownership, or historical records; those boundaries move only in the separately specified physical relocation below, after the neutral control plane and OpenCode Driver are accepted. After that relocation, the canonical production checkout SHALL be `/data/CoordExp/codex-harnessdock` on branch `main` and the sole development worktree SHALL be `/data/CoordExp/codex-harnessdock-dev` on branch `developer`.
 
 #### Scenario: Runtime path is inspected after identity cutover
 - **WHEN** doctor resolves the loaded source
-- **THEN** the Plugin reports the current canonical checkout and does not claim that physical source paths were renamed
+- **THEN** the Plugin reports the current canonical checkout truthfully and does not claim a physical path that has not landed
+
+### Requirement: Physical relocation preserves history and resets durable state once
+The physical rename SHALL relocate the live checkout by one filesystem move plus worktree repair on the existing Git common directory — never a fresh clone — and SHALL rename the GitHub repository in place so prior URLs redirect. The superseded old-name development worktree and the reference-only external clone SHALL be removed only after the `developer` branch is rehomed to the successor worktree. Under explicit user authorization, durable Agent state SHALL be reset exactly once: one fresh backup archive, a hard verification that zero Agents are active or unknown, then removal and fresh creation of the data namespace with the reset timestamp recorded beside the backup. No compatibility reader for pre-reset identifiers SHALL be added, and the MCP API generation SHALL NOT change for the rename alone.
+
+#### Scenario: Live checkout is relocated
+- **WHEN** the operator moves the live checkout to `/data/CoordExp/codex-harnessdock` and runs worktree repair
+- **THEN** the shared Git common directory, branches, and gated promotion continue to work at the new paths without re-cloning
+
+#### Scenario: Reset is attempted with active work
+- **WHEN** any Agent is active or any version-three job record is unknown at reset time
+- **THEN** the reset stops before removing anything and reports the blocking evidence
+
+#### Scenario: Old-name surfaces after relocation
+- **WHEN** a tracked source, script, plugin, or test file outside the historical allowlist references the retired checkout path, `CC_` variable, or `cc-agent-` prefix
+- **THEN** the repo-wide guard fails the check suite naming the file
