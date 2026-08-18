@@ -10,7 +10,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PLUGIN_DATA_NAMESPACE = "codex-harnessdock";
-export const LEGACY_PLUGIN_DATA_NAMESPACES = ["cc"];
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let configuredPaths = null;

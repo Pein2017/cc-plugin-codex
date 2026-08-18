@@ -24,14 +24,14 @@
 
 ## 5. Relocation Runbook (Operator-Executed)
 
-- [ ] 5.1 Freeze the candidate, then relocate: move the live checkout to `/data/CoordExp/codex-harnessdock`, run `git worktree repair`, fast-forward `developer` and check it out in `/data/CoordExp/codex-harnessdock-dev`, remove the `/data/CoordExp/cc-plugin-codex-dev` worktree, and delete the reference-only `/data/CoordExp/external/cc-plugin-codex` clone.
-- [ ] 5.2 Rename the GitHub repository in place to `Pein2017/codex-harnessdock` and update `origin` in both worktrees; verify a fetch through the new name.
-- [ ] 5.3 Rebind the `pein-local` marketplace to the new source root, perform the initial install of the new path, and cut release 0.20.0 (version, changelog, derived cachebuster, lockfile sync in one commit) followed by `release:local` and an app-server restart.
-- [ ] 5.4 Reset durable state exactly once: fresh backup tarball, hard zero-active/unknown-Agent verification, then remove and recreate the data namespace; record the reset timestamp beside the backup.
-- [ ] 5.5 Run the installed release smoke at 0.20.0 and one fresh Codex-task discovery witness; record both receipts.
+- [x] 5.1 Freeze the candidate, then relocate: move the live checkout to `/data/CoordExp/codex-harnessdock`, run `git worktree repair`, fast-forward `developer` and check it out in `/data/CoordExp/codex-harnessdock-dev`, remove the `/data/CoordExp/cc-plugin-codex-dev` worktree, and delete the reference-only `/data/CoordExp/external/cc-plugin-codex` clone.
+- [x] 5.2 Rename the GitHub repository in place to `Pein2017/codex-harnessdock` and update `origin` in both worktrees; verify a fetch through the new name.
+- [x] 5.3 Rebind the `pein-local` marketplace to the new source root, perform the initial install of the new path, and cut release 0.20.0 (version, changelog, derived cachebuster, lockfile sync in one commit) followed by `release:local` and an app-server restart.
+- [x] 5.4 Reset durable state exactly once: fresh backup tarball, hard zero-active/unknown-Agent verification, then remove and recreate the data namespace; record the reset timestamp beside the backup.
+- [x] 5.5 Run the installed release smoke at 0.20.0 and one fresh Codex-task discovery witness; record both receipts.
 
 ## 6. Acceptance
 
-- [ ] 6.1 Run the complete gates at the new paths and prove the gated promotion end-to-end from the new development worktree.
-- [ ] 6.2 Commission one fresh read-only review focused on retired-token absence, promotion integrity at the new paths, and reset safety; disposition any finding and rerun affected gates.
-- [ ] 6.3 Record the final receipts (tree, versions, witness, reset evidence) and archive this change.
+- [x] 6.1 Run the complete gates at the new paths and prove the gated promotion end-to-end from the new development worktree.
+- [x] 6.2 Commission one fresh read-only review focused on retired-token absence, promotion integrity at the new paths, and reset safety; disposition any finding and rerun affected gates.
+- [x] 6.3 Record the final receipts (tree, versions, witness, reset evidence) and archive this change.
