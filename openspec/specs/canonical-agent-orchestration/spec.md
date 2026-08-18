@@ -1,34 +1,35 @@
 # canonical-agent-orchestration Specification
 
 ## Purpose
-Define the seven canonical model-facing Agent operations and their exact mapping
-to the checkout-owned CC for Pein plugin surface.
+Define the eight canonical model-facing Agent operations and their exact mapping
+to the checkout-owned HarnessDock for Codex plugin surface.
 ## Requirements
+
 ### Requirement: Plugin skills map directly to the canonical operations
-The installed Plugin SHALL expose exactly `$cc-for-pein:spawn-agent`, `$cc-for-pein:send-message`, `$cc-for-pein:followup-task`, `$cc-for-pein:wait-agent`, `$cc-for-pein:interrupt-agent`, `$cc-for-pein:list-agents`, and `$cc-for-pein:read-agent-messages` as Experimental orchestration guidance for the matching `mcp__cc_for_pein__spawn_agent`, `mcp__cc_for_pein__send_message`, `mcp__cc_for_pein__followup_task`, `mcp__cc_for_pein__wait_agent`, `mcp__cc_for_pein__interrupt_agent`, `mcp__cc_for_pein__list_agents`, and `mcp__cc_for_pein__read_agent_messages` typed tools. Each MCP tool SHALL delegate to the matching checkout-owned snake_case runtime operation. All seven skills and tools SHALL be eligible for model-visible discovery in a newly started Codex task. Skills SHALL NOT silently substitute shell execution when the typed server is unavailable; the checkout CLI remains an operator/debug fallback.
+The installed Plugin SHALL expose exactly `$codex-harnessdock:spawn-agent`, `$codex-harnessdock:send-message`, `$codex-harnessdock:followup-task`, `$codex-harnessdock:wait-agent`, `$codex-harnessdock:interrupt-agent`, `$codex-harnessdock:list-agents`, `$codex-harnessdock:read-agent-messages`, and `$codex-harnessdock:list-harnesses` as Experimental orchestration guidance for the matching eight `mcp__codex_harnessdock__*` typed tools. Each MCP tool SHALL delegate to the matching checkout-owned snake_case runtime operation. All eight Skills and tools SHALL be eligible for model-visible discovery in a newly started Codex task. Skills SHALL NOT silently substitute shell execution when the typed server is unavailable; the checkout CLI remains an operator/debug fallback.
 
 #### Scenario: Installed snapshot is verified in a new task
-- **WHEN** Codex loads Plugin version `0.4.0`
-- **THEN** all seven Experimental Agent skills and all seven typed Agent tools are present in the model-visible catalog, none of the old lifecycle skills is discoverable, and ordinary lifecycle calls require no shell command
+- **WHEN** Codex loads the new public generation
+- **THEN** all eight Experimental Agent Skills and all eight typed tools are present, none of the old lifecycle Skills is discoverable, and ordinary lifecycle calls require no shell command
 
 #### Scenario: Typed MCP server is unavailable
 - **WHEN** a model-facing lifecycle operation cannot resolve its matching MCP tool
-- **THEN** the skill reports the Plugin discovery or startup failure instead of silently invoking the checkout CLI
+- **THEN** the Skill reports Plugin discovery or startup failure instead of silently invoking a Harness CLI or checkout CLI
 
 ### Requirement: Model-facing activation selects write intent deliberately
-The `spawn-agent` skill SHALL classify each requested turn as read/review or authorized mutation and SHALL pass `write: false` or `write: true` explicitly to the typed tool. The `followup-task` skill SHALL explain that omitted write intent inherits the Agent's latest activation and SHALL pass an explicit value whenever the requested follow-up changes that authority. The skills SHALL describe `write` as a behavioral and durable recovery-risk boundary rather than a Claude CLI permission switch. They SHALL explain that terminal parity uses `IS_SANDBOX=1` and `--dangerously-skip-permissions` for both values and SHALL NOT describe false intent as an OS-enforced read-only sandbox.
+The `spawn-agent` Skill SHALL require explicit Harness, full model, topology, and write intent and SHALL pass every value unchanged. It SHALL describe `write` as immutable behavioral authority whose enforcement is route-specific and observable, never a universal CLI permission or OS sandbox. `followup-task` SHALL explain that Harness, model, topology, and authority are inherited and cannot change; a different route or authority requires a new Agent.
 
-#### Scenario: Parent delegates a read-only audit
-- **WHEN** the requested Agent should inspect or advise without repository mutation
-- **THEN** `spawn-agent` passes `write: false` and instructs the fully capable Claude process not to mutate workspace or repository state
+#### Scenario: Parent delegates a read-only OpenCode audit
+- **WHEN** Codex chooses the admitted Explorer route
+- **THEN** it passes `opencode`, `opencode-go/deepseek-v4-flash`, `leaf`, and `write: false` explicitly
 
-#### Scenario: Parent delegates authorized implementation
-- **WHEN** the requested Agent is authorized to modify the workspace
-- **THEN** `spawn-agent` passes `write: true` and limits mutations to the delegated task scope
+#### Scenario: Parent delegates authorized Claude implementation
+- **WHEN** Codex chooses a Claude route whose Driver admits mutation
+- **THEN** it passes that exact Harness/model/topology plus `write: true` and limits mutation to the delegated task
 
-#### Scenario: Follow-up changes authority
-- **WHEN** a follow-up changes from read/review work to authorized mutation or from mutation to read/review work
-- **THEN** `followup-task` passes the new explicit write intent rather than inheriting the previous one
+#### Scenario: Follow-up would change authority
+- **WHEN** new work needs a different authority or route
+- **THEN** Codex creates a new explicitly routed Agent instead of changing the old identity
 
 ### Requirement: Spawn skill presents a concise acknowledgement by default
 The `spawn-agent` skill SHALL receive only a bounded successful projection containing stable `agent_name`, exact `model`, and bounded lifecycle `status`. It SHALL present one concise acknowledgement derived from those fields and the configured approximate model role. It SHALL NOT print raw JSON or expose Agent IDs, delegation metadata, workspace, native session/config, job, continuation, or mailbox internals; deeper evidence SHALL use the operator diagnostics path. Actionable error or recovery information SHALL remain visible when spawn fails.
@@ -113,90 +114,42 @@ The `spawn-agent` skill SHALL require an explicit model selection and SHALL pass
 - **THEN** the runtime rejects the request before creating an Agent reservation or launching Claude
 
 ### Requirement: Claude-native delegation is explicit and bounded
-Every Agent SHALL persist one immutable `delegation_mode` selected at spawn.
-Omitted mode SHALL mean `leaf`. Every activation SHALL deny the native
-`Workflow` tool and the reviewed high-blast-radius tools named by the active
-execution policy. The Plugin SHALL describe unknown or prompt-only native
-capabilities honestly rather than claim a universal machine/session sandbox.
-Haiku SHALL be valid only as a `write: false` leaf scout. Sonnet SHALL be valid
-only as a leaf worker. Exact Opus 5 and Fable 5 MAY be either leaf Agents or
-explicit `claude_orchestrator` Native Agent Team leads. An orchestrator SHALL
-enable the experimental native team transport for that Claude process and
-SHALL fail observably rather than accept ordinary-subagent work as a native
-team when the required native definitions or transport proof are unavailable.
-Initialization names SHALL be treated only as necessary preconditions. The
-Adapter SHALL translate Claude's versioned structured results into stable
-internal facts: a named member SHALL launch asynchronously and a correlated
-`SendMessage` to that launched member name SHALL succeed before transport is
-live-validated. Because Claude does not expose the server-gate state at
-initialization, one failed ordinary-subagent attempt MAY occur before evidence
-is classified, but its result SHALL NOT be accepted as native-team task
-completion. Any invalid
-model, mode, or Haiku write combination SHALL fail before readiness, Agent
-reservation, mailbox mutation, job preparation, or Claude launch. The public
-seven-operation API and `delegation_mode` vocabulary SHALL remain unchanged.
-The Plugin SHALL track only the durable parent CC Agent and SHALL instruct an
-orchestrator to converge its native team and return one self-contained
-synthesis.
+Every new Claude Agent SHALL persist immutable topology selected explicitly at spawn. `leaf` SHALL deny native `Agent`, `Workflow`, and the reviewed high-blast-radius tools. Exact Opus 5 and Fable 5 MAY use `native_orchestrator`; Haiku and Sonnet SHALL reject it. An orchestrator SHALL enable the experimental native team transport for that Claude process and SHALL fail observably rather than accept ordinary-subagent work as a native team when required definitions or transport proof are unavailable. The Plugin SHALL track only the durable parent CC Agent and instruct it to return one self-contained synthesis. OpenCode SHALL admit only `leaf` and SHALL not project its task/subagent facilities as Plugin Agent communication.
 
-#### Scenario: Ordinary Agent is spawned
-- **WHEN** spawn omits `delegation_mode` for any valid supported model/write combination
-- **THEN** the Agent is created as an immutable leaf and native `Agent`, `Workflow`, and cross-session communication tools are denied
+#### Scenario: Claude leaf is spawned
+- **WHEN** a supported Claude model is combined with explicit `topology=leaf`
+- **THEN** native `Agent`, `Workflow`, and cross-session communication tools are denied
 
-#### Scenario: Opus orchestration is explicit
-- **WHEN** spawn selects `claude-opus-5` with `delegation_mode=claude_orchestrator`
-- **THEN** the Opus Agent may lead one bounded experimental Native Agent Team while remaining the only Agent represented in the CC registry
+#### Scenario: Opus or Fable orchestration is explicit
+- **WHEN** exact Opus 5 or Fable 5 is combined with `topology=native_orchestrator`
+- **THEN** the Claude Agent may lead one bounded experimental Native Agent Team while remaining the only Agent in the Plugin registry
 
-#### Scenario: Fable orchestration is explicit
-- **WHEN** spawn selects `claude-fable-5` with `delegation_mode=claude_orchestrator`
-- **THEN** the Fable Agent may lead one bounded experimental Native Agent Team while native `Workflow` remains denied
+#### Scenario: Haiku or Sonnet orchestration is requested
+- **WHEN** either model is combined with `native_orchestrator`
+- **THEN** spawn fails before readiness, durable mutation, or native process
 
-#### Scenario: Non-Fable orchestration is requested
-- **WHEN** a model outside the exact Opus/Fable lead set, currently Haiku or Sonnet, is combined with `claude_orchestrator`
-- **THEN** spawn fails synchronously with no readiness probe, durable mutation, or Claude process
-
-#### Scenario: Native team surface is unavailable
-- **WHEN** an otherwise valid orchestrator omits an injected definition at initialization, a named Agent does not launch asynchronously, or a correlated message to the launched name does not succeed
-- **THEN** the turn fails with actionable Harness-incompatible evidence and does not accept the attempted work as native-team completion
-
-#### Scenario: Sonnet orchestration is requested
-- **WHEN** Sonnet is combined with `claude_orchestrator`
-- **THEN** spawn fails synchronously with no readiness probe, durable mutation, or Claude process
-
-#### Scenario: Haiku mutation or orchestration is requested
-- **WHEN** Haiku is combined with `write: true` or `claude_orchestrator`
-- **THEN** spawn fails synchronously before any durable state or Claude process exists
-
-#### Scenario: Fable remains a leaf
-- **WHEN** Fable is selected without `claude_orchestrator`
-- **THEN** it remains a leaf for bounded decision, architecture, planning, or other explicitly assigned work
-
-#### Scenario: Leaf allowlist grants Agent
-- **WHEN** a leaf activation supplies the retired public `allowed_tools` field with an entry matching `Agent` or an `Agent(...)` permission pattern
-- **THEN** the strict public surface rejects the request before readiness or durable mutation, while the leaf execution profile continues to hard-deny native `Agent`
+#### Scenario: OpenCode orchestration is requested
+- **WHEN** the Explorer route is combined with `native_orchestrator`
+- **THEN** spawn fails before session creation or model usage
 
 ### Requirement: spawn_agent creates identity and starts the first turn
-`spawn_agent` SHALL require canonical `task_name`, `message`, explicit supported `model`, and explicit boolean `write`. It SHALL accept only optional `description`, `reasoning_effort`, and `delegation_mode`; public `allowed_tools`, `fork_turns`, and `execution_profile` fields SHALL be absent and rejected. The runtime SHALL always use no Codex-history fork and the terminal-parity execution path. Before readiness, Agent creation, mailbox mutation, or job preparation, it SHALL synchronously validate the complete model, effort, delegation, and permission combination. On success it SHALL atomically reserve a root-unique Agent identity with the first-turn message as mailbox sequence one, then start its first internal Claude job from the ordered mailbox assignment. The model-facing Agent projection SHALL contain only stable Agent ID/path, selected model, immutable delegation mode, and bounded lifecycle status; workspace, native session/config, job-pointer, continuation, and mailbox internals SHALL remain outside ordinary model-facing Agent receipts.
+`spawn_agent` SHALL require canonical `task_name`, `message`, explicit admitted `harness`, explicit full `model`, explicit `topology`, and explicit boolean `write`. It SHALL accept only optional `description` and Driver-discriminated `reasoning_effort`; removed or Driver/config/session/repository-policy selectors SHALL be absent and rejected. Before readiness, Agent creation, mailbox mutation, or job preparation, it SHALL synchronously validate the complete route and intent. On success it SHALL atomically reserve a root-unique v3 Agent identity with the first-turn message as mailbox sequence one, then start its first internal job from the ordered assignment.
 
 #### Scenario: New Agent starts successfully
-- **WHEN** the name is unique, model/mode/permission combination is valid, explicit write intent is present, and readiness passes
-- **THEN** the call returns the stable Agent ID/path and a `starting` or `working` first-turn projection whose initial prompt is durably owned by the Agent mailbox
+- **WHEN** the name is unique and every explicit route, authority, effort, and readiness check passes
+- **THEN** the call returns the stable Agent name and a bounded route-qualified starting/working projection
 
-#### Scenario: Activation combination is invalid
-- **WHEN** model, effort, delegation mode, or permission arguments are unsupported or incompatible
-- **THEN** spawn fails synchronously before creating an Agent, mailbox entry, job, or steering record and no Claude process starts
+#### Scenario: Route combination is invalid
+- **WHEN** Harness, model, topology, effort, or authority are unsupported or incompatible
+- **THEN** spawn fails synchronously before creating an Agent, message, job, native session, or model request
 
-#### Scenario: Removed public field is supplied
-- **WHEN** spawn includes `allowed_tools`, `fork_turns`, or `execution_profile`
-- **THEN** the strict public schema rejects the request without state mutation
+#### Scenario: Required route field is omitted
+- **WHEN** spawn omits Harness, model, topology, or write
+- **THEN** the request fails rather than inferring from configuration, model prefix, or the only ready Driver
 
-#### Scenario: Write intent is omitted
-- **WHEN** public spawn omits `write`
-- **THEN** the request fails before readiness or Agent reservation instead of inferring mutation authority
-
-#### Scenario: Foreign session adoption is requested
-- **WHEN** spawn includes an existing Claude session ID
-- **THEN** spawn rejects it because session adoption is deferred to a separate future OpenSpec
+#### Scenario: Native session adoption is requested
+- **WHEN** spawn includes an existing Claude or OpenCode session ID
+- **THEN** spawn rejects it because session adoption is outside the public contract
 
 ### Requirement: Legacy Agent model migration is evidence-only and recoverable
 A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact supported model proven by a retained runtime receipt or a bounded read of its own Claude session artifact. Dated artifact evidence matching the verified Haiku 4.5 family SHALL normalize to canonical `claude-haiku-4-5`; arbitrary dated public requests SHALL remain unsupported. Reconciliation SHALL index pending session artifacts once per Claude config root rather than rescan the full history per Agent. It SHALL defer an evidence-free active turn. It SHALL preserve identity and history while blocking terminal continuation when the model is unsupported or not yet proven, SHALL retry a directly located unproven artifact, and SHALL never infer or substitute a supported model.
@@ -240,32 +193,28 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **WHEN** the model receives a successful `send_message` receipt
 - **THEN** it presents one concise sentence reflecting the delivery disposition and does not repeat the message or raw receipt unless the user requested debug detail
 
-### Requirement: followup_task guarantees activation
-`followup_task` SHALL make the message available to an active Agent promptly or start a new exact-session or receipt-proven safe-fresh turn when the Agent is terminal. It SHALL inherit the Agent's immutable delegation mode and SHALL reject any attempted mode override or retired `allowed_tools` field. Before any path that activates a new turn mutates the mailbox, job store, or steering state, it SHALL synchronously validate the complete inherited mode and requested effort and write intent. Activation SHALL atomically assign queued Agent-mailbox entries to the winning job.
+### Requirement: followup_task guarantees only capability-valid activation
+`followup_task` SHALL inherit the Agent's immutable route and accept only a new message plus optional route-admitted turn effort. For a terminal Agent it SHALL start an exact-session or receipt-proven safe-fresh turn when admitted. For an active Agent it SHALL deliver only when its accepted capability proves active input; otherwise it SHALL fail before mailbox mutation rather than promise later activation. It SHALL reject route, authority, topology, model, Driver, tool, session, configuration, scope, or questions overrides.
 
-#### Scenario: Agent is completed
-- **WHEN** a valid follow-up is submitted to an owner-valid completed Agent
-- **THEN** a new internal job starts on the Agent's exact Claude session, inherits its delegation mode, and consumes queued messages in order
+#### Scenario: Terminal OpenCode Agent receives follow-up
+- **WHEN** its exact session binding, authoritative Server/session incarnation, and route remain valid and its snapshot declares exact resume
+- **THEN** a new turn starts on that exact session and consumes queued `send_message` entries in order
 
-#### Scenario: Activating follow-up has invalid execution options
-- **WHEN** a terminal Agent receives a follow-up with an unsupported effort, permission combination, or delegation-mode override
-- **THEN** follow-up fails before appending or assigning mailbox messages, preparing a job, or writing steering state
+#### Scenario: Terminal OpenCode Agent is fresh-only
+- **WHEN** the accepted snapshot lacks authoritative exact-resume evidence
+- **THEN** follow-up rejects before mailbox mutation and Codex must create a new explicitly routed Agent
 
-#### Scenario: Retired tool allow-list is supplied
-- **WHEN** follow-up includes `allowed_tools`
-- **THEN** follow-up rejects the retired field before mailbox mutation or activation
+#### Scenario: Active OpenCode Agent receives follow-up
+- **WHEN** its snapshot declares initial input only
+- **THEN** follow-up fails without enqueueing a message under a false activation guarantee
 
-#### Scenario: Agent is already running
-- **WHEN** follow-up is submitted during an active turn
-- **THEN** the message is durably delivered at the next supported boundary without starting a competing job
+#### Scenario: Active Claude Agent receives follow-up
+- **WHEN** its snapshot proves acknowledged active input
+- **THEN** the message is durably delivered at the supported stream boundary without a competing job
 
-#### Scenario: Errored first turn is safe to retry fresh
-- **WHEN** the Agent has no session and its durable receipt proves no possible side effect
-- **THEN** follow-up may start a fresh Claude session on the same stable Agent with the same delegation mode
-
-#### Scenario: Errored Agent is activation-blocked
-- **WHEN** neither exact-session resume nor receipt-proven safe fresh retry is available
-- **THEN** follow-up is rejected with the blocking evidence
+#### Scenario: Agent is activation-blocked
+- **WHEN** neither exact resume nor proven safe fresh is available
+- **THEN** follow-up rejects with bounded route-qualified blocking evidence
 
 ### Requirement: wait_agent returns bounded root mailbox activity
 Model-facing `wait_agent` SHALL accept optional `wake_on_progress`, optional non-empty unique exact current-root `targets`, and the CC durable-delivery extension `acknowledge_tokens`; SHALL NOT expose `timeout_ms`; and SHALL use a fixed 3600000 ms observation upper bound. With no targets, wait SHALL preserve the Codex-V2-shaped root-wide next-activity behavior and return at most one current-root update. With one target it SHALL join the concrete active or latest turn snapshotted at call entry; when that one target is combined with `wake_on_progress: true`, the same bounded observation MAY instead return that snapshotted job's one eligible advisory progress update before completion. With multiple targets it SHALL remain completion-only, wait for every concrete snapshotted turn to settle, and return one aggregate barrier receipt in caller target order. A later activation SHALL NOT extend or satisfy that fixed snapshot. Model-facing guidance SHALL make no-target, no-progress wait the canonical ordinary root join and targeted wait the canonical result-required join when the parent knows the dependency set.
@@ -337,42 +286,38 @@ The runtime SHALL process only valid previously delivered acknowledgement tokens
 - **THEN** the model-facing boundary rejects that field before changing Agent or delivery state, leaving explicit bounds only to the checkout CLI and runtime
 
 ### Requirement: interrupt_agent ends only the current turn
-`interrupt_agent` SHALL stop an Agent's active turn, preserve partial and exact-session evidence when safely available, and retain the logical Agent. Forced process termination SHALL default to errored/non-resumable unless a platform-specific receipt proves that Claude persisted a safe resume point.
+`interrupt_agent` SHALL address only the target Agent's current turn and preserve the logical Agent. If the accepted route does not support interruption, it SHALL return `unsupported` without native action. When interruption is supported, durable request acknowledgement SHALL remain nonterminal: only authoritative terminal Driver evidence may produce `interrupted`. A pending/rejected request SHALL return `interrupt_requested` or `still_working`; lost ownership without authoritative settlement SHALL return `settlement_unknown`. A terminal Agent SHALL return `no_active_turn`. The public operation SHALL NOT auto-escalate a rejected or unobserved graceful request to destructive cancellation.
 
-#### Scenario: Graceful interruption proves resume safety
-- **WHEN** graceful process interruption succeeds and the receipt proves an exact resumable session
-- **THEN** the Agent becomes interrupted, no worker remains resident, and exact-session follow-up remains available
+#### Scenario: Graceful interruption proves terminal settlement
+- **WHEN** the Driver accepts the request and later proves the exact native turn interrupted with settled execution
+- **THEN** the Agent becomes interrupted, no turn worker remains resident, and the receipt reports `interrupted`
 
-#### Scenario: Forced termination lacks flush evidence
-- **WHEN** the runtime must forcibly terminate the process tree and cannot prove Claude flushed a resumable session
-- **THEN** the Agent becomes errored and non-resumable with partial evidence retained
+#### Scenario: Request is accepted but settlement is pending
+- **WHEN** the Driver has acknowledged interruption but the exact turn remains nonterminal
+- **THEN** the receipt reports `interrupt_requested` and the Agent remains active
+
+#### Scenario: Route does not support interruption
+- **WHEN** the accepted capability snapshot declares interrupt unsupported
+- **THEN** the receipt reports `unsupported` without calling native abort, signal, status, or recovery APIs
+
+#### Scenario: Worker loss leaves settlement unknown
+- **WHEN** an interruption may have been requested but no authoritative terminal evidence can be obtained
+- **THEN** the receipt reports `settlement_unknown`, affected leases remain held, and no interrupted completion is synthesized
 
 #### Scenario: Agent has no active turn
-- **WHEN** interruption is requested for a terminal Agent
-- **THEN** the runtime returns a no-active-turn receipt without changing Agent identity or history
+- **WHEN** interruption targets a terminal Agent
+- **THEN** the receipt reports `no_active_turn` without changing Agent identity or history
 
-### Requirement: list_agents reports logical state and unread completions
-`list_agents` SHALL accept only the canonical optional `path_prefix` and return every matching current-root logical Agent, including nonresident terminal history, as canonical `agent_name`, bounded `agent_status`, and immutable `delegation_mode` values. The exact prefix `/root` SHALL be normalized to the current-root unfiltered view; other supplied prefixes SHALL begin with `/root/`. The model-facing status projection SHALL use only the string values `starting`, `working`, `completed`, `failed`, and `interrupted`, mapping durable `pending_init`, `running`, `completed`, `errored`, and `interrupted` respectively without renaming stored lifecycle facts. It SHALL NOT return completion-inbox records, delivery tokens, final output, reconciliation receipts, or storage metadata. Cross-root `--all` SHALL exist only in the separate operator CLI.
+### Requirement: list_agents reports logical state and immutable route
+`list_agents` SHALL accept only optional canonical `path_prefix` and return every matching current-root logical Agent, including nonresident terminal history, with canonical Agent name, bounded status, immutable Harness, full model, topology, behavioral authority, and maturity. It SHALL not return native sessions, instance keys, endpoints, credentials, completion events/tokens/output, reconciliation receipts, or storage metadata. Cross-root all-state remains operator-only.
 
-#### Scenario: Codex resumes after background completion
-- **WHEN** the root later calls `list_agents`
-- **THEN** it can discover the completed nonresident Agent with status `completed` and its immutable delegation mode without receiving final output
+#### Scenario: Mixed root is listed
+- **WHEN** one root owns Claude and OpenCode Agents
+- **THEN** each Agent card preserves its own immutable route and logical status without consuming completion or progress delivery
 
-#### Scenario: Errored Agent is projected
-- **WHEN** a durable Agent has internal lifecycle `errored`
-- **THEN** the model-facing list reports `failed` while operator evidence retains the exact internal failure state
-
-#### Scenario: Repeated list observes state only
-- **WHEN** the root calls `list_agents` repeatedly
-- **THEN** it receives the same logical status projection and does not read or acknowledge completion delivery
-
-#### Scenario: Exact root prefix is supplied
-- **WHEN** the caller supplies `path_prefix: "/root"`
-- **THEN** the result is identical to omitting `path_prefix`
-
-#### Scenario: Child path prefix narrows the tree
-- **WHEN** the caller supplies a prefix beginning with `/root/`
-- **THEN** only current-root Agents whose stable paths match that prefix are returned
+#### Scenario: Legacy Agent is listed
+- **WHEN** a valid v1/v2 Claude Agent is observed
+- **THEN** it is identified as Claude with its evidence-backed model/topology and historical authority reported honestly, without rewriting it as v3
 
 ### Requirement: No public cancellation operation exists
 The model-facing runtime, CLI, and skill surfaces SHALL NOT expose `cancel`, `cancel_job`, or a destructive Agent deletion action.
@@ -382,34 +327,11 @@ The model-facing runtime, CLI, and skill surfaces SHALL NOT expose `cancel`, `ca
 - **THEN** it is rejected as removed and directs the caller to `interrupt_agent` without executing a compatibility alias
 
 ### Requirement: All canonical Agent skills disclose Experimental status
-Each of the seven model-visible CC Agent skills and its discovery metadata SHALL identify the feature as Experimental and SHALL state that the local plugin cannot automatically start a new Codex model turn after the parent has ended.
+Each of the eight model-visible CC Agent Skills and its discovery metadata SHALL identify the feature as Experimental and SHALL state that the local Plugin cannot automatically start a new Codex model turn after the parent has ended.
 
 #### Scenario: A newly started Codex task discovers the plugin
-- **WHEN** the seven Agent skills are loaded from the installed local snapshot
-- **THEN** every skill is visibly described as Experimental without claiming automatic idle-parent wakeup
-
-### Requirement: Parent orchestration uses explicit join policy
-The spawn and wait skill contracts SHALL require the parent to classify delegated work as required, parallel-then-join, or explicitly detached. The parent SHALL NOT give its final answer while a required or parallel-then-join result remains undisposed, SHALL continue meaningful non-overlapping work before waiting when possible, and SHALL use detached mode only when the user clearly requests background execution and the result is not needed in the current answer. The parent SHALL call `wait_agent` only when the critical path is blocked: an ordinary join SHALL use the fixed completion-first observation, while an explicit progress wakeup SHALL be used only for one intentional intermediate observation and SHALL NOT be reflexively repeated. If a required join reaches its quiet upper bound, the parent SHALL re-enter the same completion-first join directly without narrating unchanged state or invoking list/history solely to recheck completion.
-
-#### Scenario: Child result is required evidence
-- **WHEN** the parent's conclusion depends on a spawned Agent's result
-- **THEN** the parent performs one completion-first join and synthesizes that completion before giving its final answer
-
-#### Scenario: Independent parent work remains
-- **WHEN** a spawned Agent can run concurrently with meaningful non-overlapping parent work
-- **THEN** the parent performs that work before joining rather than immediately polling by reflex
-
-#### Scenario: Parent intentionally samples progress
-- **WHEN** intermediate Agent activity materially informs scheduling or intervention
-- **THEN** the parent may request one progress wakeup and then does useful work, steers, or returns to a completion-first join instead of requesting more progress from the same job
-
-#### Scenario: Required join reaches its quiet bound
-- **WHEN** required Agent work remains unresolved after an honest one-hour timeout and no scheduling decision changed
-- **THEN** the parent calls the ordinary completion-first wait again without timeout narration, `list_agents`, or `read_agent_messages`
-
-#### Scenario: User explicitly requests background execution
-- **WHEN** the user asks to detach work whose result is not needed for the current answer
-- **THEN** the parent may end after reporting the durable Agent identity and the lack of automatic host reactivation
+- **WHEN** the eight Agent Skills are loaded from the installed local snapshot
+- **THEN** every Skill is visibly Experimental without claiming automatic idle-parent wakeup or automatic route selection
 
 ### Requirement: Completed results use the completion handoff
 When `wait_agent` returns a completion update, the parent SHALL synthesize its complete final message directly and SHALL NOT start a follow-up turn, read history, or ask the Agent to write a temporary file solely to recover that current completed result. `read_agent_messages` SHALL be reserved for retrospective access to earlier native messages or explicit recovery investigation.
@@ -441,46 +363,46 @@ When `wait_agent` returns a completion update, the parent SHALL synthesize its c
 - **WHEN** the target does not resolve exactly inside the current root
 - **THEN** the operation fails under the same root-isolation boundary as other Agent mutations
 
-### Requirement: Public runtime exposes only seven canonical Agent operations
-The public runtime SHALL expose `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `interrupt_agent`, `list_agents`, and `read_agent_messages` as its complete model-facing Agent surface.
+### Requirement: Public runtime exposes only eight canonical Agent operations
+The public runtime SHALL expose `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `interrupt_agent`, `list_agents`, `read_agent_messages`, and `list_harnesses` as its complete model-facing surface.
 
 #### Scenario: Public runtime is inspected
 - **WHEN** a caller enumerates the frozen Agent interface
-- **THEN** exactly the seven canonical operations are present and old job-oriented operations are absent
+- **THEN** exactly the eight canonical operations are present and job, server, session, endpoint, provider, config, login, cancel, and delete operations are absent
 
 ### Requirement: Follow-up and interrupt acknowledgements are operation-specific
-A successful `followup_task` model-facing receipt SHALL contain only stable `agent_name` and `delivery`. A successful `interrupt_agent` model-facing receipt SHALL contain only stable `agent_name` and operation `status`, using `no_active_turn`, `interrupted`, `failed`, or `still_working`. Their Skills SHALL present one concise disposition-aware sentence and SHALL NOT echo raw JSON. Actionable failures SHALL remain visible.
+A successful `followup_task` model-facing receipt SHALL contain only stable `agent_name` and `delivery`. A successful `interrupt_agent` model-facing receipt SHALL contain only stable `agent_name` and one closed operation `status`: `no_active_turn`, `interrupt_requested`, `still_working`, `unsupported`, `settlement_unknown`, or `interrupted`. Request acknowledgement SHALL NOT be presented as terminal effect. Their Skills SHALL present one concise disposition-aware sentence and SHALL NOT echo raw JSON. Actionable failures SHALL remain visible through the existing failure boundary.
 
 #### Scenario: Follow-up is handed off
 - **WHEN** a follow-up is durably delivered, pending activation, already active, or starts a new turn
 - **THEN** the receipt reports only the Agent name and exact delivery disposition
 
-#### Scenario: Active turn is interrupted
-- **WHEN** graceful interruption succeeds
+#### Scenario: Active turn reaches proven interruption
+- **WHEN** authoritative Driver evidence proves interruption and settlement
 - **THEN** the receipt reports the Agent name and `interrupted`
 
-#### Scenario: Interruption cannot safely stop the turn
-- **WHEN** forced termination fails safely or produces an unresumable failure
-- **THEN** the receipt reports `still_working` or `failed` without exposing process-control or reconciliation evidence
+#### Scenario: Interruption remains pending or unknown
+- **WHEN** request acknowledgement or lost ownership cannot prove terminal effect
+- **THEN** the receipt reports `interrupt_requested`, `still_working`, or `settlement_unknown` without process-control details
+
+#### Scenario: Route does not support interruption
+- **WHEN** the target capability declares interruption unsupported
+- **THEN** the receipt reports the Agent name and `unsupported`
 
 #### Scenario: Agent has no active turn
 - **WHEN** interruption targets an Agent without an active turn
 - **THEN** the receipt reports the Agent name and `no_active_turn`
 
 ### Requirement: Agent Skill guidance has a bounded context footprint
-The seven installed Agent Skills SHALL remain self-contained and preserve their typed inputs, lifecycle distinctions, model and effort policy, behavioral write boundary, delegation depth, join obligations, account-limit stop rule, and actionable failure handling. Their aggregate whitespace-delimited word count SHALL NOT exceed 1,800, and successful presentation guidance SHALL prefer concise synthesis over raw receipt repetition.
+The eight installed Agent Skills SHALL remain self-contained and preserve typed inputs, lifecycle distinctions, explicit immutable routing, behavioral authority, capability-specific unsupported paths, completion/acknowledgement mechanics, and actionable failure handling. Their aggregate whitespace-delimited word count SHALL NOT exceed 2,200, and successful presentation guidance SHALL prefer concise synthesis over raw receipt repetition or route policy.
 
 #### Scenario: Plugin contract tests inspect Skills
-- **WHEN** all seven installed `SKILL.md` files are measured
-- **THEN** their aggregate word count is at most 1,800 while every required contract marker remains present
+- **WHEN** all eight installed `SKILL.md` files are measured
+- **THEN** their aggregate word count is at most 2,200 while every required contract marker remains present
 
 #### Scenario: Typed tool is unavailable
 - **WHEN** a Skill cannot resolve its matching MCP tool
-- **THEN** it reports Plugin discovery or startup failure instead of silently invoking a shell fallback
-
-#### Scenario: User requests debug output
-- **WHEN** the user explicitly asks for raw or operator diagnostic detail
-- **THEN** the Skill may present requested evidence through the existing diagnostic boundary without enlarging ordinary success output
+- **THEN** it reports Plugin discovery or startup failure instead of invoking shell or a Harness CLI
 
 ### Requirement: Activation-pending guidance is operation specific
 Public Skill guidance SHALL distinguish a message durably assigned to activation from a message that is still queued, and SHALL direct the lead to join or observe the activated turn rather than repeatedly resending it.
@@ -547,3 +469,32 @@ An Agent blocked by a terminal `auth_or_permission` failure SHALL preserve its h
 #### Scenario: Non-activating message targets the blocked Agent
 - **WHEN** `send_message` targets an authentication-blocked Agent before a successful recovery activation
 - **THEN** it continues to reject rather than treating credential rotation as an implicit activation request
+
+### Requirement: Every Harness Agent is an internal worker under Codex ownership
+The Plugin SHALL represent every admitted Harness Agent as a root-scoped internal worker. Codex and the user SHALL retain task decomposition, route selection, synthesis, final repository modification, review, acceptance, and the final answer. A Driver result is research or implementation evidence, not ground truth or an automatically accepted decision.
+
+#### Scenario: Multiple Harnesses return findings
+- **WHEN** Codex explicitly starts workers on different routes
+- **THEN** the Plugin preserves each lineage independently and Codex verifies, reconciles, and synthesizes the results
+
+### Requirement: Core orchestration is policy-thin
+The Plugin SHALL require explicit route inputs and enforce ownership, capability, mailbox, control, lease, and delivery invariants. It SHALL NOT encode delegation thresholds, automatic route ranking, cost optimization, fan-out, fallback, worker conflict resolution, implementation-worker admission, or a rule that all Agents in one root use the same Harness. Operation-specific Skills MAY explain mechanics and safety boundaries but SHALL leave task and route choice to the current Codex lead and user instructions.
+
+#### Scenario: Root mixes Harness routes
+- **WHEN** Codex explicitly starts two valid Agents under different Harnesses
+- **THEN** both coexist under the same root without a Plugin rule forcing one Harness for the whole root
+
+#### Scenario: Selected route fails
+- **WHEN** a Driver reports auth, quota, service, model, or compatibility failure
+- **THEN** the Plugin preserves that route-qualified failure and does not start or retry another Harness automatically
+
+#### Scenario: Work appears inexpensive to delegate
+- **WHEN** a task matches no runtime safety or ownership constraint
+- **THEN** the Plugin makes no delegation decision based on file count, token estimate, price, or latency
+
+### Requirement: Route discovery informs but never decides
+The `list-harnesses` Skill SHALL explain admitted/available distinction, `liveValidated`, maturity, exact route constraints, and unsupported capabilities. It SHALL not rank Harnesses, recommend delegation thresholds, select a route, or interpret unavailable authentication/quota/service evidence as model-quality evidence.
+
+#### Scenario: Codex needs current route facts
+- **WHEN** the lead has not already been given a valid explicit route
+- **THEN** it may inspect `list_harnesses` and then makes its own route decision from the task and user instructions

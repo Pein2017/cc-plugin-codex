@@ -4,12 +4,13 @@
 
 Define the checkout-owned runtime, host Claude dependency, environment selection, and portability boundary.
 ## Requirements
+
 ### Requirement: Checkout-owned executable runtime
-The installed CC for Pein plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/cc-plugin-codex` checkout. Both lifecycle and MCP bootstraps SHALL NOT accept caller or ambient runtime-checkout selection. They SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned plugin Cache path.
+The installed HarnessDock for Codex Plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/cc-plugin-codex` checkout until the separately specified physical source rename is accepted. Both lifecycle and MCP bootstraps SHALL NOT accept caller or ambient runtime-checkout selection. They SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned Plugin Cache path.
 
 #### Scenario: Matching independent checkout delegates successfully
 - **WHEN** an installed lifecycle or MCP bootstrap validates `/data/CoordExp/cc-plugin-codex`
-- **THEN** it delegates execution to that checkout's matching public runtime entrypoint
+- **THEN** it delegates execution to that checkout's matching public runtime entrypoint while reporting the HarnessDock public identity
 
 #### Scenario: Source root mismatch fails closed
 - **WHEN** the loaded runtime source does not resolve to the canonical fixed checkout
@@ -226,3 +227,46 @@ The local refresh path SHALL reconstruct a compatibility shell from an explicit 
 #### Scenario: Old cache contains an unrelated executable
 - **WHEN** an older discovery snapshot contains a file outside the compatibility whitelist
 - **THEN** refresh does not copy that file into the new compatibility shell
+
+### Requirement: Operator-owned Harness services remain outside Plugin lifecycle ownership
+A checkout-owned Driver MAY attach to a preconfigured local service or use a host-installed Harness executable or SDK. The Plugin SHALL inspect readiness without installing, logging in, starting, stopping, restarting, reconfiguring, or exposing credentials for that Harness. Model-facing inputs SHALL NOT accept executable paths, endpoints, usernames, passwords, tokens, configuration paths, environment files, or lifecycle bypasses.
+
+#### Scenario: Persistent service is unavailable
+- **WHEN** side-effect-free readiness cannot reach the configured logical instance
+- **THEN** that instance is reported unavailable and no Plugin action starts or repairs the service
+
+#### Scenario: Operator has already authenticated a Harness
+- **WHEN** the Driver can validate local readiness from its fixed checkout-owned configuration boundary
+- **THEN** the Plugin may use the instance without copying credentials into prompts, receipts, logs, or durable locators
+
+### Requirement: Each Driver owns a bounded environment view
+The shared runtime SHALL resolve the one canonical environment file as data, then provide each static Driver only the checkout-owned keys admitted for that Driver. A Driver SHALL declare redacted external dependencies and SHALL NOT receive arbitrary environment values through model-facing route input or persist them as readiness evidence.
+
+#### Scenario: Two Drivers require different host settings
+- **WHEN** their static environment schemas differ
+- **THEN** each receives its admitted fixed values without changing the canonical environment-file owner or leaking the other Driver's private settings
+
+### Requirement: OpenCode uses one exactly pinned network client
+Before adding a production client, the checkout SHALL capture the configured Server/OpenAPI/SDK compatibility facts and then depend on one exact compatible `@opencode-ai/sdk` version or, only when no stable compatible SDK exists, one separately reviewed generated typed OpenAPI client. The runtime SHALL use only that pinned client connection to an existing Server. It SHALL NOT use a range, `latest`, a Server-spawning helper, embedded/in-process Server, raw provider client, ad hoc HTTP, or CLI stdout as the production integration. Upgrading or changing the client SHALL require captured type/fixture comparison and a separate compatibility decision.
+
+#### Scenario: Dependency lock drifts
+- **WHEN** package or lock metadata resolves another client version or shape than the accepted compatibility fixture
+- **THEN** verification fails before OpenCode release acceptance
+
+### Requirement: OpenCode connection configuration is fixed and secret-safe
+The canonical runtime environment SHALL provide one checkout-owned loopback Server URL. Optional official Basic-auth username/password variables SHALL be inherited only from the operator environment, admitted through an exact secret allowlist, and omitted from the tracked environment file and all receipts. The Driver SHALL construct a bounded authenticated fetch with explicit request deadlines and caller cancellation while preventing proxy routing for loopback.
+
+#### Scenario: Model-facing endpoint is supplied
+- **WHEN** spawn, follow-up, or any other tool includes an endpoint, username, password, token, directory override, timeout bypass, or SDK option
+- **THEN** strict validation rejects it before connection or state mutation
+
+#### Scenario: Request exceeds its deadline
+- **WHEN** health, discovery, session, message, or prompt-admission observation exceeds the Driver-owned bound
+- **THEN** the request aborts with a sanitized retryability classification and never becomes a silent infinite wait
+
+### Requirement: OpenCode CLI remains diagnostic only
+The operator MAY use `opencode serve`, `opencode models`, or `opencode run --attach` outside the Plugin for setup and diagnosis. Production Agent lifecycle SHALL not shell out to those commands, parse terminal or JSON-event stdout, manage their PID, or treat CLI availability as a substitute for Server/SDK readiness.
+
+#### Scenario: CLI is absent but Server is reachable
+- **WHEN** the pinned SDK can validate the configured Server and route
+- **THEN** Driver readiness may succeed without a local `opencode` executable in the Plugin process environment
