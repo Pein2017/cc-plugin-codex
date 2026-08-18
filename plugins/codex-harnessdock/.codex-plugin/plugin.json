@@ -1,6 +1,6 @@
 {
   "name": "codex-harnessdock",
-  "version": "0.19.0+codex.20260818011442",
+  "version": "0.20.0+codex.20260818035444",
   "description": "HarnessDock for Codex is an unofficial third-party checkout-owned Claude Code Agent runtime with bounded leaf and Opus/Fable native-team delegation, durable roots, complete completion delivery, native message history, interruption, and exact-session follow-up; it is not affiliated with or endorsed by OpenAI.",
   "author": {
     "name": "Pein2017",

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.20.0 - 2026-08-18
+
 - **BREAKING (operator-facing).** Complete the identifier half of the
   HarnessDock rename as one flag day with no aliases and no fallbacks. Every
   `CC_*` environment variable becomes `CODEX_HARNESSDOCK_*` (the prefix the
