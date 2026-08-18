@@ -1,5 +1,6 @@
 .claude/
-.serena/
+.serena/*
+!.serena/project.yml
 node_modules/
 *.log
 .DS_Store
