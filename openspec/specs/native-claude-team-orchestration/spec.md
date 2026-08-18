@@ -2,7 +2,7 @@
 
 ## Purpose
 Define one bounded experimental Claude Native Agent Team inside an
-orchestrating CC Agent turn without creating a second Plugin-owned lifecycle or
+orchestrating Claude Agent turn without creating a second Plugin-owned lifecycle or
 weakening Codex's ownership of final acceptance.
 ## Requirements
 

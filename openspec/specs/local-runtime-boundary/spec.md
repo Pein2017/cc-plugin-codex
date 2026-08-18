@@ -6,7 +6,7 @@ Define the checkout-owned runtime, host Claude dependency, environment selection
 ## Requirements
 
 ### Requirement: Checkout-owned executable runtime
-The installed HarnessDock for Codex Plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/codex-harnessdock` checkout until the separately specified physical source rename is accepted. Both lifecycle and MCP bootstraps SHALL NOT accept caller or ambient runtime-checkout selection. They SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned Plugin Cache path.
+The installed HarnessDock for Codex Plugin SHALL load executable runtime source only from the canonical `/data/CoordExp/codex-harnessdock` checkout. Both lifecycle and MCP bootstraps SHALL NOT accept caller or ambient runtime-checkout selection. They SHALL NOT load runtime or Git objects from `/data/CoordExp/external/cc-plugin-codex`, Sendbird, another upstream repository, a Git alternate, a registered development worktree, or a versioned Plugin Cache path.
 
 #### Scenario: Matching independent checkout delegates successfully
 - **WHEN** an installed lifecycle or MCP bootstrap validates `/data/CoordExp/codex-harnessdock`
