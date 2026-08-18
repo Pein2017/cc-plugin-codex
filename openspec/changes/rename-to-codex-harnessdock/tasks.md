@@ -55,15 +55,15 @@
 
 ## 8. Execute The Consolidated Explicit Local Cutover
 
-- [ ] 8.1 After separate user authorization, record old doctor/status, confirm zero active/unknown Agents, create the backup, and atomically move the data namespace.
-- [ ] 8.2 After Phase A/B candidate acceptance, promote the exact final tree to the canonical production checkout, refresh/install only that new identity, disable/remove the old enabled entry, and prove only one MCP identity is registered before starting a Codex task.
-- [ ] 8.3 Run zero-model-cost installed release smoke proving the matching final snapshot, the final accepted catalog (eight Skills/tools when Phase B is included), isolated inspection, correct source provenance, and absence of concurrent old identity.
-- [ ] 8.4 On any failure, stop new lifecycle work and follow the evidence-gated rollback; never restore an old runtime across active or unknown new ownership.
+- [x] 8.1 After separate user authorization, record old doctor/status, confirm zero active/unknown Agents, create the backup, and atomically move the data namespace.
+- [x] 8.2 After Phase A/B candidate acceptance, promote the exact final tree to the canonical production checkout, refresh/install only that new identity, disable/remove the old enabled entry, and prove only one MCP identity is registered before starting a Codex task.
+- [x] 8.3 Run zero-model-cost installed release smoke proving the matching final snapshot, the final accepted catalog (eight Skills/tools when Phase B is included), isolated inspection, correct source provenance, and absence of concurrent old identity.
+- [x] 8.4 On any failure, stop new lifecycle work and follow the evidence-gated rollback; never restore an old runtime across active or unknown new ownership.
 
 ## 9. Run Fresh Codex Live Acceptance For The Final Generation
 
 - [ ] 9.1 Start a fresh Codex task and prove model-visible discovery of the exact final `$codex-harnessdock:*` / `mcp__codex_harnessdock__*` catalog (eight operations when Phase B is included).
 - [ ] 9.2 With explicit live authorization, prove legacy Claude spawn/terminal/follow-up/list/message behavior and the Phase B OpenCode examples through the loaded Plugin; record bounded lifecycle, route, usage, and mutation evidence only.
-- [ ] 9.3 Prove the old Skill/MCP identity is absent, the loaded runtime resolves to `/data/CoordExp/cc-plugin-codex`, and the same migrated state lineage remains authoritative.
-- [ ] 9.4 Record the exact accepted commit/tree, cutover and backup receipts, installed snapshot, live witnesses, rollback readiness, and all still-unproven maturity facts in a fresh Phase R handoff.
-- [ ] 9.5 Leave publish, push, archive, physical production-checkout/GitHub rename, maturity runs, and later Harnesses unstarted unless separately authorized.
+- [x] 9.3 Prove the old Skill/MCP identity is absent, the loaded runtime resolves to `/data/CoordExp/cc-plugin-codex`, and the same migrated state lineage remains authoritative.
+- [x] 9.4 Record the exact accepted commit/tree, cutover and backup receipts, installed snapshot, live witnesses, rollback readiness, and all still-unproven maturity facts in a fresh Phase R handoff.
+- [x] 9.5 Leave publish, push, archive, physical production-checkout/GitHub rename, maturity runs, and later Harnesses unstarted unless separately authorized.
