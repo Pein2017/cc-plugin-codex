@@ -72,6 +72,7 @@ import { getProcessIdentity } from "./process-control.mjs";
 import { configureRuntimePaths, resolvePluginStateRoot, samePath } from "./paths.mjs";
 import { renderTaskResult } from "./render.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
+import { listVersionThreeJobRecords } from "./v3-job-store.mjs";
 import {
   acknowledgeAgentCompletionEvents,
   readUnreadAgentCompletionSummaries,
@@ -94,6 +95,21 @@ const TERMINAL_STATUSES = new Set([
   "cancelled",
   "unknown",
 ]);
+
+/**
+ * The status of one version-three job record, for targeted-wait readiness. The
+ * version-three store is keyed by owner root rather than workspace, and the
+ * caller holds no agent identity here, so the bounded per-root listing is the
+ * correct lookup.
+ */
+function versionThreeJobStatus(ownerRootId, jobId) {
+  try {
+    const { records } = listVersionThreeJobRecords({ ownerRootId });
+    return records.find((record) => record.jobId === jobId)?.status;
+  } catch {
+    return undefined;
+  }
+}
 const HANDOFF_DISPOSITIONS = new Set([
   "rollback_safe",
   "lifecycle_owned",
@@ -1685,7 +1701,11 @@ class ClaudeRuntime {
       this.waitDependencies.onRead?.(kind);
     };
     const targetBarrierReady = () => targetJobIds == null || targetJobIds.every((id) => {
-      const status = readJobFile(this.cwd, id)?.status;
+      // A version-three-worker job has no version-one file; its status lives in
+      // the version-three record. "running" stays not-ready either way, and a
+      // settled "unknown" is joinable terminal evidence in both stores.
+      const status = readJobFile(this.cwd, id)?.status
+        ?? versionThreeJobStatus(this.assertOwnerRoot(), id);
       return TERMINAL_STATUSES.has(status);
     });
     const desiredWatchPaths = () => [

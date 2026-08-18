@@ -336,4 +336,34 @@ describe("Task 9.1 — one complete OpenCode turn through MCP, runtime, and the 
     assert.equal(seen.includes(url), false, "no Server endpoint reaches a model-facing payload");
     assert.equal(seen.includes(workspace), false, "no operator path reaches a model-facing payload");
   });
+
+  it("joins a version-three Explorer turn through a targeted wait", async () => {
+    // Live-proven gap from the first activation run: the targeted wait
+    // consulted only version-one job files, so a version-three-worker turn
+    // reported itself not joinable (agent working, state not_joinable) while
+    // the turn was completing in the background. The targeted join must read
+    // the version-three record for both readiness and the snapshot.
+    const { url } = await startReadyFake();
+    const { runtime, workspace } = setup(url);
+    const client = await mcpClientFor(runtime);
+    const spawned = await callTool(client, workspace, "spawn_agent", {
+      task_name: "targeted_turn",
+      message: "Name the module that owns the static Driver table.",
+      harness: OPENCODE_HARNESS_ID,
+      model: OPENCODE_EXPLORER_MODEL,
+      topology: "leaf",
+      write: false,
+    });
+    const waited = await callTool(client, workspace, "wait_agent", {
+      targets: [spawned.agent_name],
+    });
+    assert.equal(waited.timedOut, false, "a targeted wait must join the settling turn");
+    const target = (waited.targets ?? []).find((entry) => entry.agent_name === spawned.agent_name);
+    assert.ok(target, "the targeted wait answers for the requested Agent");
+    assert.equal(target.state, "settled");
+    assert.equal(target.agent_status, "completed");
+    assert.ok(target.completion_message.length > 0, "the settled target delivers its final text");
+    assert.ok(target.metrics, "the settled target entry carries the closed metrics");
+    assert.deepEqual(waited.unresolved_targets, []);
+  });
 });

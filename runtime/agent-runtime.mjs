@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
 import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
+import { readVersionThreeJobRecord } from "./v3-job-store.mjs";
 import { CLAUDE_CODE_HARNESS_ID, delegationModeForTopology } from "./claude-code-driver.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
@@ -1678,6 +1679,26 @@ class AgentRuntime {
     }
   }
 
+  /**
+   * The version-three view of one targeted Agent's job, projected to exactly
+   * the two fields the targeted join reads. A version-one-supervisor Agent has
+   * a version-one job file instead and reads as null here; an absent record on
+   * a fresh version-three reservation reads as null, which the join treats as
+   * not-yet-terminal rather than not joinable.
+   */
+  versionThreeJobView(agent, jobId) {
+    if (!jobId || harnessExecutionLifecycle(agent.harnessId) !== "version_three_worker") return null;
+    try {
+      const record = readVersionThreeJobRecord({
+        ownerRootId: this.ownerRootId,
+        agentId: agent.agentId,
+        jobId,
+      });
+      return record ? { id: record.jobId, status: record.status } : null;
+    } catch {
+      return null;
+    }
+  }
   async waitAgent(inputValue = {}) {
     const input = assertObject(inputValue, "wait_agent input");
     if (this.abortSignal?.aborted) {
@@ -1737,12 +1758,23 @@ class AgentRuntime {
         }
         seenAgents.add(agent.agentId);
         const jobId = agent.activeJobId ?? agent.latestJobId ?? null;
-        const job = jobId ? readJobFile(this.cwd, jobId) : null;
+        // A version-three-worker Agent has no version-one job file: its durable
+        // job is the version-three record, projected here to exactly the two
+        // fields the targeted join reads (id and status). Discovered live: the
+        // first activation run's targeted wait reported a completing OpenCode
+        // turn as not joinable because only the version-one file was consulted.
+        const versionThreeWorker =
+          harnessExecutionLifecycle(agent.harnessId) === "version_three_worker";
+        const job = (jobId ? readJobFile(this.cwd, jobId) : null)
+          ?? this.versionThreeJobView(agent, jobId);
         snapshots.push({
           agent,
           agentId: agent.agentId,
           agentName: agent.path,
-          jobId: job?.id ?? null,
+          // A version-three reservation is joinable from the moment it exists:
+          // the worker upserts its durable record moments later, and until then
+          // the absent record simply reads as not-yet-terminal.
+          jobId: job?.id ?? (versionThreeWorker ? jobId : null),
           job,
         });
       }
@@ -1815,7 +1847,9 @@ class AgentRuntime {
       const barrierSettled = waited.targetReady && missingEvidence.length === 0;
       const unresolved = [];
       const targets = snapshots.map((snapshot) => {
-        const currentJob = readJobFile(this.cwd, snapshot.jobId) ?? snapshot.job;
+        const currentJob = readJobFile(this.cwd, snapshot.jobId)
+          ?? this.versionThreeJobView(snapshot.agent, snapshot.jobId)
+          ?? snapshot.job;
         const terminal = Boolean(currentJob && TERMINAL_JOB_STATUSES.has(currentJob.status));
         const event = selectedByJob.get(snapshot.jobId);
         const consumed = consumedByJob.get(snapshot.jobId);
