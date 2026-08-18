@@ -41,7 +41,7 @@ function gitStatus(cwd) {
 }
 
 function initializeWitnessWorkspace() {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "cc-native-team-witness-"));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "hd-native-team-witness-"));
   const init = spawnSync("git", ["-C", cwd, "init", "--quiet"], { encoding: "utf8" });
   if (init.status !== 0) {
     fs.rmSync(cwd, { recursive: true, force: true });
@@ -419,7 +419,7 @@ export async function runPaidSmoke(client, meta, options = {}) {
       name: "spawn_agent",
       arguments: {
         task_name: taskName,
-        message: "Inspect your available native tools, use Bash to run pwd without modifying anything, and do not delegate. If Workflow is unavailable, reply exactly CC_RELEASE_SMOKE_OK. If Workflow is available, reply exactly CC_RELEASE_SMOKE_WORKFLOW_VISIBLE.",
+        message: "Inspect your available native tools, use Bash to run pwd without modifying anything, and do not delegate. If Workflow is unavailable, reply exactly HARNESSDOCK_RELEASE_SMOKE_OK. If Workflow is available, reply exactly HARNESSDOCK_RELEASE_SMOKE_WORKFLOW_VISIBLE.",
         description: "Explicit paid release acceptance smoke",
         harness: CLAUDE_CODE_HARNESS_ID,
         model: REAL_SMOKE_MODEL,
@@ -457,7 +457,7 @@ export async function runPaidSmoke(client, meta, options = {}) {
     if (isClaudeSubscriptionLimit(`${update.summary ?? ""}\n${message}`)) {
       throw paidSmokeError(new Error(`${update.summary ?? ""} ${message}`));
     }
-    if (!message.includes("CC_RELEASE_SMOKE_OK")) {
+    if (!message.includes("HARNESSDOCK_RELEASE_SMOKE_OK")) {
       throw new Error("Haiku release smoke completed without the expected marker.");
     }
     // This is the final wait in the smoke. Completion acknowledgement is
@@ -479,7 +479,7 @@ export async function probeInstalledMcp(options = {}) {
   const snapshotRoot = fs.realpathSync.native(options.snapshotRoot);
   const workspace = fs.realpathSync.native(options.workspace ?? SOURCE_ROOT);
   const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-harnessdock-release-smoke-"));
-  const threadId = `cc-release-smoke-${randomBytes(12).toString("hex")}`;
+  const threadId = `hd-release-smoke-${randomBytes(12).toString("hex")}`;
   const meta = {
     threadId,
     [CODEX_SANDBOX_META_KEY]: { sandboxCwd: pathToFileURL(workspace).href },

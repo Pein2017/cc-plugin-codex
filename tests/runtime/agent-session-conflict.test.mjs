@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-session-conflict-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-session-conflict-"));
   const workspace = path.join(root, "workspace");
   const foreignWorkspace = path.join(root, "foreign-workspace");
   const claudeConfigDir = path.join(root, "claude");

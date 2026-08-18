@@ -30,17 +30,12 @@ try {
     const error = new Error(
       `HARNESSDOCK_MCP_RESTART_REQUIRED: HarnessDock MCP API generation changed from ${workerData.expectedGeneration} to ` +
       `${runtimeModule.HARNESSDOCK_MCP_API_GENERATION ?? "unknown"}. Run npm run release:local in ` +
-      "/data/CoordExp/cc-plugin-codex and start a new Codex task."
+      "/data/CoordExp/codex-harnessdock and start a new Codex task."
     );
     /** @type {any} */ (error).code = "HARNESSDOCK_MCP_RESTART_REQUIRED";
     throw error;
   }
-  // The neutral factory is preferred; the bounded current-generation alias is
-  // still accepted so a same-generation checkout written before the neutral
-  // name existed keeps serving discovered Codex tasks without a restart.
-  const runtimeFactory = typeof runtimeModule.createAgentRuntime === "function"
-    ? runtimeModule.createAgentRuntime
-    : runtimeModule.createClaudeRuntime;
+  const runtimeFactory = runtimeModule.createAgentRuntime;
   if (typeof runtimeFactory !== "function") {
     throw new Error("Checkout runtime/index.mjs does not export createAgentRuntime().");
   }

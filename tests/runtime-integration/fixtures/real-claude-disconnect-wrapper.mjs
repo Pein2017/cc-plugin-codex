@@ -4,10 +4,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import process from "node:process";
 
-const realClaude = process.env.CC_REAL_CLAUDE_BIN;
-const marker = process.env.CC_FORCED_DISCONNECT_MARKER;
+const realClaude = process.env.CODEX_HARNESSDOCK_REAL_CLAUDE_BIN;
+const marker = process.env.CODEX_HARNESSDOCK_FORCED_DISCONNECT_MARKER;
 if (!realClaude || !marker) {
-  process.stderr.write("CC_REAL_CLAUDE_BIN and CC_FORCED_DISCONNECT_MARKER are required.\n");
+  process.stderr.write("CODEX_HARNESSDOCK_REAL_CLAUDE_BIN and CODEX_HARNESSDOCK_FORCED_DISCONNECT_MARKER are required.\n");
   process.exit(2);
 }
 

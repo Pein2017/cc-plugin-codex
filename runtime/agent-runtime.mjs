@@ -43,7 +43,7 @@ import {
   harnessAdmitsModel,
   resolveDriverV2,
 } from "./harness-registry.mjs";
-import { createInternalClaudeRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
+import { createInternalAgentRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
 import {
   ACTIVE_JOB_STATUSES,
   generateJobId,
@@ -511,7 +511,7 @@ function unsupportedRouteOperation(agent, capability, admitted) {
 
 class AgentRuntime {
   constructor(options = {}) {
-    this.jobs = createInternalClaudeRuntime(options);
+    this.jobs = createInternalAgentRuntime(options);
     this.abortSignal = options.abortSignal ?? null;
     this.ownerRootId = this.jobs.assertOwnerRoot();
     this.cwd = this.jobs.cwd;
@@ -1117,7 +1117,7 @@ class AgentRuntime {
     // The whole route is the caller's explicit decision, accepted before any
     // readiness side effect or durable Agent reservation exists.
     const accepted = await this.acceptStatedRoute(input, "spawn_agent");
-    const jobId = generateJobId("cc-agent");
+    const jobId = generateJobId("hd-agent");
     // Reasoning effort is Driver-discriminated: the Driver that owns the accepted
     // route decides whether one is admitted at all, and it decides here, before
     // anything durable exists. A route that proves no effort refuses it.
@@ -1581,7 +1581,7 @@ class AgentRuntime {
     // interval. A concurrent follow-up then sees an idle Agent until a winner
     // is genuinely ready to publish its local job receipt.
     readinessReceipt ??= this.jobs.assertReady(driver.harnessId);
-    const jobId = generateJobId("cc-agent");
+    const jobId = generateJobId("hd-agent");
     const previous = agent;
     const latestJob = validationLatestJob;
     const resumeSessionId = agent.continuation.mode === "exact_session"
@@ -1702,7 +1702,7 @@ class AgentRuntime {
   async waitAgent(inputValue = {}) {
     const input = assertObject(inputValue, "wait_agent input");
     if (this.abortSignal?.aborted) {
-      const error = new Error("CC Agent wait observation was cancelled by the caller.");
+      const error = new Error("HarnessDock Agent wait observation was cancelled by the caller.");
       error.name = "AbortError";
       throw error;
     }
@@ -1787,7 +1787,7 @@ class AgentRuntime {
           acknowledgeAgentCompletionEvents(this.cwd, this.ownerRootId, acknowledgeTokens);
         }
         return {
-          message: "CC Agent target is not joinable.",
+          message: "HarnessDock Agent target is not joinable.",
           timedOut: false,
           targets: snapshots.map((snapshot) => ({
             agent_name: snapshot.agentName,
@@ -1883,10 +1883,10 @@ class AgentRuntime {
       });
       return {
         message: missingEvidence.length > 0
-          ? "CC Agent target is not joinable."
+          ? "HarnessDock Agent target is not joinable."
           : barrierSettled
-          ? "CC Agent barrier is complete."
-          : "Timed out waiting for CC Agent activity.",
+          ? "HarnessDock Agent barrier is complete."
+          : "Timed out waiting for HarnessDock Agent activity.",
         timedOut: !barrierSettled && missingEvidence.length === 0,
         targets,
         unresolved_targets: unresolved,

@@ -12,7 +12,7 @@ import process from "node:process";
 
 import { assertCheckoutDependencies } from "./dependency-preflight.mjs";
 
-const FIXED_RUNTIME_CHECKOUT = "/data/CoordExp/cc-plugin-codex";
+const FIXED_RUNTIME_CHECKOUT = "/data/CoordExp/codex-harnessdock";
 
 function existing(candidate) {
   try {
@@ -74,16 +74,16 @@ function main() {
   assertCheckoutDependencies(checkout);
   const configured = parseEnv(envFile);
   delete configured.CODEX_THREAD_ID;
-  delete configured.CC_TRUSTED_OWNER_ROOT_ID;
+  delete configured.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID;
   const env = {
     ...process.env,
     ...configured,
-    CC_RUNTIME_CHECKOUT: checkout,
-    CC_RUNTIME_ENV_FILE: envFile,
-    CC_RUNTIME_SOURCE_ROOT: checkout,
+    CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: checkout,
+    CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile,
+    CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: checkout,
   };
   delete env.CODEX_THREAD_ID;
-  delete env.CC_TRUSTED_OWNER_ROOT_ID;
+  delete env.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID;
 
   const child = spawn(process.execPath, ["--", server], {
     cwd: checkout,

@@ -33,9 +33,9 @@
     "smoke:release": "node scripts/release-smoke.mjs",
     "lint": "eslint runtime scripts tests/runtime",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "CC_RUNTIME_CHECKOUT= CC_RUNTIME_SOURCE_ROOT= CC_RUNTIME_ENV_FILE=$PWD/config/runtime.env node --import ./tests/runtime/fixtures/pinned-data-root.mjs --test tests/runtime/*.test.mjs",
-    "test:focus": "CC_RUNTIME_CHECKOUT= CC_RUNTIME_SOURCE_ROOT= CC_RUNTIME_ENV_FILE=$PWD/config/runtime.env node --import ./tests/runtime/fixtures/pinned-data-root.mjs --test",
-    "test:integration": "CC_RUNTIME_CHECKOUT= CC_RUNTIME_SOURCE_ROOT= CC_RUNTIME_ENV_FILE=$PWD/config/runtime.env node --import ./tests/runtime/fixtures/pinned-data-root.mjs --test tests/runtime-integration/*.test.mjs",
+    "test": "CODEX_HARNESSDOCK_RUNTIME_CHECKOUT= CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT= CODEX_HARNESSDOCK_RUNTIME_ENV_FILE=$PWD/config/runtime.env node --import ./tests/runtime/fixtures/pinned-data-root.mjs --test tests/runtime/*.test.mjs",
+    "test:focus": "CODEX_HARNESSDOCK_RUNTIME_CHECKOUT= CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT= CODEX_HARNESSDOCK_RUNTIME_ENV_FILE=$PWD/config/runtime.env node --import ./tests/runtime/fixtures/pinned-data-root.mjs --test",
+    "test:integration": "CODEX_HARNESSDOCK_RUNTIME_CHECKOUT= CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT= CODEX_HARNESSDOCK_RUNTIME_ENV_FILE=$PWD/config/runtime.env node --import ./tests/runtime/fixtures/pinned-data-root.mjs --test tests/runtime-integration/*.test.mjs",
     "check": "npm run lint && npm run typecheck && npm run test && npm run test:integration"
   },
   "devDependencies": {

@@ -34,7 +34,7 @@ function runtimeMethods(handler) {
 async function inMemoryClient(runtimeFactory) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = createCcMcpServer({ runtimeFactory });
-  const client = new Client({ name: "cc-mcp-test", version: "1.0.0" });
+  const client = new Client({ name: "hd-mcp-test", version: "1.0.0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return { client, server };
 }
@@ -212,7 +212,7 @@ describe("typed HarnessDock MCP server", () => {
     };
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createCcMcpServer({ runtimeInvoker });
-    const client = new Client({ name: "cc-mcp-test", version: "1.0.0" });
+    const client = new Client({ name: "hd-mcp-test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     closers.push(() => client.close(), () => server.close());
 
@@ -226,7 +226,7 @@ describe("typed HarnessDock MCP server", () => {
   it("redacts private runtime identities and absolute paths while keeping public error categories", () => {
     const message = redactMcpErrorMessage(
       [
-        "Claude session abc-123 in internal job job-456 failed at /data/CoordExp/cc-plugin-codex/runtime/state/jobs/job-456.json:",
+        "Claude session abc-123 in internal job job-456 failed at /data/CoordExp/codex-harnessdock/runtime/state/jobs/job-456.json:",
         "(/data/CoordExp/.codex/plugins/data/codex-harnessdock/state/private.json)",
         "`/data/CoordExp/.codex/plugins/data/codex-harnessdock/state/private.json`",
         "/root/.codex/plugins/data/codex-harnessdock/state/session-leases/private.json",
@@ -255,7 +255,7 @@ describe("typed HarnessDock MCP server", () => {
       delivery_token: "delivery-blocked-wait",
       blocking: { reason: "auth_required", scope: "harness", retry: "operator_required" },
     };
-    const receipt = { message: "CC Agent completion is available.", timedOut: false, update };
+    const receipt = { message: "HarnessDock Agent completion is available.", timedOut: false, update };
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => receipt));
     closers.push(() => client.close(), () => server.close());
 
@@ -281,7 +281,7 @@ describe("typed HarnessDock MCP server", () => {
       delivery_token: "delivery-completed-wait",
       blocking: null,
     };
-    const receipt = { message: "CC Agent completion is available.", timedOut: false, update };
+    const receipt = { message: "HarnessDock Agent completion is available.", timedOut: false, update };
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => receipt));
     closers.push(() => client.close(), () => server.close());
 
@@ -420,8 +420,8 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(contexts.length, 1);
     assert.equal(contexts[0].cwd, root);
     assert.equal(contexts[0].env.CODEX_THREAD_ID, meta.threadId);
-    assert.equal(contexts[0].env.CC_TRUSTED_OWNER_ROOT_ID, meta.threadId);
-    assert.equal(contexts[0].env.CC_RUNTIME_CHECKOUT, root);
+    assert.equal(contexts[0].env.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID, meta.threadId);
+    assert.equal(contexts[0].env.CODEX_HARNESSDOCK_RUNTIME_CHECKOUT, root);
     assert.equal(contexts[0].envFile, path.join(root, "config", "runtime.env"));
   });
 
@@ -513,12 +513,12 @@ describe("typed HarnessDock MCP server", () => {
   });
 
   it("loads compatible runtime implementation edits in a fresh worker on every call", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-mcp-hot-load-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hd-mcp-hot-load-"));
     temporaryDirectories.push(directory);
     const runtimeFile = path.join(directory, "runtime.mjs");
     const writeRuntime = (revision) => fs.writeFileSync(runtimeFile, `
 export const HARNESSDOCK_MCP_API_GENERATION = ${HARNESSDOCK_MCP_API_GENERATION};
-export function createClaudeRuntime() {
+export function createAgentRuntime() {
   return { list_agents() { return { revision: ${JSON.stringify(revision)} }; } };
 }
 `);
@@ -542,7 +542,7 @@ export function createClaudeRuntime() {
   });
 
   it("settles a real quiet wait through the isolated Worker lifecycle", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-mcp-wait-worker-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hd-mcp-wait-worker-"));
     temporaryDirectories.push(directory);
     const workspace = path.join(directory, "workspace");
     const claudeConfig = path.join(directory, "claude");
@@ -561,8 +561,8 @@ export function createClaudeRuntime() {
           CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
           CODEX_THREAD_ID: "mcp-isolated-wait-timeout",
           CLAUDE_CONFIG_DIR: claudeConfig,
-          CC_RUNTIME_CHECKOUT: root,
-          CC_RUNTIME_SOURCE_ROOT: root,
+          CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: root,
+          CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: root,
         },
       },
     });
@@ -570,14 +570,14 @@ export function createClaudeRuntime() {
   });
 
   it("rejects a stale MCP generation before invoking the current runtime", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cc-mcp-generation-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hd-mcp-generation-"));
     temporaryDirectories.push(directory);
     const marker = path.join(directory, "called");
     const runtimeFile = path.join(directory, "runtime.mjs");
     fs.writeFileSync(runtimeFile, `
 import fs from "node:fs";
 export const HARNESSDOCK_MCP_API_GENERATION = ${HARNESSDOCK_MCP_API_GENERATION + 1};
-export function createClaudeRuntime() {
+export function createAgentRuntime() {
   fs.writeFileSync(${JSON.stringify(marker)}, "called");
   return { list_agents() { return {}; } };
 }
@@ -595,17 +595,23 @@ export function createClaudeRuntime() {
   });
 
   it("starts through the descriptor bootstrap and preserves stdio framing", async () => {
-    const canonicalManifestFile = "/data/CoordExp/cc-plugin-codex/plugins/codex-harnessdock/.codex-plugin/plugin.json";
+    const canonicalManifestFile = "/data/CoordExp/codex-harnessdock/plugins/codex-harnessdock/.codex-plugin/plugin.json";
     if (!fs.existsSync(canonicalManifestFile)) {
-      // The production checkout is intentionally not cut over by Phase 0
-      // candidate tests. The fixed bootstrap must fail closed rather than
-      // silently loading the old production identity.
+      // A development worktree is never the live checkout, and between the
+      // source rename and the operator relocation the live path does not exist
+      // at all. Either way the fixed bootstrap must fail closed and name what
+      // it could not validate, rather than falling back to another checkout or
+      // to the retired identity. This asserts the constant, not the directory.
       const result = spawnSync(process.execPath, ["--", path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs")], {
         cwd: root,
         encoding: "utf8",
       });
       assert.notEqual(result.status, 0);
-      assert.match(`${result.stderr}\n${result.stdout}`, /Fixed HarnessDock MCP checkout is invalid|Unexpected HarnessDock MCP Plugin identity/i);
+      assert.match(
+        `${result.stderr}\n${result.stdout}`,
+        /Fixed HarnessDock (MCP checkout is invalid|runtime checkout is unavailable)|Unexpected HarnessDock MCP Plugin identity/i,
+      );
+      assert.match(`${result.stderr}\n${result.stdout}`, /\/data\/CoordExp\/codex-harnessdock/);
       return;
     }
     const transport = new StdioClientTransport({
@@ -614,7 +620,7 @@ export function createClaudeRuntime() {
       cwd: root,
       stderr: "pipe",
     });
-    const client = new Client({ name: "cc-mcp-stdio-test", version: "1.0.0" });
+    const client = new Client({ name: "hd-mcp-stdio-test", version: "1.0.0" });
     closers.push(() => client.close());
     await client.connect(transport);
     const listed = await client.listTools();

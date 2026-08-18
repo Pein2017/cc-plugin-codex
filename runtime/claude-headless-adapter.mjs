@@ -40,7 +40,7 @@ export function resolveClaudeBin(options = {}) {
   const platform = options.platform ?? process.platform;
   const homedir = options.homedir ?? os.homedir();
   const existsSync = options.existsSync ?? fs.existsSync;
-  const override = String(env.CC_CLAUDE_BIN ?? "").trim();
+  const override = String(env.CODEX_HARNESSDOCK_CLAUDE_BIN ?? "").trim();
 
   if (override) {
     return override;
@@ -1202,7 +1202,7 @@ export function createSandboxSettings(mode) {
   fs.mkdirSync(sandboxDir, { recursive: true, mode: 0o700 });
   const tmpFile = path.join(
     sandboxDir,
-    `cc-sandbox-${process.pid}-${Date.now().toString(36)}-${randomBytes(6).toString("hex")}.json`
+    `hd-sandbox-${process.pid}-${Date.now().toString(36)}-${randomBytes(6).toString("hex")}.json`
   );
   fs.writeFileSync(tmpFile, JSON.stringify(settings), {
     encoding: "utf8",
@@ -1222,7 +1222,7 @@ export function cleanupSandboxSettings(filePath) {
 // ---------------------------------------------------------------------------
 
 function pruneStaleTempFiles(subdir, options = {}) {
-  const prefix = options.prefix;
+  const prefixes = options.prefixes ?? (options.prefix ? [options.prefix] : null);
   const maxAgeMs = options.maxAgeMs ?? 6 * 60 * 60 * 1000;
   const dir = path.join(resolvePluginRuntimeRoot(), subdir);
   let entries;
@@ -1234,7 +1234,7 @@ function pruneStaleTempFiles(subdir, options = {}) {
   const now = Date.now();
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    if (prefix && !entry.name.startsWith(prefix)) continue;
+    if (prefixes && !prefixes.some((prefix) => entry.name.startsWith(prefix))) continue;
     const full = path.join(dir, entry.name);
     let stat;
     try {
@@ -1256,7 +1256,11 @@ function pruneStaleTempFiles(subdir, options = {}) {
  * start of any flow that creates sandbox settings so they do not accumulate.
  */
 export function pruneStaleSandboxSettings(options = {}) {
-  pruneStaleTempFiles("sandbox", { prefix: "cc-sandbox-", ...options });
+  // Both prefixes are swept because a crash before the rename can have left
+  // files under the retired one. This is orphan cleanup, not a compatibility
+  // reader: nothing parses either prefix, and no new file is ever written
+  // under the retired name.
+  pruneStaleTempFiles("sandbox", { prefixes: ["hd-sandbox-", "cc-sandbox-"], ...options });
 }
 
 // ---------------------------------------------------------------------------

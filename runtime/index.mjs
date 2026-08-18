@@ -41,12 +41,3 @@ export function createAgentRuntime(options = {}) {
     list_harnesses: runtime.listHarnesses.bind(runtime),
   });
 }
-
-/**
- * Bounded current-generation compatibility alias. It is the exact same
- * function, not a second surface: an installed checkout, an isolated MCP call
- * worker, or a Codex task discovered before the neutral name existed keeps
- * calling this one without a public generation bump. New internal callers and
- * the dependent multi-Harness generation use `createAgentRuntime()`.
- */
-export { createAgentRuntime as createClaudeRuntime };

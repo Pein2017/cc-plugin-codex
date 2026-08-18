@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import { resolveCompletionInboxFile } from "../../runtime/completion-inbox.mjs";
-import { createInternalClaudeRuntime } from "../../runtime/internal-runtime.mjs";
+import { createInternalAgentRuntime } from "../../runtime/internal-runtime.mjs";
 import {
   cleanupOldJobs,
   readJobFile,
@@ -20,7 +20,7 @@ const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 let fixture;
 
 before(() => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-root-isolation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-root-isolation-"));
   const codexHome = path.join(root, ".codex");
   const runtimeHome = path.join(root, "runtime-home");
   const claudeConfigDir = path.join(root, ".claude");
@@ -28,7 +28,7 @@ before(() => {
   fs.mkdirSync(claudeConfigDir);
   fs.writeFileSync(path.join(codexHome, ".env"), [
     `CLAUDE_CONFIG_DIR=${claudeConfigDir}`,
-    `CC_RUNTIME_CHECKOUT=${sourceRoot}`,
+    `CODEX_HARNESSDOCK_RUNTIME_CHECKOUT=${sourceRoot}`,
     "",
   ].join("\n"));
   process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = runtimeHome;
@@ -53,7 +53,7 @@ function setup(label) {
     // dir ambiently. Strip them so the fixture's explicit CODEX_THREAD_ID and
     // claudeConfigDir govern isolation the same way inside and outside CC.
     const inheritedEnv = { ...process.env };
-    delete inheritedEnv.CC_TRUSTED_OWNER_ROOT_ID;
+    delete inheritedEnv.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID;
     delete inheritedEnv.CLAUDE_NATIVE_CONFIG_DIR;
     return {
       ...inheritedEnv,
@@ -72,7 +72,7 @@ function setup(label) {
     ownerB,
     runtimeA: createAgentRuntime({ cwd: workspace, env: envFor(ownerA) }),
     runtimeB: createAgentRuntime({ cwd: workspace, env: envFor(ownerB) }),
-    internalA: createInternalClaudeRuntime({ cwd: workspace, env: envFor(ownerA) }),
+    internalA: createInternalAgentRuntime({ cwd: workspace, env: envFor(ownerA) }),
   };
 }
 
@@ -138,7 +138,7 @@ describe("owner-scoped Agent reconciliation", () => {
       task_name: "foreign_terminal",
       selectedModel: "claude-sonnet-5",
     });
-    const jobId = "cc-agent-foreign-terminal";
+    const jobId = "hd-agent-foreign-terminal";
     runtimeB.store.reserveActivation(foreign.agentId, jobId, { initial: true });
     writeJobFile(workspace, jobId, terminalJob({
       workspace,
@@ -152,7 +152,7 @@ describe("owner-scoped Agent reconciliation", () => {
     const before = snapshotFiles(runtimeHome);
     assert.deepEqual(runtimeA.listAgents(), { agents: [] });
     assert.deepEqual(await runtimeA.waitAgent({ timeout_ms: 0 }), {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
     const status = internalA.status();
@@ -182,7 +182,7 @@ describe("owner-scoped Agent reconciliation", () => {
   it("does not reap a stale job through list but lets the owning wait path reap it", async () => {
     const { workspace, ownerB, runtimeA, runtimeB } = setup("stale");
     const old = "2026-07-25T00:00:00.000Z";
-    const jobId = "cc-agent-foreign-stale";
+    const jobId = "hd-agent-foreign-stale";
     writeJobFile(workspace, jobId, {
       id: jobId,
       workspaceRoot: workspace,
@@ -216,12 +216,12 @@ describe("owner-scoped Agent reconciliation", () => {
       task_name: "local_legacy",
       selectedModel: "claude-sonnet-5",
     });
-    runtimeA.store.reserveActivation(local.agentId, "cc-agent-local-legacy", { initial: true });
+    runtimeA.store.reserveActivation(local.agentId, "hd-agent-local-legacy", { initial: true });
     const localJob = terminalJob({
       workspace,
       ownerRootId: undefined,
       agentId: local.agentId,
-      id: "cc-agent-local-legacy",
+      id: "hd-agent-local-legacy",
       sessionId: "local-claude-session",
       overrides: { sessionId: ownerA },
     });
@@ -232,7 +232,7 @@ describe("owner-scoped Agent reconciliation", () => {
       workspace,
       ownerRootId: undefined,
       agentId: "foreign-agent",
-      id: "cc-agent-foreign-legacy",
+      id: "hd-agent-foreign-legacy",
       sessionId: "foreign-claude-session",
       overrides: { sessionId: ownerB },
     });
@@ -243,7 +243,7 @@ describe("owner-scoped Agent reconciliation", () => {
       workspace,
       ownerRootId: ownerB,
       agentId: "foreign-explicit-agent",
-      id: "cc-agent-explicit-foreign",
+      id: "hd-agent-explicit-foreign",
       sessionId: "explicit-foreign-claude-session",
       overrides: { sessionId: ownerA },
     });
@@ -269,8 +269,8 @@ describe("owner-scoped Agent reconciliation", () => {
     const { workspace, ownerA, ownerB } = setup("global-cleanup");
     const old = "2026-07-25T00:00:00.000Z";
     for (const [jobId, ownerRootId] of [
-      ["cc-agent-global-a", ownerA],
-      ["cc-agent-global-b", ownerB],
+      ["hd-agent-global-a", ownerA],
+      ["hd-agent-global-b", ownerB],
     ]) {
       writeJobFile(workspace, jobId, {
         id: jobId,
@@ -284,8 +284,8 @@ describe("owner-scoped Agent reconciliation", () => {
 
     cleanupOldJobs(workspace);
 
-    assert.equal(readJobFile(workspace, "cc-agent-global-a")?.status, "failed");
-    assert.equal(readJobFile(workspace, "cc-agent-global-b")?.status, "failed");
+    assert.equal(readJobFile(workspace, "hd-agent-global-a")?.status, "failed");
+    assert.equal(readJobFile(workspace, "hd-agent-global-b")?.status, "failed");
     assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerA)), true);
     assert.equal(fs.existsSync(resolveCompletionInboxFile(workspace, ownerB)), true);
   });

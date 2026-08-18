@@ -24,7 +24,7 @@ const sourceRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)
 let fixture;
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-reconcile-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-reconcile-"));
   const workspace = path.join(root, "workspace");
   const codexHome = path.join(root, ".codex");
   const runtimeHome = path.join(root, "runtime-home");
@@ -34,7 +34,7 @@ function setup() {
   fs.mkdirSync(claudeConfigDir);
   fs.writeFileSync(path.join(codexHome, ".env"), [
     `CLAUDE_CONFIG_DIR=${claudeConfigDir}`,
-    `CC_RUNTIME_CHECKOUT=${sourceRoot}`,
+    `CODEX_HARNESSDOCK_RUNTIME_CHECKOUT=${sourceRoot}`,
     "",
   ].join("\n"));
   const env = {
@@ -152,7 +152,7 @@ describe("Agent reconciliation retention and activation recovery", () => {
     );
     assert.equal(finalAcknowledgement.compactedCount, 1);
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
   });

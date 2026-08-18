@@ -48,10 +48,10 @@ function policy(input) {
 
 describe("bounded native Claude team policy", () => {
   it("admits exact Opus and Fable native-team leads with a stable opaque cohort", () => {
-    assert.equal(NATIVE_TEAM_POLICY_REVISION, "cc-native-team-v1");
+    assert.equal(NATIVE_TEAM_POLICY_REVISION, "hd-native-team-v1");
     assert.equal(
       deriveNativeCohortLabel("job-native-policy-1"),
-      "cc-native-team-cfa2d72637b6c12d",
+      "hd-native-team-cfa2d72637b6c12d",
     );
     assert.equal(
       deriveNativeCohortLabel("job-native-policy-1"),
@@ -66,7 +66,7 @@ describe("bounded native Claude team policy", () => {
     for (const model of ["claude-opus-5", "claude-fable-5"]) {
       const resolved = policy({ model });
       assert.equal(resolved.role, "native_team_lead");
-      assert.equal(resolved.cohortLabel, "cc-native-team-cfa2d72637b6c12d");
+      assert.equal(resolved.cohortLabel, "hd-native-team-cfa2d72637b6c12d");
       assert.deepEqual(resolved.limits, {
         maxSpawnDepth: 1,
         maxConcurrentTeammates: 3,

@@ -16,7 +16,7 @@ import {
 } from "./claude-native-team-policy.mjs";
 import { getConfig, mutateConfig, nowIso } from "./job-store.mjs";
 
-export const CLAUDE_CLI_SURFACE_REVISION = "cc-agent-v2";
+export const CLAUDE_CLI_SURFACE_REVISION = "hd-agent-v2";
 export const REQUIRED_CLAUDE_OPTIONS = Object.freeze([
   "-p",
   "--output-format",
@@ -836,5 +836,5 @@ export function formatClaudeCompatibilityError(receipt) {
     ? ` Missing: ${receipt.missingSurface.join(", ")}.`
     : "";
   const failure = receipt?.failureCode ? ` Failure: ${receipt.failureCode}.` : "";
-  return `Claude Code ${version} is incompatible with CC runtime surface ${CLAUDE_CLI_SURFACE_REVISION}.${missing}${failure}`;
+  return `Claude Code ${version} is incompatible with HarnessDock runtime surface ${CLAUDE_CLI_SURFACE_REVISION}.${missing}${failure}`;
 }

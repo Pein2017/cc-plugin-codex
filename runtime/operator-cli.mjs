@@ -5,7 +5,7 @@ import process from "node:process";
 
 import { createAgentStore } from "./agent-store.mjs";
 import { parseArgs } from "./args.mjs";
-import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
+import { createInternalAgentRuntime } from "./internal-runtime.mjs";
 import {
   appendDisposition,
   buildUsageReport,
@@ -47,7 +47,7 @@ function listAgents(argv) {
   if (!options.all || positionals.length > 0) {
     throw new Error("Operator list-agents requires explicit --all and accepts no target.");
   }
-  const runtime = createInternalClaudeRuntime({
+  const runtime = createInternalAgentRuntime({
     cwd: options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd(),
     envFile: options["env-file"] ?? null,
     env: process.env,
@@ -80,7 +80,7 @@ async function listHarnesses(argv) {
   if (!options.all || positionals.length > 0) {
     throw new Error("Operator list-harnesses requires explicit --all and accepts no target.");
   }
-  const runtime = createInternalClaudeRuntime({
+  const runtime = createInternalAgentRuntime({
     cwd: options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd(),
     envFile: options["env-file"] ?? null,
     env: process.env,

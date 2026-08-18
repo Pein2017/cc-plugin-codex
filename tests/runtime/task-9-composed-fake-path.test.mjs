@@ -58,7 +58,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()();
 });
 
-const RUNTIME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "cc-composed-home-"));
+const RUNTIME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "hd-composed-home-"));
 process.on("exit", () => fs.rmSync(RUNTIME_HOME, { recursive: true, force: true }));
 
 const OWNER_ROOT_ID = "composed-root";
@@ -115,7 +115,7 @@ async function startReadyFake(scenario = {}) {
 }
 
 function setup(serverUrl) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-composed-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-composed-"));
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace);
   const envFile = path.join(root, "runtime.env");
@@ -126,7 +126,7 @@ function setup(serverUrl) {
     envFile,
     env: {
       CODEX_THREAD_ID: OWNER_ROOT_ID,
-      CC_TRUSTED_OWNER_ROOT_ID: OWNER_ROOT_ID,
+      CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: OWNER_ROOT_ID,
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
     },
   });

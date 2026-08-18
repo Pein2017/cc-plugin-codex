@@ -14,7 +14,7 @@ import {
   REQUIRED_CLAUDE_OPTIONS,
   REQUIRED_CLAUDE_VALUES,
 } from "../../runtime/claude-version-compatibility.mjs";
-import { createInternalClaudeRuntime } from "../../runtime/internal-runtime.mjs";
+import { createInternalAgentRuntime } from "../../runtime/internal-runtime.mjs";
 import {
   classifyJobRecoverability,
   getConfig,
@@ -382,10 +382,10 @@ describe("Claude Code version compatibility", () => {
     writeFakeClaude(executable, launchMarker, "prepared");
     fs.writeFileSync(envFile, [
       `CLAUDE_CONFIG_DIR=${claudeConfigDir}`,
-      `CC_CLAUDE_BIN=${executable}`,
+      `CODEX_HARNESSDOCK_CLAUDE_BIN=${executable}`,
       "",
     ].join("\n"));
-    const runtime = createInternalClaudeRuntime({
+    const runtime = createInternalAgentRuntime({
       cwd: workspace,
       envFile,
       env: {

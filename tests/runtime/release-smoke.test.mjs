@@ -320,7 +320,7 @@ describe("release smoke", () => {
             update: {
               kind: "completion",
               summary: "Agent turn completed.",
-              completion_message: "CC_RELEASE_SMOKE_OK",
+              completion_message: "HARNESSDOCK_RELEASE_SMOKE_OK",
               delivery_token: "delivery-fake",
             },
           },
@@ -507,7 +507,7 @@ describe("release smoke", () => {
 
   it("rejects a symlinked native-memory ancestor before a fake turn can start", async () => {
     let attempts = 0;
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cc-native-team-outside-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "hd-native-team-outside-"));
     temporaryDirectories.push(outside);
     fs.mkdirSync(path.join(outside, "agent-memory-local", "haiku-scout"), { recursive: true });
     fs.mkdirSync(path.join(outside, "agent-memory-local", "sonnet"), { recursive: true });
@@ -582,7 +582,7 @@ describe("release smoke", () => {
   });
 
   it("detects a pre-dirty source content mutation even when Git status text is unchanged", async () => {
-    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-native-team-source-"));
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hd-native-team-source-"));
     temporaryDirectories.push(sourceRoot);
     assert.equal(spawnSync("git", ["-C", sourceRoot, "init", "--quiet"]).status, 0);
     fs.writeFileSync(path.join(sourceRoot, "pre-dirty.txt"), "before", "utf8");

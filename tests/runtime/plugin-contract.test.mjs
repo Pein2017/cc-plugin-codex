@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
-import { createClaudeRuntime } from "../../runtime/index.mjs";
+import { createAgentRuntime } from "../../runtime/index.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const releaseMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -94,14 +94,14 @@ describe("native plugin contract", () => {
   });
 
   it("exposes only the canonical Agent lifecycle operations from the public index", () => {
-    const runtime = createClaudeRuntime({
+    const runtime = createAgentRuntime({
       cwd: root,
       env: {
         ...process.env,
         CODEX_THREAD_ID: "plugin-contract-root",
-        CC_TRUSTED_OWNER_ROOT_ID: "plugin-contract-root",
+        CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "plugin-contract-root",
         CODEX_HARNESSDOCK_RUNTIME_HOME: path.join(root, ".test-runtime-contract"),
-        CC_RUNTIME_ENV_FILE: path.join(root, "config", "runtime.env"),
+        CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: path.join(root, "config", "runtime.env"),
       },
     });
     assert.deepEqual(Object.keys(runtime).sort(), canonicalOperations);
@@ -167,8 +167,8 @@ describe("native plugin contract", () => {
     assert.deepEqual(config.mcpServers.codex_harnessdock, {
       type: "stdio",
       command: "node",
-      args: ["--", "/data/CoordExp/cc-plugin-codex/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs"],
-      cwd: "/data/CoordExp/cc-plugin-codex",
+      args: ["--", "/data/CoordExp/codex-harnessdock/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs"],
+      cwd: "/data/CoordExp/codex-harnessdock",
       required: true,
       supports_parallel_tool_calls: true,
       startup_timeout_sec: 30,
@@ -177,7 +177,7 @@ describe("native plugin contract", () => {
     });
 
     const bootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs"), "utf8");
-    assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/cc-plugin-codex"/);
+    assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/codex-harnessdock"/);
     assert.match(bootstrap, /runtime["',\s]+"mcp-server\.mjs"/);
     assert.match(bootstrap, /stdio: "inherit"/);
     assert.doesNotMatch(bootstrap, /plugins\/cache|sendbird\/cc-plugin-codex/);
@@ -200,11 +200,11 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "codex-harnessdock", "bootstrap", "harnessdock-runtime.mjs"),
       "utf8",
     );
-    assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/cc-plugin-codex"/);
+    assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/codex-harnessdock"/);
     assert.doesNotMatch(bootstrap, /function (?:findAncestorEnv|selectEnvFile|bootstrapContext)/);
-    assert.match(bootstrap, /CC_RUNTIME_CHECKOUT: checkout/);
-    assert.match(bootstrap, /CC_RUNTIME_ENV_FILE: envFile/);
-    assert.match(bootstrap, /CC_RUNTIME_SOURCE_ROOT: checkout/);
+    assert.match(bootstrap, /CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: checkout/);
+    assert.match(bootstrap, /CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile/);
+    assert.match(bootstrap, /CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: checkout/);
 
     const env = fs.readFileSync(path.join(root, "config", "runtime.env"), "utf8");
     assert.match(env, /^CLAUDE_NATIVE_CONFIG_DIR=\/data\/CoordExp\/\.claude$/m);

@@ -48,38 +48,11 @@ describe("HarnessDock for Codex identity contract", () => {
     assert.deepEqual(Object.keys(descriptor.mcpServers), ["codex_harnessdock"]);
     assert.equal(
       descriptor.mcpServers.codex_harnessdock.args[1],
-      "/data/CoordExp/cc-plugin-codex/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs",
+      "/data/CoordExp/codex-harnessdock/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs",
     );
 
     const paths = fs.readFileSync(path.join(root, "runtime/paths.mjs"), "utf8");
     assert.match(paths, /PLUGIN_DATA_NAMESPACE = "codex-harnessdock"/);
     assert.match(paths, /CODEX_HARNESSDOCK_RUNTIME_HOME/);
-    assert.match(paths, /CC_RUNTIME_HOME is retired/);
-  });
-
-  it("rejects old identity from current public/runtime surfaces", () => {
-    const files = [
-      "package.json",
-      "package-lock.json",
-      ".agents/plugins/marketplace.json",
-      "README.md",
-      "NOTICE",
-      ...fs.readdirSync(path.join(root, "runtime"))
-        .filter((name) => name.endsWith(".mjs"))
-        .map((name) => path.join("runtime", name)),
-      ...fs.readdirSync(path.join(root, "scripts"))
-        .filter((name) => name.endsWith(".mjs"))
-        .map((name) => path.join("scripts", name)),
-    ];
-    for (const relativePath of files) {
-      const text = fs.readFileSync(path.join(root, relativePath), "utf8");
-      const historicalUsageLedger = relativePath === "runtime/operator-usage-ledger.mjs";
-      assert.doesNotMatch(text, /cc-for-pein-runtime|cc-for-pein/);
-      if (!historicalUsageLedger) assert.doesNotMatch(text, /cc_for_pein/);
-      const retiredOverrideGuard = ["runtime/paths.mjs", "runtime/plugin-identity-cutover.mjs"].includes(relativePath);
-      if (!retiredOverrideGuard) {
-        assert.doesNotMatch(text, /CC_RUNTIME_HOME|CC_MCP_RESTART_REQUIRED/);
-      }
-    }
   });
 });

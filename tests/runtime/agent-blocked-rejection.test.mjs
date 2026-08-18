@@ -7,7 +7,7 @@ import { after, afterEach, describe, it } from "node:test";
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 
 const roots = [];
-const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-blocked-rejection-home-"));
+const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-blocked-rejection-home-"));
 
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 afterEach(() => {
@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-blocked-rejection-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-blocked-rejection-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, "claude");
   const envFile = path.join(root, "runtime.env");

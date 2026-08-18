@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+- **BREAKING (operator-facing).** Complete the identifier half of the
+  HarnessDock rename as one flag day with no aliases and no fallbacks. Every
+  `CC_*` environment variable becomes `CODEX_HARNESSDOCK_*` (the prefix the
+  runtime-home variable already used); non-environment identifiers -- receipt
+  codes, prompt sentinels, and internal constants -- take the established
+  `HARNESSDOCK_*` form. The retired names stop working rather than degrading:
+  `CC_RUNTIME_HOME` in particular still fails closed, because ignoring a stale
+  runtime-home export would silently resolve the operator's real data
+  namespace.
+- Remove the `createClaudeRuntime()` compatibility alias. `createAgentRuntime()`
+  is the only public factory, and the isolated MCP call worker no longer falls
+  back to the Claude-named export. Internally `createInternalClaudeRuntime()`
+  becomes `createInternalAgentRuntime()` and class `ClaudeRuntime` becomes
+  `InternalAgentRuntime`. Genuinely Claude-specific modules and symbols keep
+  their Claude names: renaming the Claude Driver would be false neutrality.
+- Retire the "CC Agent" wording. Operator- and model-facing text now says
+  "HarnessDock Agent" where the sentence means the neutral two-Harness surface
+  and "Claude Agent" where it is genuinely Claude-specific, such as native Auto
+  Memory.
+- **BREAKING (durable vocabulary).** New job identifiers use the `hd-agent-`
+  prefix and no reader accepts the retired one, because the authorized state
+  reset leaves no pre-rename record to read. The usage report drops the
+  `cc_for_pein` admission and its cutover-timestamp branching entirely: a
+  retired-identity event is now excluded from usage at any timestamp and
+  counted only as `diagnostics.retired_identity_events`, while its call ID is
+  still reserved so the same call cannot reappear as current usage. The report
+  version becomes 2.
+- Point the promotion constants, installed bootstraps, MCP descriptor, and
+  documentation at `/data/CoordExp/codex-harnessdock` (live, `main`) and
+  `/data/CoordExp/codex-harnessdock-dev` (development, `developer`). Until the
+  operator relocation runs, the live path does not exist yet and the fixed
+  bootstraps fail closed naming it -- which is the designed behavior, not a
+  regression.
+- Add a repo-wide guard test proving the retired variable prefix, wording,
+  plugin slug, server name, job prefix, and checkout path are absent from the
+  tracked tree. Its allowlist is per-file *and* per-token, so a module allowed
+  to keep a retired-name refusal still fails if it grows a retired variable,
+  and it names the offending file and line.
+
 ## 0.19.0 - 2026-08-18
 
 - Activate the eight-operation multi-Harness public generation (MCP API

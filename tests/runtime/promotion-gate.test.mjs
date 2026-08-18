@@ -92,7 +92,7 @@ describe("runtime promotion gate", () => {
     fs.writeFileSync(live, JSON.stringify({ pid: process.pid }));
     await assert.rejects(
       acquirePromotionGate({ gateDirectory, timeoutMs: 30, pollMs: 5 }),
-      (error) => error?.code === "CC_PROMOTION_LOADERS_ACTIVE",
+      (error) => error?.code === "HARNESSDOCK_PROMOTION_LOADERS_ACTIVE",
     );
     assert.equal(fs.existsSync(live), true);
   });

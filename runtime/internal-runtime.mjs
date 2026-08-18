@@ -394,7 +394,7 @@ function sleep(ms) {
 }
 
 function waitAbortError() {
-  const error = new Error("CC Agent wait observation was cancelled by the caller.");
+  const error = new Error("HarnessDock Agent wait observation was cancelled by the caller.");
   error.name = "AbortError";
   return error;
 }
@@ -555,7 +555,7 @@ function publicHarnessInstance(inspection) {
   });
 }
 
-class ClaudeRuntime {
+class InternalAgentRuntime {
   constructor(options = {}) {
     const inheritedEnv = options.env ?? process.env;
     const inheritedOwnerRootId = String(
@@ -570,17 +570,17 @@ class ClaudeRuntime {
     this.env = environment.env;
     configureRuntimePaths(this.env);
     this.environmentReceipt = environment.receipt;
-    const configuredCheckout = String(this.env.CC_RUNTIME_CHECKOUT ?? "").trim();
+    const configuredCheckout = String(this.env.CODEX_HARNESSDOCK_RUNTIME_CHECKOUT ?? "").trim();
     if (configuredCheckout) {
       const expectedSourceRoot = fs.realpathSync.native(path.resolve(configuredCheckout));
       if (!samePath(expectedSourceRoot, SOURCE_ROOT)) {
         throw new Error(
-          `Refusing runtime source ${SOURCE_ROOT}; CC_RUNTIME_CHECKOUT requires ${expectedSourceRoot}.`
+          `Refusing runtime source ${SOURCE_ROOT}; CODEX_HARNESSDOCK_RUNTIME_CHECKOUT requires ${expectedSourceRoot}.`
         );
       }
     }
     this.sourceRoot = SOURCE_ROOT;
-    this.env.CC_RUNTIME_SOURCE_ROOT = this.sourceRoot;
+    this.env.CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT = this.sourceRoot;
     // Kept internal to this runtime constructor so local tests can freeze
     // launch races without starting a real Claude worker. The public Agent API
     // never accepts or exposes these dependencies.
@@ -892,7 +892,7 @@ class ClaudeRuntime {
     // scope-bound receipt here so the small reservation-to-job window contains
     // only local durable writes and worker launch.
     const readiness = this.assertPreparedReadiness(options.readinessReceipt, driver);
-    const jobId = String(options.jobId ?? "").trim() || generateJobId("cc");
+    const jobId = String(options.jobId ?? "").trim() || generateJobId("hd-agent");
     if (!/^[\w.-]+$/.test(jobId)) throw new Error(`Invalid internal Claude job id: ${jobId}.`);
     const title = options.title ?? "Claude Code Task";
     const candidateAgentId = String(options.agentId ?? "").trim() || null;
@@ -1789,14 +1789,14 @@ class ClaudeRuntime {
       acknowledgement,
       waitTimedOut,
       message: waitTimedOut
-        ? "Timed out waiting for CC Agent activity."
+        ? "Timed out waiting for HarnessDock Agent activity."
         : update?.kind === "progress"
-          ? "CC Agent progress is available."
-          : "CC Agent completion is available.",
+          ? "HarnessDock Agent progress is available."
+          : "HarnessDock Agent completion is available.",
     };
   }
 }
 
-export function createInternalClaudeRuntime(options = {}) {
-  return new ClaudeRuntime(options);
+export function createInternalAgentRuntime(options = {}) {
+  return new InternalAgentRuntime(options);
 }

@@ -7,7 +7,7 @@ import process from "node:process";
 import { parseArgs, splitRawArgumentString } from "./args.mjs";
 import { readStdinIfPiped } from "./input.mjs";
 import { createAgentRuntime } from "./index.mjs";
-import { createInternalClaudeRuntime } from "./internal-runtime.mjs";
+import { createInternalAgentRuntime } from "./internal-runtime.mjs";
 
 const PUBLIC_COMMANDS = new Set([
   "spawn_agent",
@@ -228,7 +228,7 @@ async function worker(argv) {
   if (!options["job-id"]) throw new Error("worker requires --job-id.");
   // A version-three handoff states its Agent and attempt; a legacy handoff
   // states neither and reads its whole turn from the stored job record.
-  await createInternalClaudeRuntime(runtimeOptions(options)).runWorker(options["job-id"], {
+  await createInternalAgentRuntime(runtimeOptions(options)).runWorker(options["job-id"], {
     agentId: options["agent-id"],
     attemptId: options["attempt-id"],
     effort: options["reasoning-effort"],
@@ -249,7 +249,7 @@ async function main() {
     case "worker": await worker(argv); break;
     case "readiness": {
       const { options } = parse(argv);
-      output(createInternalClaudeRuntime(runtimeOptions(options)).readiness(), options.json);
+      output(createInternalAgentRuntime(runtimeOptions(options)).readiness(), options.json);
       break;
     }
     case undefined:

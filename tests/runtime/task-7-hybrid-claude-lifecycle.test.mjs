@@ -63,7 +63,7 @@ function setup() {
     envFile,
     env: {
       CODEX_THREAD_ID: "hybrid-root",
-      CC_TRUSTED_OWNER_ROOT_ID: "hybrid-root",
+      CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "hybrid-root",
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
@@ -178,6 +178,10 @@ describe("Task 7 hybrid — a new Claude spawn writes a version-three Agent", ()
     const agent = runtime.versionThreeStore().resolveTarget(receipt.agent_name);
 
     assert.equal(harnessExecutionLifecycle(agent.route.harnessId), "version_one_supervisor");
+    // Durable vocabulary: identifiers minted after the physical rename carry the
+    // HarnessDock prefix. No reader accepts the retired one, because the state
+    // reset leaves no pre-rename record to read.
+    assert.match(agent.activeJobId, /^hd-agent-/);
     const job = readJobFile(workspace, agent.activeJobId);
     assert.equal(job?.id, agent.activeJobId);
     assert.equal(job.agentId, agent.agentId);

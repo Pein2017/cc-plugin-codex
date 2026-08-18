@@ -12,7 +12,7 @@ export const DEFAULT_RECOVERY_INTERVAL_MS = 10_000;
 export const DEFAULT_FALLBACK_INTERVAL_MS = 5_000;
 
 function abortError() {
-  const error = new Error("CC Agent wait observation was cancelled by the caller.");
+  const error = new Error("HarnessDock Agent wait observation was cancelled by the caller.");
   error.name = "AbortError";
   return error;
 }

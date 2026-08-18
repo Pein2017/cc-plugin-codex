@@ -230,10 +230,10 @@ export function resolveCodexMcpContext(meta, signal = null) {
     env: {
       ...process.env,
       CODEX_THREAD_ID: threadId,
-      CC_TRUSTED_OWNER_ROOT_ID: threadId,
-      CC_RUNTIME_CHECKOUT: SOURCE_ROOT,
-      CC_RUNTIME_SOURCE_ROOT: SOURCE_ROOT,
-      CC_RUNTIME_ENV_FILE: FIXED_ENV_FILE,
+      CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: threadId,
+      CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: SOURCE_ROOT,
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: SOURCE_ROOT,
+      CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: FIXED_ENV_FILE,
     },
   };
 }
@@ -337,7 +337,7 @@ export function invokeIsolatedRuntimeOperation(options) {
  * mistake -- passing a bare factory function where an options object belongs --
  * sent a test turn to an operator's live Server.
  */
-const CC_MCP_SERVER_OPTIONS = Object.freeze(["runtimeFactory", "runtimeInvoker"]);
+const HARNESSDOCK_MCP_SERVER_OPTIONS = Object.freeze(["runtimeFactory", "runtimeInvoker"]);
 
 /**
  * @param {{runtimeFactory?: (context: any) => any, runtimeInvoker?: (input: any) => Promise<any>}} [options]
@@ -346,18 +346,18 @@ export function createCcMcpServer(options = {}) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
     throw new Error(
       "createCcMcpServer takes an options object; it accepts " +
-      `${CC_MCP_SERVER_OPTIONS.join(" and ")}. A bare function is not a runtime factory.`
+      `${HARNESSDOCK_MCP_SERVER_OPTIONS.join(" and ")}. A bare function is not a runtime factory.`
     );
   }
   for (const key of Object.keys(options)) {
-    if (!CC_MCP_SERVER_OPTIONS.includes(key)) {
+    if (!HARNESSDOCK_MCP_SERVER_OPTIONS.includes(key)) {
       throw new Error(
         `createCcMcpServer does not accept ${JSON.stringify(key)}; it accepts ` +
-        `${CC_MCP_SERVER_OPTIONS.join(" and ")}.`
+        `${HARNESSDOCK_MCP_SERVER_OPTIONS.join(" and ")}.`
       );
     }
   }
-  for (const key of CC_MCP_SERVER_OPTIONS) {
+  for (const key of HARNESSDOCK_MCP_SERVER_OPTIONS) {
     const seam = /** @type {Record<string, unknown>} */ (options)[key];
     if (seam != null && typeof seam !== "function") {
       throw new Error(`createCcMcpServer ${key} must be a function when stated.`);

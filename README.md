@@ -34,7 +34,7 @@ logical history after its worker exits.
 The runtime has no source or runtime dependency on Sendbird, upstream
 installers, Codex forwarding hooks, or a versioned plugin Cache. Codex caches a
 minimal descriptor/bootstrap for discovery, but that bootstrap fails closed
-unless it delegates to the fixed `/data/CoordExp/cc-plugin-codex` checkout.
+unless it delegates to the fixed `/data/CoordExp/codex-harnessdock` checkout.
 Executable runtime source never comes from a development worktree or selectable
 environment variable. `/data/CoordExp/external/cc-plugin-codex` is a read-only
 reference and is never a runtime, install, Git-object, remote, merge, or
@@ -150,7 +150,7 @@ bounded Codex-lead role envelope and denies Claude Code's native `Agent` and
 `Workflow` tools. Only exact `claude-opus-5` or `claude-fable-5` with
 `topology: "native_orchestrator"` may act as an experimental Native Agent Team
 lead; the OpenCode Explorer admits `leaf` only. The public registry stays flat: only
-the durable parent is a CC Agent. Initialization definition/tool names are
+the durable parent is a HarnessDock Agent. Initialization definition/tool names are
 necessary, but transport is live-validated only after a named member launches
 asynchronously and a correlated `SendMessage` to that launched member name
 succeeds. A synchronous Agent result, an uncorrelated message, or a failed
@@ -368,7 +368,7 @@ plugins, and prompts to the native Claude configuration unless the caller
 explicitly supplies an override. Model-facing spawn guidance always passes the
 intent explicitly; follow-up omission inherits the Agent's latest activation.
 
-Every CC Agent has Claude Code native Auto Memory enabled through the fixed
+Every Claude Agent has Claude Code native Auto Memory enabled through the fixed
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` environment value. This is Claude's
 force-enable spelling despite the inverse variable name; it is not a
 `CLAUDE.md` substitute. The Plugin does not provide `autoMemoryDirectory` or
@@ -390,7 +390,7 @@ the plugin does not change the parent Codex permission policy.
 ## Claude Code updates and compatibility
 
 Claude Code remains an independently updated host dependency. The fixed
-`CC_CLAUDE_BIN` in `config/runtime.env` selects the user's normal installed
+`CODEX_HARNESSDOCK_CLAUDE_BIN` in `config/runtime.env` selects the user's normal installed
 Claude entrypoint; an update may replace its target in place without changing
 that path. Updating Claude Code does not require reinstalling this Plugin.
 Already-running Claude processes keep their launch-time version, while a later
@@ -603,10 +603,10 @@ distinct.
 ## Environment
 
 The installed MCP bootstrap and the operator Agent-listing path load exactly
-`/data/CoordExp/cc-plugin-codex/config/runtime.env`. The operator usage report
+`/data/CoordExp/codex-harnessdock/config/runtime.env`. The operator usage report
 and disposition recorder need only `CODEX_HOME` and do not initialize Claude.
 `--env-file`,
-`CC_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, and workspace `.codex/.env` are not
+`CODEX_HARNESSDOCK_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, and workspace `.codex/.env` are not
 environment selectors for `cc:*`. The public CLI rejects `--env-file` rather
 than pretending to honor it.
 
@@ -672,12 +672,12 @@ Development uses two fixed tracks:
 
 | Role | Path | Branch |
 | --- | --- | --- |
-| Live runtime | `/data/CoordExp/cc-plugin-codex` | `main` |
-| Implementation and verification | `/data/CoordExp/cc-plugin-codex-dev` | `developer` |
+| Live runtime | `/data/CoordExp/codex-harnessdock` | `main` |
+| Implementation and verification | `/data/CoordExp/codex-harnessdock-dev` | `developer` |
 
 Make and verify changes only in the development checkout. Once its changes are
 committed and both worktrees are clean, run `npm run promote:local` from
-`/data/CoordExp/cc-plugin-codex-dev`. Promotion runs the full repository check
+`/data/CoordExp/codex-harnessdock-dev`. Promotion runs the full repository check
 and fast-forwards `main` to the exact tested `developer` commit. It never
 commits, pushes, installs the Plugin, or restarts Codex, and it fails rather
 than merging divergent histories.
@@ -712,7 +712,7 @@ server metadata reads it directly, while cachebuster refresh derives the Plugin
 manifest base and appends exactly one `+codex.<timestamp>` suffix. Do not update
 the MCP or manifest base independently. If either installed bootstrap cannot
 resolve the MCP SDK or Zod from the checkout, it reports a concise instruction
-to run `npm install` in `/data/CoordExp/cc-plugin-codex` instead of relying on a
+to run `npm install` in `/data/CoordExp/codex-harnessdock` instead of relying on a
 generic Node module-loader stack.
 
 The repository-local marketplace is `.agents/plugins/marketplace.json`; its
@@ -745,7 +745,7 @@ two predecessors. A known predecessor missing from both Cache and archive stops 
 install before Codex runs; a first install records that no distinct predecessor exists.
 The archive and restored shells use an exact file whitelist and contain no runtime
 source. Every descriptor/bootstrap delegates lifecycle execution to
-`/data/CoordExp/cc-plugin-codex`; never hand-edit either the archive or Plugin Cache.
+`/data/CoordExp/codex-harnessdock`; never hand-edit either the archive or Plugin Cache.
 
 An already-running Codex task should keep using the exact versioned Skill path it
 resolved. If that path is unexpectedly missing, reading the latest Skill is an
@@ -756,7 +756,7 @@ predecessors are outside this bounded compatibility promise.
 
 Verify the installed snapshot has exactly the eight Experimental skills and
 one `codex_harnessdock` MCP server whose descriptor-only bootstrap delegates only to
-`/data/CoordExp/cc-plugin-codex`.
+`/data/CoordExp/codex-harnessdock`.
 
 ## Activation runbook
 

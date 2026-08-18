@@ -7,7 +7,7 @@ import { after, describe, it } from "node:test";
 import { inspect } from "node:util";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
-import { createInternalClaudeRuntime } from "../../runtime/internal-runtime.mjs";
+import { createInternalAgentRuntime } from "../../runtime/internal-runtime.mjs";
 import { readJobFile } from "../../runtime/job-store.mjs";
 
 import {
@@ -276,8 +276,8 @@ describe("Harness Driver contract", () => {
     assert.equal(requests[0].claudeOptions.resumeSessionId, undefined);
     assert.equal(requests[1].claudeOptions.resumeSessionId, "parent-session");
     assert.notEqual(
-      requests[0].claudeOptions.appendSystemPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
-      requests[1].claudeOptions.appendSystemPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
+      requests[0].claudeOptions.appendSystemPrompt.match(/hd-native-team-[a-f0-9]+/)[0],
+      requests[1].claudeOptions.appendSystemPrompt.match(/hd-native-team-[a-f0-9]+/)[0],
     );
   });
 
@@ -305,14 +305,14 @@ describe("Harness Driver contract", () => {
       /spawn_agent does not accept harness_id/,
     );
     assert.doesNotThrow(() => assertNoHarnessImplementationSelector({ model: "opus" }, "spawn_agent"));
-    for (const key of ["CC_HARNESS_ID", "CC_HARNESS_DRIVER_MODULE", "CC_HARNESS_CAPABILITIES"]) {
+    for (const key of ["CODEX_HARNESSDOCK_HARNESS_ID", "CODEX_HARNESSDOCK_HARNESS_DRIVER_MODULE", "CODEX_HARNESSDOCK_HARNESS_CAPABILITIES"]) {
       assert.throws(
         () => assertNoAmbientHarnessSelector({ [key]: "x" }),
         new RegExp(`${key} cannot select a Harness Driver implementation`),
       );
       assert.throws(() => resolveHarnessDriver("claude-code", { env: { [key]: "x" } }));
     }
-    assert.doesNotThrow(() => assertNoAmbientHarnessSelector({ CC_CLAUDE_BIN: "/usr/bin/claude" }));
+    assert.doesNotThrow(() => assertNoAmbientHarnessSelector({ CODEX_HARNESSDOCK_CLAUDE_BIN: "/usr/bin/claude" }));
   });
 
   it("validates a Driver module before it can own a turn", () => {
@@ -508,13 +508,13 @@ describe("Harness Driver contract", () => {
     const claudeConfigDir = path.join(root, "claude");
     fs.mkdirSync(workspace);
     fs.mkdirSync(claudeConfigDir);
-    const runtime = createInternalClaudeRuntime({
+    const runtime = createInternalAgentRuntime({
       cwd: workspace,
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-generic-turn",
         CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-        CC_RUNTIME_CHECKOUT: "",
+        CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });
@@ -644,14 +644,14 @@ describe("Harness Driver contract", () => {
     const claudeConfigDir = path.join(root, "claude");
     fs.mkdirSync(workspace);
     fs.mkdirSync(claudeConfigDir);
-    const runtime = createInternalClaudeRuntime({
+    const runtime = createInternalAgentRuntime({
       cwd: workspace,
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-job-driver",
         CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-        CC_RUNTIME_CHECKOUT: "",
-        CC_RUNTIME_SOURCE_ROOT: "",
+        CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+        CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });
@@ -738,7 +738,7 @@ describe("Harness Driver contract", () => {
       env: {
         CODEX_THREAD_ID: "root-harness-agent-driver",
         CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-        CC_RUNTIME_CHECKOUT: "",
+        CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });
@@ -785,13 +785,13 @@ describe("Harness Driver contract", () => {
     const claudeConfigDir = path.join(root, "claude");
     fs.mkdirSync(workspace);
     fs.mkdirSync(claudeConfigDir);
-    const runtime = createInternalClaudeRuntime({
+    const runtime = createInternalAgentRuntime({
       cwd: workspace,
       envFile: testEnvFile,
       env: {
         CODEX_THREAD_ID: "root-harness-v1-worker-fence",
         CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-        CC_RUNTIME_CHECKOUT: "",
+        CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
         CLAUDE_CONFIG_DIR: claudeConfigDir,
       },
     });
@@ -1330,7 +1330,7 @@ describe("Driver Contract v2 registry and scope", () => {
     assert.throws(() => resolveDriverV2("fake-service"), /Unknown Harness fake-service/);
     assert.equal(resolveDriverV2("claude-code").contractVersion, 2);
     assert.equal(admitDriverV2(service), service);
-    for (const key of ["CC_HARNESS_DRIVER_MODULE", "CC_HARNESS_ENDPOINT", "CC_HARNESS_INSTANCE"]) {
+    for (const key of ["CODEX_HARNESSDOCK_HARNESS_DRIVER_MODULE", "CODEX_HARNESSDOCK_HARNESS_ENDPOINT", "CODEX_HARNESSDOCK_HARNESS_INSTANCE"]) {
       assert.throws(
         () => assertNoAmbientHarnessSelector({ [key]: "x" }),
         new RegExp(`${key} cannot select a Harness Driver implementation`),

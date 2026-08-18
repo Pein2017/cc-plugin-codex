@@ -5,9 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { createInternalClaudeRuntime } from "../runtime/internal-runtime.mjs";
+import { createInternalAgentRuntime } from "../runtime/internal-runtime.mjs";
 
-const PROMPT = "Reply exactly CC_CAPACITY_OK; do not use tools";
+const PROMPT = "Reply exactly HARNESSDOCK_CAPACITY_OK; do not use tools";
 const DEFAULT_LEVELS = [1, 3, 6];
 const DEFAULT_TIMEOUT_MS = 180_000;
 const MIN_AVAILABLE_MEMORY_BYTES = 2 * 1024 ** 3;
@@ -92,7 +92,7 @@ async function runLevel(runtime, concurrency, timeoutMs, hostBaselineAvailable) 
   jobs = jobIds.map((id) => runtime.status(id));
   const timedOut = jobs.some((job) => !["completed", "failed", "interrupted", "cancelled"].includes(job.status));
   const failures = jobs
-    .filter((job) => job.status !== "completed" || job.result?.rawOutput?.trim() !== "CC_CAPACITY_OK")
+    .filter((job) => job.status !== "completed" || job.result?.rawOutput?.trim() !== "HARNESSDOCK_CAPACITY_OK")
     .map((job) => ({ id: job.id, status: job.status, output: job.result?.rawOutput ?? null }));
   if (timedOut) failures.push({ id: null, status: "timed_out", output: null });
   const leaseConflicts = jobs
@@ -117,7 +117,7 @@ async function runLevel(runtime, concurrency, timeoutMs, hostBaselineAvailable) 
       latencyMs: latencyMs(job),
       peakRssBytes: peakByJob[job.id],
       recoveryAttempts: job.result?.recoveryAttempts ?? null,
-      outputMatched: job.result?.rawOutput?.trim() === "CC_CAPACITY_OK",
+      outputMatched: job.result?.rawOutput?.trim() === "HARNESSDOCK_CAPACITY_OK",
     })),
     aggregatePeakRssBytes,
     failures,
@@ -139,9 +139,9 @@ async function main() {
   const env = {
     ...process.env,
     CODEX_THREAD_ID: ownerRootId,
-    CC_TRUSTED_OWNER_ROOT_ID: ownerRootId,
+    CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: ownerRootId,
   };
-  const runtime = createInternalClaudeRuntime({
+  const runtime = createInternalAgentRuntime({
     cwd: path.resolve(optionValue("--cwd") ?? process.cwd()),
     envFile,
     env,

@@ -184,7 +184,7 @@ function main() {
 
   // Codex owns installation snapshots. The snapshot contains only discovery
   // metadata/skills/bootstrap; bootstrap always delegates execution back to
-  // CC_RUNTIME_CHECKOUT and rejects versioned-cache runtime paths.
+  // CODEX_HARNESSDOCK_RUNTIME_CHECKOUT and rejects versioned-cache runtime paths.
   const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
   const compatibilityPlan = prepareCompatibilityInstall({
     codexHome,

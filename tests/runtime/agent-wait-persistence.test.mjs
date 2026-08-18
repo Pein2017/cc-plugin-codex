@@ -14,7 +14,7 @@ import {
 } from "../../runtime/completion-inbox.mjs";
 import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-wait-persistence-"));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-wait-persistence-"));
 const codexHome = path.join(root, ".codex");
 const runtimeHome = path.join(root, "runtime-home");
 fs.mkdirSync(codexHome);
@@ -61,8 +61,8 @@ function setup(label) {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
-      CC_RUNTIME_CHECKOUT: "",
-      CC_RUNTIME_SOURCE_ROOT: "",
+      CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });
@@ -350,7 +350,7 @@ describe("Agent wait persistence", () => {
     );
 
     assert.deepEqual(observed.result, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
     assert.deepEqual(observed.counts, zeroPersistenceIo);
@@ -397,7 +397,7 @@ describe("Agent wait persistence", () => {
 
     assert.equal(waitCalls, 2);
     assert.deepEqual(observed.result, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
     assert.deepEqual(observed.counts, zeroPersistenceIo);

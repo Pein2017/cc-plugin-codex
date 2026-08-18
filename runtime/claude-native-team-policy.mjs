@@ -7,7 +7,7 @@
  */
 import { createHash } from "node:crypto";
 
-export const NATIVE_TEAM_POLICY_REVISION = "cc-native-team-v1";
+export const NATIVE_TEAM_POLICY_REVISION = "hd-native-team-v1";
 
 const LEAF = "leaf";
 const ORCHESTRATOR = "claude_orchestrator";
@@ -200,7 +200,7 @@ function isPlainObject(value) {
 export function deriveNativeCohortLabel(jobId) {
   const durableJobId = requiredText(jobId, "Native team policy requires a durable jobId");
   const digest = createHash("sha256").update(durableJobId).digest("hex").slice(0, 16);
-  return `cc-native-team-${digest}`;
+  return `hd-native-team-${digest}`;
 }
 
 /**

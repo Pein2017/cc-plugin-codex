@@ -99,7 +99,7 @@ const METRICS = Object.freeze({
 
 describe("operator usage ledger", () => {
   it("appends only closed owner-readable token-digest records and uses latest valid disposition", async () => {
-    const root = temporaryDirectory("cc-usage-ledger-");
+    const root = temporaryDirectory("hd-usage-ledger-");
     const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
     const deliveryToken = "delivery-private-token";
 
@@ -167,7 +167,7 @@ describe("operator usage ledger", () => {
   });
 
   it("streams an exact UTC window, deduplicates global call IDs, and emits aggregate-only evidence", async () => {
-    const root = temporaryDirectory("cc-usage-report-");
+    const root = temporaryDirectory("hd-usage-report-");
     const sessionsRoot = path.join(root, "sessions");
     const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
     const firstToken = "delivery-sensitive-alpha";
@@ -502,27 +502,27 @@ describe("operator usage ledger", () => {
     );
   });
 
-  it("admits retained legacy calls only before an accepted identity cutover", async () => {
-    const root = temporaryDirectory("cc-usage-identity-");
+  it("counts a retired-identity event as a diagnostic and never as usage", async () => {
+    const root = temporaryDirectory("hd-usage-identity-");
     const sessionsRoot = path.join(root, "sessions");
     const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
     writeJsonl(path.join(sessionsRoot, "identity.jsonl"), [
       sessionMeta({ timestamp: "2026-08-01T00:00:00.000Z", id: "identity-primary" }),
       callEnd({
         timestamp: "2026-08-02T00:00:00.000Z",
-        callId: "legacy-before-cutover",
+        callId: "retired-early",
         server: "cc_for_pein",
         tool: "list_agents",
       }),
       callEnd({
         timestamp: "2026-08-05T00:00:00.000Z",
-        callId: "legacy-after-cutover",
+        callId: "retired-late",
         server: "cc_for_pein",
         tool: "list_agents",
       }),
       callEnd({
         timestamp: "2026-08-06T00:00:00.000Z",
-        callId: "current-after-cutover",
+        callId: "current",
         server: "codex_harnessdock",
         tool: "list_agents",
       }),
@@ -533,37 +533,55 @@ describe("operator usage ledger", () => {
       ledgerFile,
       days: 7,
       until: "2026-08-08T00:00:00.000Z",
-      identityCutoverAt: "2026-08-04T00:00:00.000Z",
     });
-    assert.equal(report.identity_cutover_at, "2026-08-04T00:00:00.000Z");
-    assert.deepEqual(report.namespaces, { codex_harnessdock: 1, cc_for_pein: 1 });
-    assert.deepEqual(report.identity.qualifying_calls, { codex_harnessdock: 1, cc_for_pein: 1 });
-    assert.equal(report.identity.legacy_coverage, "admitted_pre_cutover");
-    assert.equal(report.identity.identity_drift_events, 1);
-    assert.equal(report.source.qualifying_calls, 2);
 
-    const unavailable = await buildUsageReport({
+    // The reset leaves no pre-cutover lineage to represent, so no retired event
+    // is usage at any timestamp and the report guesses no transition boundary.
+    assert.deepEqual(report.namespaces, { codex_harnessdock: 1 });
+    assert.deepEqual(report.identity, {
+      current_server: "codex_harnessdock",
+      retired_server: "cc_for_pein",
+      qualifying_calls: { codex_harnessdock: 1 },
+    });
+    assert.equal(report.diagnostics.retired_identity_events, 2);
+    assert.equal(report.source.qualifying_calls, 1);
+    assert.equal(Object.hasOwn(report, "identity_cutover_at"), false);
+  });
+
+  it("reserves a retired-identity call ID so the same call cannot return as current usage", async () => {
+    const root = temporaryDirectory("hd-usage-identity-replay-");
+    const sessionsRoot = path.join(root, "sessions");
+    const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
+    writeJsonl(path.join(sessionsRoot, "replay.jsonl"), [
+      sessionMeta({ timestamp: "2026-08-01T00:00:00.000Z", id: "replay-primary" }),
+      callEnd({
+        timestamp: "2026-08-02T00:00:00.000Z",
+        callId: "shared-call",
+        server: "cc_for_pein",
+        tool: "list_agents",
+      }),
+      callEnd({
+        timestamp: "2026-08-06T00:00:00.000Z",
+        callId: "shared-call",
+        server: "codex_harnessdock",
+        tool: "list_agents",
+      }),
+    ]);
+
+    const report = await buildUsageReport({
       sessionsRoot,
       ledgerFile,
       days: 7,
       until: "2026-08-08T00:00:00.000Z",
     });
-    assert.equal(unavailable.identity_cutover_at, null);
-    assert.equal(unavailable.identity.legacy_coverage, "unavailable");
-    assert.equal(unavailable.identity.identity_drift_events, 0);
-    assert.deepEqual(unavailable.namespaces, { codex_harnessdock: 1, cc_for_pein: 0 });
-    await assert.rejects(
-      buildUsageReport({
-        sessionsRoot,
-        ledgerFile,
-        identityCutoverAt: "2026-08-04T00:00:00+00:00",
-      }),
-      /ending in Z/,
-    );
+
+    assert.equal(report.diagnostics.retired_identity_events, 1);
+    assert.equal(report.source.replay_exclusions, 1);
+    assert.equal(report.source.qualifying_calls, 0);
   });
 
   it("fails closed for malformed IDs and contradictory wait evidence", async () => {
-    const root = temporaryDirectory("cc-usage-malformed-");
+    const root = temporaryDirectory("hd-usage-malformed-");
     const sessionsRoot = path.join(root, "sessions");
     const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
     const tokens = ["bad-id-token", "timeout-token", "is-error-token", "pending-token"];
@@ -646,7 +664,7 @@ describe("operator usage CLI", () => {
   }
 
   it("records a disposition without echoing or storing its raw token", () => {
-    const codexHome = temporaryDirectory("cc-usage-cli-record-");
+    const codexHome = temporaryDirectory("hd-usage-cli-record-");
     const token = "delivery-cli-private";
     const result = run(codexHome, [
       "record-disposition",
@@ -681,7 +699,7 @@ describe("operator usage CLI", () => {
   });
 
   it("requires explicit report scope and rejects irreproducible bounds and unknown dispositions", () => {
-    const codexHome = temporaryDirectory("cc-usage-cli-validation-");
+    const codexHome = temporaryDirectory("hd-usage-cli-validation-");
     const valid = run(codexHome, [
       "usage-report", "--all", "--days", "3", "--until", "2026-08-08T00:00:00.000Z", "--json",
     ]);

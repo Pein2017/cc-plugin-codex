@@ -118,7 +118,7 @@ function setup(serverUrl, { secrets = false } = {}) {
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = {
     CODEX_THREAD_ID: ownerRootId,
-    CC_TRUSTED_OWNER_ROOT_ID: ownerRootId,
+    CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: ownerRootId,
     CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
     // Basic-auth credentials are inherited from the operator process
     // environment only, never from the tracked file.

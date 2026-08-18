@@ -136,7 +136,7 @@ function setup(serverUrl) {
     envFile,
     env: {
       CODEX_THREAD_ID: "spawn-admission-root",
-      CC_TRUSTED_OWNER_ROOT_ID: "spawn-admission-root",
+      CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "spawn-admission-root",
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
@@ -406,7 +406,7 @@ describe("Task 7 — an Explorer Agent answers unsupported operations with a rec
       route: accepted.route,
       initialMessage: "Name the module that owns the static Driver table.",
     });
-    const activation = store.reserveActivation(agent.agentId, "cc-agent-explorer-turn", { initial: true });
+    const activation = store.reserveActivation(agent.agentId, "hd-agent-explorer-turn", { initial: true });
     assert.equal(activation.reserved, true);
     return store.resolveTarget(agent.agentId);
   }
@@ -432,7 +432,7 @@ describe("Task 7 — an Explorer Agent answers unsupported operations with a rec
     // No substitute call: not an abort, not a status poll, not a session read.
     assert.equal(server.requests.length, before);
     // The Agent keeps its turn; a receipt is not a cancellation.
-    assert.equal(runtime.store.resolveTarget(agent.path).activeJobId, "cc-agent-explorer-turn");
+    assert.equal(runtime.store.resolveTarget(agent.path).activeJobId, "hd-agent-explorer-turn");
   });
 
   it("returns an unsupported history receipt with no messages and no transcript read", async () => {
@@ -496,7 +496,7 @@ describe("Task 7 — one root owns Agents on both Harnesses with no cross-Harnes
       route: accepted.route,
       initialMessage: "the Explorer Agent's own first turn",
     });
-    versionThree.reserveActivation(explorer.agentId, "cc-agent-explorer-concurrent", { initial: true });
+    versionThree.reserveActivation(explorer.agentId, "hd-agent-explorer-concurrent", { initial: true });
 
     // Both are live in the same root, each stating its own Harness.
     const listed = runtime.listAgents().agents;
@@ -527,7 +527,7 @@ describe("Task 7 — one root owns Agents on both Harnesses with no cross-Harnes
       "a Claude Agent record must not carry the OpenCode Harness identity"
     );
     assert.equal(
-      JSON.stringify(explorerRecord).includes(claudeRecord.activeJobId ?? "cc-agent-none"),
+      JSON.stringify(explorerRecord).includes(claudeRecord.activeJobId ?? "hd-agent-none"),
       false,
       "an Explorer Agent record must not carry the Claude Agent's job identity"
     );
@@ -608,7 +608,7 @@ describe("Task 7 — a version-three Agent records the canonical workspace root"
     const held = acquireWorkspaceWriterLease({
       ownerRootId: runtime.ownerRootId,
       agentId: agent.agentId,
-      jobId: "cc-agent-writer-release",
+      jobId: "hd-agent-writer-release",
       route: writeRoute,
       workspaceRoot: storedRoot,
     });
@@ -632,14 +632,14 @@ describe("Task 7 — a version-three Agent records the canonical workspace root"
         driverVersion: writeRoute.driverVersion,
         instanceKey: writeRoute.instanceKey,
         locatorVersion: 1,
-        locator: { turnId: "cc-agent-writer-release" },
+        locator: { turnId: "hd-agent-writer-release" },
       },
     };
     const releaseTarget = (workspaceRoot) => ({
       kind: "writer",
       ownerRootId: runtime.ownerRootId,
       agentId: agent.agentId,
-      jobId: "cc-agent-writer-release",
+      jobId: "hd-agent-writer-release",
       route: writeRoute,
       workspaceRoot,
     });
@@ -657,7 +657,7 @@ describe("Task 7 — a version-three Agent records the canonical workspace root"
       () => acquireWorkspaceWriterLease({
         ownerRootId: runtime.ownerRootId,
         agentId: "agent-second-writer",
-        jobId: "cc-agent-writer-second",
+        jobId: "hd-agent-writer-second",
         route: writeRoute,
         workspaceRoot: storedRoot,
       }),
@@ -675,7 +675,7 @@ describe("Task 7 — a version-three Agent records the canonical workspace root"
     const next = acquireWorkspaceWriterLease({
       ownerRootId: runtime.ownerRootId,
       agentId: "agent-second-writer",
-      jobId: "cc-agent-writer-second",
+      jobId: "hd-agent-writer-second",
       route: writeRoute,
       workspaceRoot: storedRoot,
     });
@@ -730,7 +730,7 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     assert.equal(harnessExecutionLifecycle(agent.route.harnessId), "version_three_worker");
 
     // A version-three-lifecycle Agent leaves no version-one job file behind.
-    const jobsDirectory = path.dirname(resolveJobFile(workspace, "cc-agent-probe"));
+    const jobsDirectory = path.dirname(resolveJobFile(workspace, "hd-agent-probe"));
     const jobFiles = fs.existsSync(jobsDirectory)
       ? fs.readdirSync(jobsDirectory).filter((entry) => entry.endsWith(".json"))
       : [];
@@ -762,7 +762,7 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     const held = acquireInstanceLease({
       ownerRootId: runtime.ownerRootId,
       agentId: first.agentId,
-      jobId: "cc-agent-capacity-one",
+      jobId: "hd-agent-capacity-one",
       route: accepted.route,
       harnessId: accepted.route.harnessId,
       instanceKey: accepted.route.instanceKey,
@@ -774,7 +774,7 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
       () => acquireInstanceLease({
         ownerRootId: runtime.ownerRootId,
         agentId: second.agentId,
-        jobId: "cc-agent-capacity-two",
+        jobId: "hd-agent-capacity-two",
         route: accepted.route,
         harnessId: accepted.route.harnessId,
         instanceKey: accepted.route.instanceKey,

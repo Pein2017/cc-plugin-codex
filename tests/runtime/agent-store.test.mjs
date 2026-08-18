@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 function setup(ownerRootId = "codex-root-agent-test") {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-store-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-store-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, "claude");
   fs.mkdirSync(workspace);
@@ -79,7 +79,7 @@ function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, 
   const source = [
     `import { createAgentStore } from ${JSON.stringify(storeUrl)};`,
     "const [workspace, config, root, target, start, count] = process.argv.slice(1);",
-    "const store = createAgentStore({ cwd: workspace, ownerRootId: root, claudeConfigDir: config, harness: JSON.parse(process.env.CC_TEST_HARNESS) });",
+    "const store = createAgentStore({ cwd: workspace, ownerRootId: root, claudeConfigDir: config, harness: JSON.parse(process.env.CODEX_HARNESSDOCK_TEST_HARNESS) });",
     "for (let index = 0; index < Number(count); index += 1) store.enqueueMessage(target, `message-${Number(start) + index}`);",
   ].join("\n");
   return new Promise((resolve, reject) => {
@@ -87,7 +87,7 @@ function concurrentWriter(workspace, runtimeHome, claudeConfigDir, ownerRootId, 
       env: {
         ...process.env,
         CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
-        CC_TEST_HARNESS: JSON.stringify(HARNESS),
+        CODEX_HARNESSDOCK_TEST_HARNESS: JSON.stringify(HARNESS),
       },
       stdio: ["ignore", "ignore", "pipe"],
     });

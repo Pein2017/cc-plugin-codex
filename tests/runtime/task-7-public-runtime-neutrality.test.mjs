@@ -22,7 +22,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import * as publicRuntime from "../../runtime/index.mjs";
-import { createAgentRuntime, createClaudeRuntime } from "../../runtime/index.mjs";
+import { createAgentRuntime } from "../../runtime/index.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
 import {
   HARNESSDOCK_MCP_TOOL_NAMES,
@@ -42,7 +42,7 @@ import {
 import { createAgentStore } from "../../runtime/agent-store.mjs";
 import { listStoredJobs } from "../../runtime/job-store.mjs";
 import { CLAUDE_CODE_CAPABILITIES } from "../../runtime/claude-code-driver.mjs";
-import { createInternalClaudeRuntime } from "../../runtime/internal-runtime.mjs";
+import { createInternalAgentRuntime } from "../../runtime/internal-runtime.mjs";
 import { CLAUDE_LEGACY_HARNESS_ID } from "../../runtime/claude-legacy-adapter.mjs";
 import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
 import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
@@ -89,9 +89,9 @@ function runtimeOptions(label) {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
       CODEX_THREAD_ID: `task7-${label}`,
-      CC_TRUSTED_OWNER_ROOT_ID: `task7-${label}`,
+      CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: `task7-${label}`,
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
-      CC_RUNTIME_ENV_FILE: path.join(repositoryRoot, "config", "runtime.env"),
+      CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: path.join(repositoryRoot, "config", "runtime.env"),
     },
   };
 }
@@ -121,35 +121,33 @@ const GENERIC_AND_V3_MODULES = Object.freeze([
 ]);
 
 describe("Task 7.1 — the neutral public runtime factory", () => {
-  it("exports createAgentRuntime() as the neutral factory and nothing beyond the bounded alias", () => {
+  it("exports createAgentRuntime() as the only public factory", () => {
     assert.equal(typeof publicRuntime.createAgentRuntime, "function");
     assert.deepEqual(
       Object.keys(publicRuntime).sort(),
-      ["HARNESSDOCK_MCP_API_GENERATION", "createAgentRuntime", "createClaudeRuntime"]
+      ["HARNESSDOCK_MCP_API_GENERATION", "createAgentRuntime"]
     );
   });
 
-  it("keeps createClaudeRuntime() as the exact same current-generation factory", () => {
-    assert.equal(createClaudeRuntime, createAgentRuntime);
+  it("no longer exports the Claude-named compatibility alias", () => {
+    // The alias existed for one generation so a checkout discovered before the
+    // neutral name could keep serving. The physical rename ends that window:
+    // every caller is checkout-owned and moves in the same pass.
+    assert.equal(Object.hasOwn(publicRuntime, "createClaudeRuntime"), false);
   });
 
-  it("returns exactly the frozen public operations from either name", () => {
+  it("returns exactly the frozen public operations", () => {
     const neutral = createAgentRuntime(runtimeOptions("neutral"));
-    const alias = createClaudeRuntime(runtimeOptions("alias"));
     assert.deepEqual(Object.keys(neutral).sort(), PUBLIC_OPERATIONS);
-    assert.deepEqual(Object.keys(alias).sort(), PUBLIC_OPERATIONS);
     assert.equal(Object.isFrozen(neutral), true);
-    assert.equal(Object.isFrozen(alias), true);
     for (const operation of PUBLIC_OPERATIONS) {
       assert.equal(typeof neutral[operation], "function");
-      assert.equal(typeof alias[operation], "function");
     }
   });
 
   it("keeps runtime/index.mjs the sole lifecycle seam: no store, supervisor, Driver, or registry escapes", () => {
     for (const forbidden of [
       "createAgentStore",
-      "createInternalClaudeRuntime",
       "createInternalAgentRuntime",
       "resolveHarnessDriver",
       "resolveDriverV2",
@@ -158,7 +156,8 @@ describe("Task 7.1 — the neutral public runtime factory", () => {
       "runVersionThreeWorkerLoop",
       "acquireInstanceLease",
       "AgentRuntime",
-      "ClaudeRuntime",
+      "InternalAgentRuntime",
+      "createClaudeRuntime",
     ]) {
       assert.equal(
         Object.hasOwn(publicRuntime, forbidden),
@@ -170,7 +169,7 @@ describe("Task 7.1 — the neutral public runtime factory", () => {
     assert.doesNotMatch(source, /export\s+\*/);
   });
 
-  it("routes internal callers through the neutral name while the isolated worker stays generation-compatible", async () => {
+  it("routes internal callers through the neutral name and refuses a checkout that only exports the retired alias", async () => {
     assert.doesNotMatch(
       fs.readFileSync(path.join(runtimeDirectory, "cli.mjs"), "utf8"),
       /createClaudeRuntime/,
@@ -200,8 +199,9 @@ export function createAgentRuntime() {
       { factory: "createAgentRuntime" }
     );
 
-    // A same-generation checkout that predates the neutral name must keep
-    // working: this change bumps no public generation.
+    // The retired alias is no longer a fallback. A checkout exporting only the
+    // Claude-named factory is not a runtime this generation can serve, and it
+    // must say so rather than silently resolving a second surface.
     const legacyFile = path.join(directory, "legacy-runtime.mjs");
     fs.writeFileSync(legacyFile, `
 export const HARNESSDOCK_MCP_API_GENERATION = ${HARNESSDOCK_MCP_API_GENERATION};
@@ -209,14 +209,14 @@ export function createClaudeRuntime() {
   return { list_agents() { return { factory: "createClaudeRuntime" }; } };
 }
 `);
-    assert.deepEqual(
-      await invokeIsolatedRuntimeOperation({
+    await assert.rejects(
+      invokeIsolatedRuntimeOperation({
         operation: "list_agents",
         input: {},
         context,
         runtimeModuleUrl: pathToFileURL(legacyFile),
       }),
-      { factory: "createClaudeRuntime" }
+      /does not export createAgentRuntime/
     );
   });
 });
@@ -279,7 +279,7 @@ describe("Task 7.2 — no generic or version-three path carries a Harness defaul
   });
 
   it("refuses an unstated Harness at the internal runtime Driver resolver", () => {
-    const runtime = createInternalClaudeRuntime(runtimeOptions("driver-for-harness"));
+    const runtime = createInternalAgentRuntime(runtimeOptions("driver-for-harness"));
     assert.throws(() => runtime.driverForHarness(), /explicit|non-empty|Harness/i);
     assert.throws(() => runtime.driverForHarness(null), /explicit|non-empty|Harness/i);
     assert.equal(
@@ -292,7 +292,7 @@ describe("Task 7.2 — no generic or version-three path carries a Harness defaul
     const workspaceRoot = path.join(root, "prepare-start-workspace");
     fs.mkdirSync(workspaceRoot, { recursive: true });
     process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = RUNTIME_HOME;
-    const runtime = createInternalClaudeRuntime({
+    const runtime = createInternalAgentRuntime({
       ...runtimeOptions("prepare-start"),
       cwd: workspaceRoot,
     });
@@ -452,9 +452,9 @@ describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
     // validated against the static table, never treated as an implementation.
     assert.doesNotThrow(() => assertNoHarnessImplementationSelector({ harness: "opencode" }, "spawn_agent"));
     for (const key of [
-      "CC_HARNESS_ID", "CC_HARNESS_DRIVER", "CC_HARNESS_DRIVER_MODULE", "CC_HARNESS_DRIVER_PATH",
-      "CC_HARNESS_CAPABILITIES", "CC_HARNESS_REGISTRY", "CC_HARNESS_ENDPOINT",
-      "CC_HARNESS_INSTANCE", "CC_DRIVER_ENDPOINT",
+      "CODEX_HARNESSDOCK_HARNESS_ID", "CODEX_HARNESSDOCK_HARNESS_DRIVER", "CODEX_HARNESSDOCK_HARNESS_DRIVER_MODULE", "CODEX_HARNESSDOCK_HARNESS_DRIVER_PATH",
+      "CODEX_HARNESSDOCK_HARNESS_CAPABILITIES", "CODEX_HARNESSDOCK_HARNESS_REGISTRY", "CODEX_HARNESSDOCK_HARNESS_ENDPOINT",
+      "CODEX_HARNESSDOCK_HARNESS_INSTANCE", "CODEX_HARNESSDOCK_DRIVER_ENDPOINT",
     ]) {
       assert.throws(() => assertNoAmbientHarnessSelector({ [key]: "chosen" }), new RegExp(key));
     }

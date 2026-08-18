@@ -10,7 +10,7 @@ import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 import { getProcessIdentity } from "../../runtime/process-control.mjs";
 
 const roots = [];
-const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-progress-runtime-"));
+const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-progress-runtime-"));
 const sharedCodexHome = path.join(sharedRuntimeRoot, ".codex");
 const sharedRuntimeHome = path.join(sharedRuntimeRoot, "runtime-home");
 fs.mkdirSync(sharedCodexHome);
@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 function setup(options = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-progress-projection-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-progress-projection-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, ".claude");
   const codexHome = sharedCodexHome;
@@ -39,8 +39,8 @@ function setup(options = {}) {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-      CC_RUNTIME_CHECKOUT: "",
-      CC_RUNTIME_SOURCE_ROOT: "",
+      CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
     abortSignal: options.abortSignal,
@@ -174,13 +174,13 @@ describe("Agent progress projection", () => {
     });
 
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0 }), {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
     assert.equal(readJobFile(workspace, "cc-progress").publicProgressDeliveredRevision, 0);
 
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true }), {
-      message: "CC Agent progress is available.",
+      message: "HarnessDock Agent progress is available.",
       timedOut: false,
       update: {
         kind: "progress",
@@ -196,7 +196,7 @@ describe("Agent progress projection", () => {
       },
     });
     assert.deepEqual(await runtime.waitAgent({ timeout_ms: 0, wake_on_progress: true }), {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
   });

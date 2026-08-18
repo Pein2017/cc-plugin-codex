@@ -9,7 +9,7 @@ import { observeClaudeCredentialState } from "../../runtime/claude-credential-st
 import { readJobFile, resolveJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 
 const roots = [];
-const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-credential-recovery-home-"));
+const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-credential-recovery-home-"));
 
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 afterEach(() => {
@@ -30,7 +30,7 @@ function writeCredential(claudeConfigDir, expiresAt) {
 }
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-credential-recovery-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-credential-recovery-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, "claude");
   const envFile = path.join(root, "runtime.env");

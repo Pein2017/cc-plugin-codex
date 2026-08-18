@@ -12,7 +12,7 @@ import { nowIso, ensureStateDir, patchJob, readJobFile, resolveJobLogFile, write
 
 export { nowIso };
 
-export const OWNER_ROOT_ID_ENV = "CC_TRUSTED_OWNER_ROOT_ID";
+export const OWNER_ROOT_ID_ENV = "CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID";
 export const MAX_JOB_LOG_BYTES = 1024 * 1024;
 export const PUBLIC_PROGRESS_TEXT_HEARTBEAT_MS = 10_000;
 export const PUBLIC_PROGRESS_REPEAT_MILESTONE_MS = 2_000;

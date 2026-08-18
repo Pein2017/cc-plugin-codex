@@ -20,10 +20,10 @@ const SUPPORTED_KEYS = new Set([
   "http_proxy", "https_proxy", "all_proxy",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
   "no_proxy", "NO_PROXY",
-  "CC_CLAUDE_BIN",
-  "CC_RUNTIME_CHECKOUT",
-  "CC_CLAUDE_RECONNECT_ATTEMPTS",
-  "CC_CLAUDE_RECONNECT_BASE_DELAY_MS",
+  "CODEX_HARNESSDOCK_CLAUDE_BIN",
+  "CODEX_HARNESSDOCK_RUNTIME_CHECKOUT",
+  "CODEX_HARNESSDOCK_CLAUDE_RECONNECT_ATTEMPTS",
+  "CODEX_HARNESSDOCK_CLAUDE_RECONNECT_BASE_DELAY_MS",
   "OPENCODE_SERVER_URL",
 ]);
 
@@ -99,7 +99,7 @@ export function resolveRuntimeEnvironment(options = {}) {
   const projectEnv = codexHome ? existing(path.join(codexHome, ".env")) : null;
   const workspaceEnv = findAncestorEnvFile(options.cwd ?? process.cwd());
   const defaultEnv = existing(DEFAULT_ENV_FILE);
-  const explicitPath = options.envFile ?? inherited.CC_RUNTIME_ENV_FILE ?? null;
+  const explicitPath = options.envFile ?? inherited.CODEX_HARNESSDOCK_RUNTIME_ENV_FILE ?? null;
   const explicitEnv = explicitPath ? existing(path.resolve(options.cwd ?? process.cwd(), explicitPath)) : null;
   if (explicitPath && !explicitEnv) throw new Error(`Runtime env file not found: ${explicitPath}`);
 
@@ -116,7 +116,7 @@ export function resolveRuntimeEnvironment(options = {}) {
   // This assignment intentionally follows the single selected-file merge so
   // neither an inherited value nor that file can disable native Auto Memory.
   env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "0";
-  if (selectedEnv) env.CC_RUNTIME_ENV_FILE = selectedEnv;
+  if (selectedEnv) env.CODEX_HARNESSDOCK_RUNTIME_ENV_FILE = selectedEnv;
   // OpenCode Basic-auth credentials never enter the merged runtime environment,
   // even if inherited from the operator process; see readOpencodeSecrets.
   for (const secretKey of OPENCODE_SECRET_KEYS) delete env[secretKey];
@@ -125,7 +125,7 @@ export function resolveRuntimeEnvironment(options = {}) {
     env,
     receipt: {
       sources,
-      runtimeCheckout: env.CC_RUNTIME_CHECKOUT ?? null,
+      runtimeCheckout: env.CODEX_HARNESSDOCK_RUNTIME_CHECKOUT ?? null,
       claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? null,
       proxyEndpoints: {
         http: redactProxy(env.HTTP_PROXY ?? env.http_proxy),

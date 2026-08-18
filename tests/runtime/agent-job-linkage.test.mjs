@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-job-linkage-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-job-linkage-"));
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace);
   process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "runtime-home");

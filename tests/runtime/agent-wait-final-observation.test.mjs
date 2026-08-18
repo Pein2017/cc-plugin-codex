@@ -11,7 +11,7 @@ import { getProcessIdentity } from "../../runtime/process-control.mjs";
 
 const roots = [];
 const sharedRuntimeRoot = fs.mkdtempSync(
-  path.join(os.tmpdir(), "cc-agent-wait-final-observation-runtime-")
+  path.join(os.tmpdir(), "hd-agent-wait-final-observation-runtime-")
 );
 const sharedCodexHome = path.join(sharedRuntimeRoot, ".codex");
 const sharedRuntimeHome = path.join(sharedRuntimeRoot, "runtime-home");
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-wait-final-observation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-wait-final-observation-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, ".claude");
   const codexHome = sharedCodexHome;
@@ -41,8 +41,8 @@ function setup() {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-      CC_RUNTIME_CHECKOUT: "",
-      CC_RUNTIME_SOURCE_ROOT: "",
+      CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });
@@ -139,7 +139,7 @@ describe("Agent wait final observation", () => {
     const waited = await runtime.waitAgent({ timeout_ms: 0 });
 
     assert.equal(waited.timedOut, false);
-    assert.equal(waited.message, "CC Agent completion is available.");
+    assert.equal(waited.message, "HarnessDock Agent completion is available.");
     assert.equal(waited.update.kind, "completion");
     assert.equal(waited.update.agent_name, agent.path);
     assert.equal(waited.update.completion_message, "final observation completion message");
@@ -186,7 +186,7 @@ describe("Agent wait final observation", () => {
 
     assert.equal(reconcileCalls, 1);
     assert.deepEqual(waited, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
     assert.equal(jobsWaitCalls.length, 2);
@@ -197,7 +197,7 @@ describe("Agent wait final observation", () => {
 
     const firstWaited = await runtime.waitAgent({ timeout_ms: 0 });
     assert.deepEqual(firstWaited, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
 
@@ -235,7 +235,7 @@ describe("Agent wait final observation", () => {
       acknowledge_tokens: [secondWaited.update.delivery_token],
     });
     assert.deepEqual(afterAcknowledgement, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
   });
@@ -291,7 +291,7 @@ describe("Agent wait final observation", () => {
       acknowledge_tokens: [waited.update.delivery_token],
     });
     assert.deepEqual(afterAcknowledgement, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
 

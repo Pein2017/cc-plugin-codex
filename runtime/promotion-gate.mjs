@@ -95,7 +95,7 @@ export async function withRuntimeLoadGate(options) {
     while (fs.existsSync(paths.lock)) {
       if (Date.now() >= deadline) {
         throw Object.assign(new Error("Timed out waiting for local runtime promotion to finish."), {
-          code: "CC_PROMOTION_GATE_TIMEOUT",
+          code: "HARNESSDOCK_PROMOTION_GATE_TIMEOUT",
         });
       }
       await delay(pollMs);
@@ -170,7 +170,7 @@ export async function acquirePromotionGate(options) {
   } catch (error) {
     if (error?.code === "EEXIST") {
       throw Object.assign(new Error("Another local runtime promotion already owns the promotion gate."), {
-        code: "CC_PROMOTION_IN_PROGRESS",
+        code: "HARNESSDOCK_PROMOTION_IN_PROGRESS",
       });
     }
     throw error;
@@ -196,7 +196,7 @@ export async function acquirePromotionGate(options) {
       if (Date.now() >= deadline) {
         throw Object.assign(
           new Error(`Timed out waiting for ${remaining.length} live or unproven runtime loader(s).`),
-          { code: "CC_PROMOTION_LOADERS_ACTIVE" },
+          { code: "HARNESSDOCK_PROMOTION_LOADERS_ACTIVE" },
         );
       }
       await delay(pollMs);

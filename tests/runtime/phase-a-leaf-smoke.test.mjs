@@ -8,7 +8,7 @@
  * registry, the real `claude-code` Driver, the real job supervisor, the real
  * durable Agent store, launch claim, instance lease, version-three worker
  * loop, and the real completion inbox -- and replaces only the native
- * executable (a fake `claude` on `CC_CLAUDE_BIN`) or, where a native-transport
+ * executable (a fake `claude` on `CODEX_HARNESSDOCK_CLAUDE_BIN`) or, where a native-transport
  * ambiguity cannot be produced by any real child, the Driver's own session
  * seam. No test here may reach a real Claude account.
  */
@@ -153,7 +153,7 @@ function fixture(mode = "ok") {
   fs.writeFileSync(envFile, [
     `CLAUDE_CONFIG_DIR=${path.join(root, "claude-config")}`,
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY=0",
-    `CC_CLAUDE_BIN=${claude}`,
+    `CODEX_HARNESSDOCK_CLAUDE_BIN=${claude}`,
     "",
   ].join("\n"));
   fs.mkdirSync(path.join(root, "claude-config"));
@@ -193,7 +193,7 @@ function fixture(mode = "ok") {
       env: {
         PATH: process.env.PATH,
         HOME: root,
-        CC_RUNTIME_ENV_FILE: envFile,
+        CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile,
         PHASE_A_FAKE_MODE: mode,
         PHASE_A_FAKE_INVOCATION_FILE: invocations,
         PHASE_A_FAKE_SOURCE_TARGET: untracked,

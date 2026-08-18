@@ -7,7 +7,7 @@ import { after, afterEach, describe, it } from "node:test";
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 
 const roots = [];
-const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-model-migration-runtime-"));
+const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-model-migration-runtime-"));
 
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 
@@ -54,7 +54,7 @@ function downgradeToVersionOne(agentId, patch) {
 }
 
 function setup(model) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-model-migration-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-model-migration-"));
   roots.push(root);
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, ".claude");

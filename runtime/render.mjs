@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Human-readable views over public runtime receipts. JSON callers consume the
- * same underlying objects through ClaudeRuntime.
+ * same underlying objects through InternalAgentRuntime.
  */
 
 function line(label, value) {

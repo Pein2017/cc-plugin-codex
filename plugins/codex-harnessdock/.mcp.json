@@ -5,9 +5,9 @@
       "command": "node",
       "args": [
         "--",
-        "/data/CoordExp/cc-plugin-codex/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs"
+        "/data/CoordExp/codex-harnessdock/plugins/codex-harnessdock/bootstrap/harnessdock-mcp.mjs"
       ],
-      "cwd": "/data/CoordExp/cc-plugin-codex",
+      "cwd": "/data/CoordExp/codex-harnessdock",
       "required": true,
       "supports_parallel_tool_calls": true,
       "startup_timeout_sec": 30,

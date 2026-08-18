@@ -544,9 +544,9 @@ describe("opencode compatibility probe: live operator Server (skips if unreachab
       t.skip("operator OpenCode Server is not reachable at " + DEFAULT_SERVER_URL);
       return;
     }
-    const bin = isOpencodeBinDiscoverable() ? DEFAULT_OPENCODE_BIN : process.env.CC_OPENCODE_BIN;
+    const bin = isOpencodeBinDiscoverable() ? DEFAULT_OPENCODE_BIN : process.env.CODEX_HARNESSDOCK_OPENCODE_BIN;
     if (!bin) {
-      t.skip("opencode CLI is not discoverable on PATH and CC_OPENCODE_BIN is unset");
+      t.skip("opencode CLI is not discoverable on PATH and CODEX_HARNESSDOCK_OPENCODE_BIN is unset");
       return;
     }
     const report = await runCompatibilityProbe({

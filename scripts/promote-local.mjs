@@ -10,8 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { acquirePromotionGate } from "../runtime/promotion-gate.mjs";
 import { classifyPromotionPaths } from "./promotion-policy.mjs";
 
-export const LIVE_CHECKOUT = "/data/CoordExp/cc-plugin-codex";
-export const DEVELOPMENT_CHECKOUT = "/data/CoordExp/cc-plugin-codex-dev";
+export const LIVE_CHECKOUT = "/data/CoordExp/codex-harnessdock";
+export const DEVELOPMENT_CHECKOUT = "/data/CoordExp/codex-harnessdock-dev";
 
 function commandFailure(command, result) {
   return new Error(

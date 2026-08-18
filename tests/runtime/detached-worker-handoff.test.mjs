@@ -8,7 +8,7 @@ import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
 import { resolveDriverV2 } from "../../runtime/harness-registry.mjs";
 import {
-  createInternalClaudeRuntime,
+  createInternalAgentRuntime,
   preparedStartDisposition,
 } from "../../runtime/internal-runtime.mjs";
 import {
@@ -145,7 +145,7 @@ function setup(launchDependencies = {}) {
     CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
     CLAUDE_CONFIG_DIR: claudeConfigDir,
   };
-  const runtime = createInternalClaudeRuntime({
+  const runtime = createInternalAgentRuntime({
     cwd: workspace,
     env,
     envFile,
@@ -188,7 +188,7 @@ function agentRuntimeWithInjectedJobs(seed, launchDependencies) {
     env: seed.env,
     envFile: seed.envFile,
   });
-  const injectedJobs = createInternalClaudeRuntime({
+  const injectedJobs = createInternalAgentRuntime({
     cwd: seed.workspace,
     env: seed.env,
     envFile: seed.envFile,

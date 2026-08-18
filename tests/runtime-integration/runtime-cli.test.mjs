@@ -63,8 +63,8 @@ async function firstEvent() {
 }
 
 function appendInvocation(record) {
-  if (process.env.CC_FAKE_INVOCATION_FILE) {
-    fs.appendFileSync(process.env.CC_FAKE_INVOCATION_FILE, JSON.stringify(record) + "\\n");
+  if (process.env.CODEX_HARNESSDOCK_FAKE_INVOCATION_FILE) {
+    fs.appendFileSync(process.env.CODEX_HARNESSDOCK_FAKE_INVOCATION_FILE, JSON.stringify(record) + "\\n");
   }
 }
 
@@ -93,7 +93,7 @@ async function main() {
       HTTPS_PROXY: process.env.HTTPS_PROXY,
       NO_PROXY: process.env.NO_PROXY,
       IS_SANDBOX: process.env.IS_SANDBOX,
-      CC_RUNTIME_SOURCE_ROOT: process.env.CC_RUNTIME_SOURCE_ROOT,
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: process.env.CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT,
     },
   });
   process.stdout.write(JSON.stringify({
@@ -176,7 +176,7 @@ main().catch((error) => { process.stderr.write(error.stack + "\\n"); process.exi
 }
 
 function fixture(ownerRootId = "owner-1") {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-cli-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-cli-"));
   cleanups.push(dir);
   const workspace = path.join(dir, "workspace");
   const codexHome = path.join(dir, ".codex");
@@ -194,8 +194,8 @@ function fixture(ownerRootId = "owner-1") {
     "HTTP_PROXY=http://127.0.0.1:9090",
     "HTTPS_PROXY=http://127.0.0.1:9090",
     "NO_PROXY=127.0.0.1,localhost",
-    `CC_CLAUDE_BIN=${claude}`,
-    `CC_RUNTIME_CHECKOUT=${root}`,
+    `CODEX_HARNESSDOCK_CLAUDE_BIN=${claude}`,
+    `CODEX_HARNESSDOCK_RUNTIME_CHECKOUT=${root}`,
     "",
   ].join("\n"));
   const inheritedEnv = { ...process.env };
@@ -203,7 +203,7 @@ function fixture(ownerRootId = "owner-1") {
   // dir ambiently. The fixture owns a fresh logical root and claudeConfigDir
   // and must not let that ambient identity override the explicit
   // CODEX_THREAD_ID and CLAUDE_CONFIG_DIR set below.
-  delete inheritedEnv.CC_TRUSTED_OWNER_ROOT_ID;
+  delete inheritedEnv.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID;
   delete inheritedEnv.CLAUDE_NATIVE_CONFIG_DIR;
   return {
     workspace,
@@ -214,9 +214,9 @@ function fixture(ownerRootId = "owner-1") {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
-      CC_RUNTIME_ENV_FILE: envFile,
+      CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile,
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-      CC_FAKE_INVOCATION_FILE: invocation,
+      CODEX_HARNESSDOCK_FAKE_INVOCATION_FILE: invocation,
     },
   };
 }
@@ -475,9 +475,9 @@ describe("canonical Agent runtime CLI", () => {
       /read(?: and|\/)review only/i,
     );
     const firstCohort = invocation.args[invocation.args.indexOf("--append-system-prompt") + 1]
-      .match(/cc-native-team-[a-f0-9]+/)[0];
+      .match(/hd-native-team-[a-f0-9]+/)[0];
     const followupCohort = followupInvocation.args[followupInvocation.args.indexOf("--append-system-prompt") + 1]
-      .match(/cc-native-team-[a-f0-9]+/)[0];
+      .match(/hd-native-team-[a-f0-9]+/)[0];
     assert.notEqual(firstCohort, followupCohort);
   });
 
@@ -511,8 +511,8 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(recovered.agentId, closed.agentId);
     assert.equal(recorded[1].args[recorded[1].args.indexOf("--resume") + 1], "fake-session-team-close");
     assert.notEqual(
-      firstPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
-      secondPrompt.match(/cc-native-team-[a-f0-9]+/)[0],
+      firstPrompt.match(/hd-native-team-[a-f0-9]+/)[0],
+      secondPrompt.match(/hd-native-team-[a-f0-9]+/)[0],
     );
     assert.deepEqual(Object.keys(JSON.parse(recorded[1].args[recorded[1].args.indexOf("--agents") + 1])), [
       "haiku-scout", "opus", "sonnet",
@@ -832,7 +832,7 @@ describe("canonical Agent runtime CLI", () => {
 
     const completionFirst = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
     assert.deepEqual(completionFirst, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
 
@@ -949,19 +949,22 @@ describe("canonical Agent runtime CLI", () => {
   it("preserves full-access terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
     const test = fixture();
     const canonicalManifest = path.join(
-      "/data/CoordExp/cc-plugin-codex",
+      "/data/CoordExp/codex-harnessdock",
       "plugins",
       "codex-harnessdock",
       ".codex-plugin",
       "plugin.json",
     );
     if (!fs.existsSync(canonicalManifest) || JSON.parse(fs.readFileSync(canonicalManifest, "utf8")).name !== "codex-harnessdock") {
-      // The Phase 0 candidate is intentionally uninstalled. Its fixed
-      // production bootstrap must fail closed while the production checkout
-      // still carries the predecessor identity.
+      // The candidate is intentionally uninstalled, and between the source
+      // rename and the operator relocation the live path does not exist at
+      // all. The fixed production bootstrap must fail closed either way and
+      // name the checkout it could not validate.
       const rejected = command(test, ["list_agents", "--json"], { program: bootstrap });
       assert.equal(rejected.status, 1);
-      assert.match(`${rejected.stderr}\n${rejected.stdout}`, /Fixed HarnessDock runtime checkout is invalid|Unexpected plugin identity/i);
+      const output = `${rejected.stderr}\n${rejected.stdout}`;
+      assert.match(output, /Fixed HarnessDock runtime checkout is (invalid|unavailable)|Unexpected plugin identity/i);
+      assert.match(output, /\/data\/CoordExp\/codex-harnessdock/);
       return;
     }
     const spawned = run(test, [
@@ -991,7 +994,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.env.HTTPS_PROXY, "http://127.0.0.1:9090");
     assert.equal(invocation.env.NO_PROXY, "127.0.0.1,localhost");
     assert.equal(invocation.env.IS_SANDBOX, "1");
-    assert.equal(invocation.env.CC_RUNTIME_SOURCE_ROOT, root);
+    assert.equal(invocation.env.CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT, root);
 
     const fakeCache = path.join(path.dirname(test.workspace), "fake-cache", "cc", "0.1.0");
     const fakeBootstrap = path.join(fakeCache, "bootstrap", "harnessdock-runtime.mjs");
@@ -1011,8 +1014,8 @@ describe("canonical Agent runtime CLI", () => {
       nodeArgs: ["--"],
       env: {
         ...test.env,
-        CC_RUNTIME_CHECKOUT: fakeCache,
-        CC_RUNTIME_ENV_FILE: poisonEnv,
+        CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: fakeCache,
+        CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: poisonEnv,
         CLAUDE_NATIVE_CONFIG_DIR: "/poison/native-claude",
         CLAUDE_CONFIG_DIR: "/poison/claude",
       },

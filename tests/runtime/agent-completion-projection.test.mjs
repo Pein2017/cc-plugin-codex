@@ -12,7 +12,7 @@ import {
 import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 
 const roots = [];
-const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-completion-runtime-"));
+const sharedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-completion-runtime-"));
 const sharedCodexHome = path.join(sharedRuntimeRoot, ".codex");
 const sharedRuntimeHome = path.join(sharedRuntimeRoot, "runtime-home");
 fs.mkdirSync(sharedCodexHome);
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 function setup(ownerRootId = "root-agent-completion-projection") {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-completion-projection-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-completion-projection-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, ".claude");
   const codexHome = sharedCodexHome;
@@ -40,8 +40,8 @@ function setup(ownerRootId = "root-agent-completion-projection") {
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: ownerRootId,
       CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-      CC_RUNTIME_CHECKOUT: "",
-      CC_RUNTIME_SOURCE_ROOT: "",
+      CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
   });
@@ -268,7 +268,7 @@ describe("Agent completion projection", () => {
           targetReady: false,
           acknowledgement: { acknowledgedCount: 0, acknowledgedThrough: null, compactedCount: 0 },
           waitTimedOut: true,
-          message: "Timed out waiting for CC Agent activity.",
+          message: "Timed out waiting for HarnessDock Agent activity.",
         };
       }
       return originalWait(jobId, options);
@@ -305,8 +305,8 @@ describe("Agent completion projection", () => {
         CODEX_HOME: context.codexHome,
         CODEX_THREAD_ID: context.ownerRootId,
         CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
-        CC_RUNTIME_CHECKOUT: "",
-        CC_RUNTIME_SOURCE_ROOT: "",
+        CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+        CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
         CLAUDE_CONFIG_DIR: context.claudeConfigDir,
       },
     });
@@ -365,7 +365,7 @@ describe("Agent completion projection", () => {
 
     const first = await runtime.waitAgent({ timeout_ms: 0 });
     assert.deepEqual(first, {
-      message: "CC Agent completion is available.",
+      message: "HarnessDock Agent completion is available.",
       timedOut: false,
       update: {
         kind: "completion",
@@ -476,7 +476,7 @@ describe("Agent completion projection", () => {
       acknowledge_tokens: [first.update.delivery_token],
     });
     assert.deepEqual(afterAcknowledgement, {
-      message: "Timed out waiting for CC Agent activity.",
+      message: "Timed out waiting for HarnessDock Agent activity.",
       timedOut: true,
     });
   });

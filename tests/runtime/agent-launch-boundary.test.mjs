@@ -40,7 +40,7 @@ function seamRouteInspection(runtime) {
 }
 
 const roots = /** @type {string[]} */ ([]);
-const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-launch-runtime-home-"));
+const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-launch-runtime-home-"));
 
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 afterEach(() => {
@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-launch-boundary-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-launch-boundary-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, "claude");
   const envFile = path.join(root, "runtime.env");
@@ -250,7 +250,7 @@ describe("Agent durable launch boundary", () => {
   it("fails compatibility before spawn or idle follow-up durable mutation", async () => {
     const spawnSetup = setup();
     spawnSetup.runtime.jobs.assertReady = () => {
-      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v2.");
+      throw new Error("Claude Code 2.1.221 is incompatible with HarnessDock runtime surface hd-agent-v2.");
     };
     await assert.rejects(
       spawnSetup.runtime.spawnAgent({
@@ -261,7 +261,7 @@ describe("Agent durable launch boundary", () => {
         model: "claude-sonnet-5",
         write: false,
       }),
-      /incompatible with CC runtime surface/,
+      /incompatible with HarnessDock runtime surface/,
     );
     assert.deepEqual(spawnSetup.runtime.store.listAgents(), []);
     assert.deepEqual(listStoredJobs(spawnSetup.workspace), []);
@@ -276,14 +276,14 @@ describe("Agent durable launch boundary", () => {
       status: "completed",
     }));
     followupSetup.runtime.jobs.assertReady = () => {
-      throw new Error("Claude Code 2.1.221 is incompatible with CC runtime surface cc-agent-v2.");
+      throw new Error("Claude Code 2.1.221 is incompatible with HarnessDock runtime surface hd-agent-v2.");
     };
     await assert.rejects(
       followupSetup.runtime.followupTask({
         target: agent.agentId,
         message: "must remain outside the mailbox",
       }),
-      /incompatible with CC runtime surface/,
+      /incompatible with HarnessDock runtime surface/,
     );
     assert.deepEqual(followupSetup.runtime.store.listMessages(agent.agentId), []);
     assert.deepEqual(listStoredJobs(followupSetup.workspace), []);

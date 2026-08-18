@@ -28,8 +28,8 @@ function defaultSleep(ms) {
 }
 
 function normalizedRetryPolicy(policy = {}, env = process.env) {
-  const envAttempts = Number(env.CC_CLAUDE_RECONNECT_ATTEMPTS);
-  const envBaseDelay = Number(env.CC_CLAUDE_RECONNECT_BASE_DELAY_MS);
+  const envAttempts = Number(env.CODEX_HARNESSDOCK_CLAUDE_RECONNECT_ATTEMPTS);
+  const envBaseDelay = Number(env.CODEX_HARNESSDOCK_CLAUDE_RECONNECT_BASE_DELAY_MS);
   return {
     maxReconnectAttempts: Math.max(
       0,

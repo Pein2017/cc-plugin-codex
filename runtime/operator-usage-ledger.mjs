@@ -12,9 +12,8 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { normalizeTerminalMetrics } from "./terminal-metrics.mjs";
-import { readIdentityCutoverReceipt } from "./plugin-identity-cutover.mjs";
 
-export const OPERATOR_USAGE_VERSION = 1;
+export const OPERATOR_USAGE_VERSION = 2;
 export const OPERATOR_DISPOSITIONS = Object.freeze([
   "accepted_first_pass",
   "accepted_after_correction",
@@ -35,7 +34,9 @@ const CANONICAL_TOOLS = Object.freeze([
 ]);
 const CANONICAL_TOOL_SET = new Set(CANONICAL_TOOLS);
 const CURRENT_MCP_SERVER = "codex_harnessdock";
-const LEGACY_MCP_SERVER = "cc_for_pein";
+// The retired identity survives only so its events can be recognised and
+// excluded. It is never a second admitted namespace.
+const RETIRED_MCP_SERVER = "cc_for_pein";
 const MODELS = Object.freeze([
   "claude-haiku-4-5",
   "claude-sonnet-5",
@@ -442,21 +443,15 @@ function initialReport(window) {
     version: OPERATOR_USAGE_VERSION,
     generated_at: window.generatedAt,
     window: { start: window.start, end: window.end, days: window.days },
-    identity_cutover_at: null,
     namespaces: {
       [CURRENT_MCP_SERVER]: 0,
-      [LEGACY_MCP_SERVER]: 0,
     },
     identity: {
       current_server: CURRENT_MCP_SERVER,
-      legacy_server: LEGACY_MCP_SERVER,
-      cutover_at: null,
-      legacy_coverage: "unavailable",
+      retired_server: RETIRED_MCP_SERVER,
       qualifying_calls: {
         [CURRENT_MCP_SERVER]: 0,
-        [LEGACY_MCP_SERVER]: 0,
       },
-      identity_drift_events: 0,
     },
     source: {
       scanned_files: 0,
@@ -468,6 +463,7 @@ function initialReport(window) {
     diagnostics: {
       malformed_rollout_records: 0,
       malformed_call_ids: 0,
+      retired_identity_events: 0,
       unresolved_session_files: 0,
       unresolved_replay_records: 0,
       malformed_result_evidence: 0,
@@ -597,7 +593,7 @@ function aggregateCall(report, deliveries, record, server) {
   }
 }
 
-async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, deliveries, identityCutoverAt) {
+async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, deliveries) {
   let input;
   try {
     input = fs.createReadStream(file, { encoding: "utf8" });
@@ -610,7 +606,7 @@ async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, d
       // These literals are required by the admitted event shape below; they
       // are only a cheap prefilter, never the evidence source itself.
       const mayBeHarnessDockCall = line.includes("mcp_tool_call_end") &&
-        (line.includes(CURRENT_MCP_SERVER) || line.includes(LEGACY_MCP_SERVER));
+        (line.includes(CURRENT_MCP_SERVER) || line.includes(RETIRED_MCP_SERVER));
       if (!mayBeHarnessDockCall) continue;
       let record;
       try {
@@ -622,7 +618,7 @@ async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, d
       const payload = record?.payload;
       if (record?.type !== "event_msg" || payload?.type !== "mcp_tool_call_end") continue;
       const server = payload?.invocation?.server;
-      if (server !== CURRENT_MCP_SERVER && server !== LEGACY_MCP_SERVER) continue;
+      if (server !== CURRENT_MCP_SERVER && server !== RETIRED_MCP_SERVER) continue;
       const callId = payload.call_id;
       const hasCallId = typeof callId === "string" && Boolean(callId.trim());
       const timestamp = selectTimestamp(record);
@@ -632,18 +628,14 @@ async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, d
         continue;
       }
       const inWindow = timestamp >= window.startMs && timestamp < window.endMs;
-      if (server === LEGACY_MCP_SERVER) {
-        if (identityCutoverAt == null) {
-          report.identity.legacy_coverage = "unavailable";
-          if (hasCallId) seenCallIds.add(callId);
-          continue;
-        }
-        if (timestamp >= identityCutoverAt) {
-          if (inWindow) report.identity.identity_drift_events += 1;
-          if (hasCallId) seenCallIds.add(callId);
-          continue;
-        }
-        report.identity.legacy_coverage = "admitted_pre_cutover";
+      if (server === RETIRED_MCP_SERVER) {
+        // No pre-reset lineage exists to represent, so a retired-identity event
+        // is a diagnostic at any timestamp. Its ID is still reserved: a copy of
+        // the same call republished under the current name must not be able to
+        // enter as a first occurrence.
+        if (inWindow) report.diagnostics.retired_identity_events += 1;
+        if (hasCallId) seenCallIds.add(callId);
+        continue;
       }
       if (hasCallId) {
         if (seenCallIds.has(callId)) {
@@ -695,33 +687,6 @@ async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, d
 export async function buildUsageReport(options = {}) {
   const window = resolveUsageWindow(options);
   const report = initialReport(window);
-  let identityCutoverAt = null;
-  const explicitCutover = options.identityCutoverAt ?? options.identityCutover?.cutover_at;
-  if (explicitCutover != null) {
-    const normalized = explicitUtcIso(explicitCutover, "Identity cutover timestamp");
-    identityCutoverAt = Date.parse(normalized);
-    report.identity_cutover_at = normalized;
-    report.identity.cutover_at = normalized;
-    report.identity.legacy_coverage = "available";
-  } else {
-    const receipt = options.identityCutoverReceipt
-      ?? readIdentityCutoverReceipt({
-        env: options.env,
-        receiptFile: options.identityCutoverFile,
-      });
-    if (receipt?.cutover_at != null) {
-      try {
-        const normalized = explicitUtcIso(receipt.cutover_at, "Identity cutover timestamp");
-        identityCutoverAt = Date.parse(normalized);
-        report.identity_cutover_at = normalized;
-        report.identity.cutover_at = normalized;
-        report.identity.legacy_coverage = "available";
-      } catch {
-        // Invalid receipts fail closed: no legacy event is admitted and no
-        // transition boundary is guessed from malformed operator state.
-      }
-    }
-  }
   const ledgerFile = path.resolve(options.ledgerFile ?? defaultDispositionLedgerFile(options.env));
   const dispositionState = await readDispositionState(ledgerFile);
   report.ledger = dispositionState.stats;
@@ -742,7 +707,6 @@ export async function buildUsageReport(options = {}) {
       report,
       seenCallIds,
       deliveries,
-      identityCutoverAt,
     );
   }
 

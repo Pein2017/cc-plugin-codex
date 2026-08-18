@@ -8,11 +8,14 @@ import {
   StreamParser,
   buildArgs,
   classifyClaudeFailure,
+  createSandboxSettings,
   encodeStreamUserMessage,
   getClaudeAvailability,
+  pruneStaleSandboxSettings,
   runClaudeTurn,
   validateTurnCompletion,
 } from "../../runtime/claude-headless-adapter.mjs";
+import { resolvePluginRuntimeRoot } from "../../runtime/paths.mjs";
 
 const temporaryRoots = [];
 
@@ -26,10 +29,10 @@ function fakeClaude(root) {
   const bin = path.join(root, "fake-claude");
   fs.writeFileSync(bin, `#!/usr/bin/env node
 const fs = require("node:fs");
-const inputFile = process.env.CC_TEST_INPUT_FILE;
-const acceptedFile = process.env.CC_TEST_ACCEPTED_FILE;
-const observedFile = process.env.CC_TEST_OBSERVED_FILE;
-const terminatedFile = process.env.CC_TEST_TERMINATED_FILE;
+const inputFile = process.env.CODEX_HARNESSDOCK_TEST_INPUT_FILE;
+const acceptedFile = process.env.CODEX_HARNESSDOCK_TEST_ACCEPTED_FILE;
+const observedFile = process.env.CODEX_HARNESSDOCK_TEST_OBSERVED_FILE;
+const terminatedFile = process.env.CODEX_HARNESSDOCK_TEST_TERMINATED_FILE;
 let finished = false;
 process.stdin.on("data", (chunk) => {
   fs.appendFileSync(inputFile, chunk);
@@ -65,10 +68,10 @@ function turnFixture() {
 function fixtureEnv(fixture) {
   return {
     ...process.env,
-    CC_TEST_INPUT_FILE: fixture.inputFile,
-    CC_TEST_ACCEPTED_FILE: fixture.acceptedFile,
-    CC_TEST_OBSERVED_FILE: fixture.observedFile,
-    CC_TEST_TERMINATED_FILE: fixture.terminatedFile,
+    CODEX_HARNESSDOCK_TEST_INPUT_FILE: fixture.inputFile,
+    CODEX_HARNESSDOCK_TEST_ACCEPTED_FILE: fixture.acceptedFile,
+    CODEX_HARNESSDOCK_TEST_OBSERVED_FILE: fixture.observedFile,
+    CODEX_HARNESSDOCK_TEST_TERMINATED_FILE: fixture.terminatedFile,
   };
 }
 
@@ -809,4 +812,39 @@ describe("Claude headless adapter", () => {
       assert.equal(observedTermination, true);
     });
   }
+});
+
+describe("sandbox settings temp files", () => {
+  it("writes under the current prefix and sweeps orphans left under the retired one", () => {
+    const sandboxDir = path.join(resolvePluginRuntimeRoot(), "sandbox");
+    fs.mkdirSync(sandboxDir, { recursive: true, mode: 0o700 });
+
+    const written = createSandboxSettings("read-only");
+    assert.ok(written, "read-only mode must produce a settings file");
+    assert.match(path.basename(written), /^hd-sandbox-/);
+
+    // A crash before the rename can leave files under the retired prefix.
+    // Sweeping both is orphan cleanup: no new file is ever written under the
+    // retired name, and nothing parses either prefix.
+    const stale = {
+      retired: path.join(sandboxDir, "cc-sandbox-999-stale.json"),
+      current: path.join(sandboxDir, "hd-sandbox-999-stale.json"),
+      unrelated: path.join(sandboxDir, "unrelated-999-stale.json"),
+    };
+    const old = Date.now() - 24 * 60 * 60 * 1000;
+    for (const file of Object.values(stale)) {
+      fs.writeFileSync(file, "{}", { mode: 0o600 });
+      fs.utimesSync(file, old / 1000, old / 1000);
+    }
+
+    pruneStaleSandboxSettings();
+
+    assert.equal(fs.existsSync(stale.retired), false, "retired-prefix orphan must be swept");
+    assert.equal(fs.existsSync(stale.current), false, "current-prefix orphan must be swept");
+    assert.equal(fs.existsSync(stale.unrelated), true, "an unrelated file must not be swept");
+    assert.equal(fs.existsSync(written), true, "a fresh settings file must survive");
+
+    fs.rmSync(stale.unrelated, { force: true });
+    fs.rmSync(written, { force: true });
+  });
 });

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 
-import { createInternalClaudeRuntime } from "../../runtime/internal-runtime.mjs";
+import { createInternalAgentRuntime } from "../../runtime/internal-runtime.mjs";
 import { appendCompletionEvent } from "../../runtime/completion-inbox.mjs";
 import {
   resolveExistingWatchDirectories,
@@ -37,15 +37,15 @@ function runtimeFixture(label) {
   fs.mkdirSync(workspace);
   fs.mkdirSync(claudeConfig);
   const ownerRootId = `wakeup-${label}`;
-  const runtime = createInternalClaudeRuntime({
+  const runtime = createInternalAgentRuntime({
     cwd: workspace,
     env: {
       CODEX_HOME: codexHome,
       CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
       CODEX_THREAD_ID: ownerRootId,
       CLAUDE_CONFIG_DIR: claudeConfig,
-      CC_RUNTIME_CHECKOUT: "",
-      CC_RUNTIME_SOURCE_ROOT: "",
+      CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+      CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
     },
   });
   return { runtime, workspace, ownerRootId };
@@ -253,7 +253,7 @@ describe("durable activity wakeup", () => {
     assert.equal(closed, 1);
   });
 
-  it("keeps a quiet ClaudeRuntime wait to bounded observations", async () => {
+  it("keeps a quiet InternalAgentRuntime wait to bounded observations", async () => {
     const { runtime } = runtimeFixture("quiet");
     const reads = [];
     runtime.waitDependencies.onRead = (kind) => reads.push(kind);

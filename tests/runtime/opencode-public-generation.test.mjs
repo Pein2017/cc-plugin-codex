@@ -131,9 +131,9 @@ function runtimeFor(serverUrl) {
     env: {
       ...process.env,
       CODEX_THREAD_ID: "generation-root",
-      CC_TRUSTED_OWNER_ROOT_ID: "generation-root",
+      CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "generation-root",
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
-      CC_RUNTIME_ENV_FILE: "",
+      CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: "",
     },
   });
 }
@@ -195,7 +195,7 @@ describe("public generation: static two-Harness admission", () => {
       assert.throws(() => resolveDriverV2(harnessId, { env: {} }), undefined, harnessId);
     }
     assert.throws(
-      () => resolveDriverV2(OPENCODE_HARNESS_ID, { env: { CC_HARNESS_ENDPOINT: "http://10.0.0.5:4096" } }),
+      () => resolveDriverV2(OPENCODE_HARNESS_ID, { env: { CODEX_HARNESSDOCK_HARNESS_ENDPOINT: "http://10.0.0.5:4096" } }),
       /cannot select a Harness Driver implementation/
     );
   });
@@ -396,9 +396,9 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
         encoding: "utf8",
         env: {
           ...process.env,
-          CC_RUNTIME_CHECKOUT: "",
-          CC_RUNTIME_SOURCE_ROOT: "",
-          CC_RUNTIME_ENV_FILE: envFileFor(DEAD_SERVER_URL),
+          CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "",
+          CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
+          CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFileFor(DEAD_SERVER_URL),
           CODEX_HARNESSDOCK_RUNTIME_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cc-generation-cli-")),
         },
       }
@@ -424,7 +424,7 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
       const result = spawnSync(
         process.execPath,
         [path.join(repositoryRoot, "runtime", "operator-cli.mjs"), ...argv],
-        { encoding: "utf8", env: { ...process.env, CC_RUNTIME_CHECKOUT: "", CC_RUNTIME_SOURCE_ROOT: "" } }
+        { encoding: "utf8", env: { ...process.env, CODEX_HARNESSDOCK_RUNTIME_CHECKOUT: "", CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "" } }
       );
       assert.equal(result.status, 1, argv.join(" "));
       assert.match(result.stderr, /requires explicit --all/);

@@ -11,6 +11,7 @@ import {
   rollbackInstalledIdentity,
   rollbackPluginIdentity,
 } from "../../runtime/plugin-identity-cutover.mjs";
+import { configureRuntimePaths } from "../../runtime/paths.mjs";
 
 /** @type {string[]} */
 const temporaryDirectories = [];
@@ -67,6 +68,13 @@ describe("HarnessDock identity data cutover", () => {
     );
     assert.throws(
       () => cutoverPluginIdentity({ ...roots(), env: { CC_RUNTIME_HOME: "/tmp/old" } }),
+      /CC_RUNTIME_HOME is retired/i,
+    );
+    // The same refusal guards path ownership. A stale export must fail loudly:
+    // ignoring it would silently resolve the operator's real data namespace,
+    // which is exactly the isolation escape the pinned test home exists to stop.
+    assert.throws(
+      () => configureRuntimePaths({ CC_RUNTIME_HOME: "/tmp/old" }),
       /CC_RUNTIME_HOME is retired/i,
     );
   });

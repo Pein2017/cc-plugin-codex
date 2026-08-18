@@ -17,7 +17,7 @@ import {
 /** @type {string[]} */
 const roots = [];
 const originalRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
-const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-message-runtime-home-"));
+const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-message-runtime-home-"));
 
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 
@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-agent-message-idempotency-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-agent-message-idempotency-"));
   const workspace = path.join(root, "workspace");
   const claudeConfigDir = path.join(root, "claude");
   const envFile = path.join(root, "runtime.env");

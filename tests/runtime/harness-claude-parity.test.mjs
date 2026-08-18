@@ -465,7 +465,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
     const root = scratch("preflight");
     const receipt = driver.preflight({
       cwd: root,
-      env: { PATH: root, CC_CLAUDE_BIN: path.join(root, "absent-claude"), CLAUDE_CONFIG_DIR: root },
+      env: { PATH: root, CODEX_HARNESSDOCK_CLAUDE_BIN: path.join(root, "absent-claude"), CLAUDE_CONFIG_DIR: root },
     });
     assert.equal(receipt.ready, false);
     assert.equal(receipt.availability.available, false);
