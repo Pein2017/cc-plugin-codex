@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.19.0 - 2026-08-18
+
+- Activate the eight-operation multi-Harness public generation (MCP API
+  generation 6): `list_harnesses` joins the surface, `spawn_agent` requires
+  explicit `task_name`, `message`, `harness`, full `model`, `topology`, and
+  `write` from closed enums with no defaults or aliases, and `followup_task`
+  inherits the immutable route with its write mutation removed. Pre-generation
+  payloads fail closed at the typed schema before any store write.
+- Add the read-only OpenCode Explorer Driver pinned to
+  `opencode-go/deepseek-v4-flash` through an operator-owned loopback Server:
+  fixed-origin secret-safe client, reviewed default-deny `codex-explorer`
+  profile with positive-proof validation, narrow versioned prompt/result
+  boundary, launch/session/turn lineage with fail-closed unknown settlement,
+  route-keyed usage, and workspace mutation witnesses. Interrupt and history
+  answer explicit unsupported receipts; continuation is fresh-only.
+- Execute by route: new spawns on both Harnesses write version-3 identity
+  records; claude-code keeps the proven version-one supervisor (progress,
+  bound history, resumable waits preserved), opencode runs the detached
+  version-three worker path.
+- Isolate test state: runs pin their data root to a per-run temp directory and
+  a complete check adds zero entries under the operator data namespace.
+- Add the gated live evaluation script (explicit authorization flag, bounded
+  stop conditions) and the consolidated activation runbook.
+
 ## 0.18.1 - 2026-08-13
 
 - Preserve the current and two predecessor discovery-only Plugin shells in a
