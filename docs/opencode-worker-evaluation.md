@@ -90,7 +90,12 @@ history capabilities (route-unsupported by design), an implementation worker,
 DeepSeek Harness, and Grok Build all remain **unmeasured or out of scope**;
 they are subsequent maturity work per Task 10.5, not release-complete claims.
 `duration_ms`, `duration_api_ms`, and `turn_count` were not reported by the
-provider and stay unknown.
+provider and stay unknown. The loaded-Plugin witness additionally observed
+that `plugin_observed.tool_call_count` reads 0 on an Explorer turn that
+demonstrably read a file: the Plugin's tool-part counting does not recognize
+OpenCode read-tool parts, so that observational counter under-reports for
+this Harness (settlement and text projection unaffected; recorded as a
+maturity item).
 
 ## Verdict
 

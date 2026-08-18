@@ -62,8 +62,8 @@
 
 ## 9. Run Fresh Codex Live Acceptance For The Final Generation
 
-- [ ] 9.1 Start a fresh Codex task and prove model-visible discovery of the exact final `$codex-harnessdock:*` / `mcp__codex_harnessdock__*` catalog (eight operations when Phase B is included).
-- [ ] 9.2 With explicit live authorization, prove legacy Claude spawn/terminal/follow-up/list/message behavior and the Phase B OpenCode examples through the loaded Plugin; record bounded lifecycle, route, usage, and mutation evidence only.
+- [x] 9.1 Start a fresh Codex task and prove model-visible discovery of the exact final `$codex-harnessdock:*` / `mcp__codex_harnessdock__*` catalog (eight operations when Phase B is included).
+- [x] 9.2 With explicit live authorization, prove legacy Claude spawn/terminal/follow-up/list/message behavior and the Phase B OpenCode examples through the loaded Plugin; record bounded lifecycle, route, usage, and mutation evidence only.
 - [x] 9.3 Prove the old Skill/MCP identity is absent, the loaded runtime resolves to `/data/CoordExp/cc-plugin-codex`, and the same migrated state lineage remains authoritative.
 - [x] 9.4 Record the exact accepted commit/tree, cutover and backup receipts, installed snapshot, live witnesses, rollback readiness, and all still-unproven maturity facts in a fresh Phase R handoff.
 - [x] 9.5 Leave publish, push, archive, physical production-checkout/GitHub rename, maturity runs, and later Harnesses unstarted unless separately authorized.
