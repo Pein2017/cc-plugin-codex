@@ -79,15 +79,23 @@ function fakeRuntime({ updates = [], receipts = [], followUp } = {}) {
     },
     async wait_agent(input) {
       calls.push({ name: "wait_agent", input });
+      // The real runtime's targeted wait returns per-target entries, and the
+      // controller MUST target the Agent it just spawned: the first live
+      // activation proved a bare barrier wait hands every later example the
+      // previous example's completion.
+      const spawned = calls.filter((entry) => entry.name === "spawn_agent").at(-1);
+      const agentName = `/root/${spawned?.input?.task_name ?? "example"}`;
       const update = updates[index] ?? completedUpdate();
-      return { update: typeof update === "function" ? update() : update };
+      const entry = typeof update === "function" ? update() : update;
+      return { targets: [{ agent_name: agentName, ...entry }], unresolved_targets: [] };
     },
     async followup_task(input) {
       calls.push({ name: "followup_task", input });
       if (typeof followUp === "function") return followUp(input);
+      // The production runtime's actual refusal sentence, verified live.
       throw new Error(
-        "Agent /root/explorer_continuation cannot continue: blocked " +
-        "(reason=continuation_unsupported, scope=agent, retry=new_agent).",
+        "Agent /root/explorer_continuation is frozen to a opencode route whose " +
+        "continuation is fresh_only; a same-Agent follow-up is refused. Spawn a new Agent instead.",
       );
     },
   };
@@ -290,6 +298,31 @@ describe("Task 10.1 — three bounded read-only examples and their evidence", ()
     // One turn at a time: every spawn is joined before the next one starts.
     const sequence = options.runtime.calls.map((call) => call.name).filter((name) => name !== "followup_task");
     assert.deepEqual(sequence, ["spawn_agent", "wait_agent", "spawn_agent", "wait_agent", "spawn_agent", "wait_agent"]);
+  });
+
+  it("targets each wait at the Agent its own example spawned, never the bare barrier", async () => {
+    // Live-proven defect: a bare `wait_agent({})` barrier returns the most
+    // recent completion on the root, so examples two and three recorded
+    // example one's text and metrics while their turns were still in flight.
+    const options = baseOptions();
+    options.runtime = fakeRuntime({
+      updates: [
+        completedUpdate("first answer"),
+        completedUpdate("the second answer"),
+        completedUpdate("and the third answer"),
+      ],
+    });
+    const report = await runOpencodeExplorerEvaluation(options);
+    assert.equal(report.status, "completed");
+    const waits = options.runtime.calls.filter((call) => call.name === "wait_agent");
+    assert.deepEqual(
+      waits.map((call) => call.input),
+      EVALUATION_EXAMPLES.map((example) => ({ targets: [`/root/${example.taskName}`] })),
+    );
+    assert.deepEqual(
+      report.examples.map((entry) => entry.resultCharacters),
+      ["first answer".length, "the second answer".length, "and the third answer".length],
+    );
   });
 
   it("records the fresh-only substitute branch as the specified path, not a fallback", async () => {

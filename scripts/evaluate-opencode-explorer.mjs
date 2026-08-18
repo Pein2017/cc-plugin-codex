@@ -432,8 +432,15 @@ export async function runOpencodeExplorerEvaluation(options) {
         write: EVALUATION_ROUTE.write,
       });
       assertRouteMatches(receipt, example.id);
-      const waited = await options.runtime.wait_agent({});
-      const completion = waited?.update ?? null;
+      // The wait is TARGETED at the Agent this example just spawned. A bare
+      // barrier wait returns the most recent completion on the root, which on
+      // a live sequential run is the PREVIOUS example's update — proven in the
+      // first activation run, where all three examples recorded example one's
+      // metrics and text while later turns were still in flight.
+      const waited = await options.runtime.wait_agent({ targets: [receipt.agent_name] });
+      const completion = (waited?.targets ?? []).find(
+        (target) => target.agent_name === receipt.agent_name,
+      ) ?? null;
       assertUsableCompletion(completion, example.id);
       const exampleEndedAt = now();
       const exampleVerdict = closeWitness(exampleWitness);
@@ -471,8 +478,13 @@ export async function runOpencodeExplorerEvaluation(options) {
         entry.continuation = Object.freeze({
           branch: followUp.branch,
           // The refusal is evidence, so it is recorded; it names a closed
-          // reason and never an endpoint or credential.
-          refusalReason: followUp.refusal?.includes("continuation_unsupported")
+          // reason and never an endpoint or credential. The runtime's actual
+          // refusal sentence reads "… whose continuation is fresh_only; a
+          // same-Agent follow-up is refused", so both that wording and the
+          // durable blocking reason token classify as the closed reason.
+          refusalReason: followUp.refusal &&
+            (followUp.refusal.includes("continuation_unsupported") ||
+              /continuation is\s+\S+; a same-Agent follow-up is refused/.test(followUp.refusal))
             ? "continuation_unsupported"
             : followUp.refusal
               ? "other"
